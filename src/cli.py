@@ -46,6 +46,9 @@ def cli_mode():
     elif device_str == 'dml' and torch_directml:
         device = torch_directml.device()
         dtype = torch.float32
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        device = torch.device('mps')
+        dtype = torch.float32
     else:
         # Fallback to CPU if hardware is missing or unsupported
         device = torch.device('cpu')

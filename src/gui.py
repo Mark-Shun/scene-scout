@@ -594,6 +594,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         elif device_choice == 'dml' and torch_directml is not None:
             self.device = torch_directml.device()
             self.dtype = torch.float32
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            self.device = torch.device('mps')
+            self.dtype = torch.float32
         else:
             self.device = torch.device('cpu')
             self.dtype = torch.float32
