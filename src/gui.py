@@ -127,12 +127,17 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.query_image_path: Optional[str] = None
         self.current_display_path: Optional[str] = None
         self.search_results: List[Tuple[str, float, str, Optional[float], Optional[int], Optional[int], Optional[int]]] = []
+        self.use_vlc_open_var = tk.BooleanVar(
+            master=self, 
+            value=self.config.get('use_vlc_open', True)
+        )
         self.video_cap = None
         self.video_loop_id = None
         self.loop_start_ms: Optional[int] = None
         self.loop_end_ms: Optional[int] = None
         self.loop_start_ms: Optional[int] = None
         self.loop_end_ms: Optional[int] = None
+        self.last_selected_entry = None
         self.canvas_scale = 1.0
         self._loop_scale_set = False
         self.canvas_offset_x, self.canvas_offset_y = (0, 0)
@@ -152,6 +157,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         self.theme_var = tk.StringVar(master=self, value=self.current_theme)
         self.vlc_instance = vlc.Instance(
+            '--ignore-config',
             '--quiet', 
             '--no-xlib', # For Linux compatibility
             '--no-audio', # Force disable audio
@@ -162,6 +168,8 @@ class SceneScoutApp(TkinterDnD.Tk):
             '--no-video-title-show' # Disables the filename appearing at the start
         )
         self.player = self.vlc_instance.media_player_new()
+        self.vlc_events = self.player.event_manager()
+        self.vlc_events.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_end_reached)
         
         self.drop_target_register(DND_FILES)
         self.dnd_bind('<<Drop>>', self.on_handle_drop)
@@ -312,6 +320,14 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.input_batch_size = tk.IntVar(master=self, value=16)
         ttk.Spinbox(options_frame, from_=8, to=160, textvariable=self.input_batch_size).pack(fill='x')
 
+        self.vlc_open_check = ttk.Checkbutton(
+            options_frame, 
+            text='Open video in VLC', 
+            variable=self.use_vlc_open_var,
+            command=self.save_vlc_preference
+        )
+        self.vlc_open_check.pack(anchor='w', pady=(5, 0))
+
         # Theme selection
         ttk.Label(options_frame, text='Theme:').pack(anchor='w', pady=(5, 0))
         theme_frame = ttk.Frame(options_frame)
@@ -373,6 +389,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         list_scrollbar.pack(side='right', fill='y')
         self.results_tree.config(yscrollcommand=list_scrollbar.set)
         self.results_tree.bind('<<TreeviewSelect>>', self.on_result_select)
+        self.results_tree.bind('<Double-1>', self.on_result_double_click)
         self.results_tree.bind('<Button-3>', self.on_results_right_click)
         
         paned_window.add(list_frame, weight=1)
@@ -439,6 +456,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                     widget.config(state=state)
                 except Exception:
                     pass
+    
+    def save_vlc_preference(self):
+        """Save the VLC opening preference to the config file."""
+        self.config['use_vlc_open'] = self.use_vlc_open_var.get()
+        config.save_config(self.config)
 
     def update_status(self, message: str):
         self.status_var.set(message)
@@ -760,6 +782,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if not self.search_results:
             self.stats_label.config(text='No results found.')
             return
+        self.last_selected_entry = None
         has_rescore = self.search_results and self.search_results[0][3] is not None
         sort_key = lambda x: x[3] if has_rescore else x[1]
         self.search_results.sort(key=sort_key, reverse=True)
@@ -860,13 +883,35 @@ class SceneScoutApp(TkinterDnD.Tk):
         sel = self.results_tree.selection()
         if not sel:
             return
-        index = int(sel[0])
+        
+        current_selected_entry = sel[0]
+        if current_selected_entry == self.last_selected_entry:
+            return
+        
+        self.last_selected_entry = current_selected_entry
+        
+        index = int(current_selected_entry)
         path, _, file_type, _, scene_idx, scene_time, scene_end = self.search_results[index]
         self.current_display_path = path
         if file_type == 'image':
             self.display_media(path, is_video=False)
         else:
             self.display_media(path, is_video=True, start_ms=scene_time, end_ms=scene_end)
+
+    def on_result_double_click(self, event: tk.Event):
+        """Handle double-click on a search result to open the file."""
+        iid = self.results_tree.identify_row(event.y)
+        if not iid:
+            return
+            
+        # Ensure the row is selected and current_display_path is updated
+        self.results_tree.selection_set(iid)
+        index = int(iid)
+        path = self.search_results[index][0]
+        self.current_display_path = path
+        
+        # Open the file using the system's default application
+        self.open_current_file()
 
     def _render_image_on_canvas(self, use_fast_quality: bool=False):
         if not self.original_image:
@@ -915,10 +960,15 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.original_image = Image.open(path).convert('RGB')
         self._render_image_on_canvas(use_fast_quality=False) # Use LANCZOS for static
 
+    def _on_vlc_end_reached(self, event):
+        """Triggered when the video finishes. Bounces to a thread to prevent freezing."""
+        self.threaded_task(self._vlc_loop_restart)
+
     def _vlc_loop_restart(self, media):
-        """Restart media in a thread-safe way."""
-        self.player.set_media(media)
-        self.player.play()
+        """Restart media using the globally stored current_media reference."""
+        if hasattr(self, 'current_media') and self.current_media:
+            self.player.set_media(self.current_media)
+            self.player.play()
 
     def _extract_and_show_first_frame(self, path, start_ms):
         """Accurately extracts the frame at the specific timestamp using stream time_base."""
@@ -1016,6 +1066,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                 safe_end_ms = max(start_ms + 10, end_ms - playback_margin_ms)
                 media.add_option(f'stop-time={safe_end_ms / 1000.0}')
 
+            self.current_media = media 
             self.player.set_media(media)
 
             # Assign window handle
@@ -1124,7 +1175,40 @@ class SceneScoutApp(TkinterDnD.Tk):
         menu.tk_popup(event.x_root, event.y_root)
 
     def open_current_file(self):
-        if self.current_display_path:
+            """Opens the selected file, using VLC with a timestamp if enabled."""
+            if not self.current_display_path:
+                return
+
+            # Get the selected item's start time
+            sel = self.results_tree.selection()
+            start_ms = 0
+            if sel:
+                index = int(sel[0])
+                # search_results index 5 is start_time_ms
+                start_ms = self.search_results[index][5] or 0
+
+            # Handle VLC opening logic
+            if self.use_vlc_open_var.get():
+                start_sec = start_ms / 1000.0
+                vlc_flags = [f":start-time={start_sec}", "--one-instance", "--no-playlist-enqueue"]
+                try:
+                    if sys.platform == 'win32':
+                        vlc_path = r"C:\Program Files\VideoLAN\VLC\vlc.exe"
+                        if os.path.exists(vlc_path):
+                            subprocess.Popen([vlc_path, self.current_display_path] + vlc_flags)
+                            return
+                    elif sys.platform == 'darwin':
+                        vlc_path = "/Applications/VLC.app/Contents/MacOS/VLC"
+                        if os.path.exists(vlc_path):
+                            subprocess.Popen([vlc_path, self.current_display_path] + vlc_flags)
+                            return
+                    else: # Linux
+                        subprocess.Popen(["vlc", self.current_display_path] + vlc_flags)
+                        return
+                except Exception as e:
+                    print(f"Failed to open with VLC: {e}")
+
+            # Fallback to Native Opening if VLC fails or is disabled
             try:
                 if sys.platform == 'win32':
                     os.startfile(self.current_display_path)
