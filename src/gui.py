@@ -6,6 +6,7 @@ import tkinter as tk
 import subprocess
 import webbrowser
 import sqlite3
+from model_loader import load_siglip_model
 from tkinter import filedialog, messagebox, ttk, simpledialog
 from typing import Callable, List, Optional, Tuple
 from ttkthemes import ThemedStyle
@@ -594,46 +595,22 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.after(0, lambda: messagebox.showinfo('Complete', f'Removed {count} orphaned embeddings.'))
         self.update_status('Cleanup complete.')
 
+    def load_model(self):
+        # Determine user choice from the GUI dropdown
+        device_choice = self.device_var.get() if hasattr(self, 'device_var') else 'cpu'
+        
+        # The callback 'self.update_status' updates the splash screen automatically
+        self.model, self.processor, self.device, self.dtype = load_siglip_model(
+            device_choice, 
+            status_callback=self.update_status
+        )
+
     def threaded_load_model(self):
         self.load_model_button.config(state='disabled')
         self.index_button.config(state='disabled')
         self.search_button.config(state='disabled')
         self.update_status(f'Loading model: {config.DEFAULT_MODEL}...')
         self.threaded_task(self.load_model_task)
-
-    
-    def load_model(self):
-        device_choice = self.device_var.get() if hasattr(self, 'device_var') else 'cpu'
-        
-        if device_choice == 'cuda' and torch.cuda.is_available():
-            self.device = torch.device('cuda')
-            self.dtype = torch.float16
-        elif device_choice == 'rocm' and torch.cuda.is_available(): # ROCm uses 'cuda' device string. Through a HIP layer
-            self.device = torch.device('cuda')
-            self.dtype = torch.float16
-        elif device_choice == 'xpu' and (hasattr(torch, 'xpu') and torch.xpu.is_available()):
-            self.device = torch.device('xpu')
-            self.dtype = torch.float16 # Intel Arc supports float16 well
-        elif device_choice == 'dml' and torch_directml is not None:
-            self.device = torch_directml.device()
-            self.dtype = torch.float32
-        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            self.device = torch.device('mps')
-            self.dtype = torch.float32
-        else:
-            self.device = torch.device('cpu')
-            self.dtype = torch.float32
-
-        if self.processor is None:
-            self.update_status("Checking/Downloading processor config")
-            self.processor = AutoProcessor.from_pretrained(config.DEFAULT_MODEL)
-
-        self.update_status("Loading/Downloading Model Weights (this can take a while)...")
-        attn_implementation = 'sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager'
-        self.model = Siglip2Model.from_pretrained(config.DEFAULT_MODEL, torch_dtype=self.dtype, attn_implementation=attn_implementation).to(self.device)
-        assert self.model is not None
-        self.model.eval()
-        self.update_status("Model Loaded")
 
     def load_model_task(self):
         try:

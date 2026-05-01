@@ -3,6 +3,7 @@ import os
 import sys
 import torch
 from transformers import AutoProcessor, Siglip2Model
+from model_loader import load_siglip_model
 
 import config
 from database import init_db, cleanup_orphaned_entries, search_scenes, db_is_empty
@@ -36,23 +37,10 @@ def cli_mode():
     device_str, msg = config.setup_device(args.device)
     print(f'Device: {msg}')
     
-    # Map the detected/requested string to a torch-compatible device
-    if device_str == 'cuda' or device_str == 'rocm':
-        device = torch.device('cuda')
-        dtype = torch.float16
-    elif device_str == 'xpu' and (hasattr(torch, 'xpu') and torch.xpu.is_available()):
-        device = torch.device('xpu')
-        dtype = torch.float16
-    elif device_str == 'dml' and torch_directml:
-        device = torch_directml.device()
-        dtype = torch.float32
-    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-        device = torch.device('mps')
-        dtype = torch.float32
-    else:
-        # Fallback to CPU if hardware is missing or unsupported
-        device = torch.device('cpu')
-        dtype = torch.float32
+    model, processor, device, dtype = load_siglip_model(
+        device_str, 
+        status_callback=print
+    )
     
     init_db(args.db)
     
