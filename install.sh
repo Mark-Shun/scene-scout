@@ -2,6 +2,7 @@
 
 # Define the local folder 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR" || { echo "Failed to enter directory"; exit 1; }
 UV_DIR="$SCRIPT_DIR/.uv" 
 UV_EXE="$UV_DIR/uv" 
 export UV_PYTHON_INSTALL_DIR="$UV_DIR/python" 
@@ -22,13 +23,29 @@ install_dependencies() {
     # Detect Operating System
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "Detected macOS..."
-        if ! command -v brew &> /dev/null; then
-            echo "[!] Homebrew not found. Please install it at https://brew.sh/ to automate this process."
-            return 1
+        if [ ! -d "/Applications/VLC.app" ]; then
+            if ! command -v brew &> /dev/null; then
+                read -p "[?] Homebrew not found. Would you like to install it now? [y/n] " -n 1 -r
+                echo
+                if [[ $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Installing Homebrew..."
+                    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                    
+                    # Configure Homebrew for the current shell session (Required for Apple Silicon)
+                    if [[ -f /opt/homebrew/bin/brew ]]; then
+                        eval "$(/opt/homebrew/bin/brew shellenv)"
+                    elif [[ -f /usr/local/bin/brew ]]; then
+                        eval "$(/usr/local/bin/brew shellenv)"
+                    fi
+                else
+                    echo "[!] Homebrew is required for automated dependency installation. Skipping..."
+                    return 1
+                fi
+            fi
+            echo "Installing VLC and Tcl/Tk via Homebrew..."
+            brew install --cask vlc
+            brew install tcl-tk
         fi
-        echo "Installing VLC and Tcl/Tk via Homebrew..."
-        brew install --cask vlc
-        brew install tcl-tk
     elif [ -f /etc/os-release ]; then
         . /etc/os-release
         case "$ID" in
@@ -48,7 +65,7 @@ install_dependencies() {
 }
 
 # Ask the user for dependency check
-read -p "Check and install system dependencies (VLC & Tkinter)? [y/n] " -n 1 -r
+read -p "Check and install system dependencies (VLC and tkinter)? [y/n] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     install_dependencies
