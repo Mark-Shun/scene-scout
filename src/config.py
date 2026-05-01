@@ -5,16 +5,6 @@ from typing import Any, Dict, Optional, Tuple
 
 from PIL import Image
 
-try:
-    import torch
-except ImportError:
-    torch = None
-
-try:
-    import torch_directml
-except ImportError:
-    torch_directml = None
-
 Image.MAX_IMAGE_PIXELS = None
 warnings.filterwarnings('ignore', category=Image.DecompressionBombWarning)
 
@@ -41,16 +31,3 @@ def save_config(config: Dict[str, Any]) -> None:
             json.dump(config, f, indent=2)
     except IOError as e:
         print(f'Error saving config file: {e}')
-
-def setup_device(forced_device: Optional[str]=None) -> Tuple[str, str]:
-    if forced_device:
-        if forced_device == 'dml' and (torch_directml is None or not torch_directml.is_available()):
-            return ('cpu', 'DirectML not available. Falling back to CPU.')
-        if forced_device == 'cuda' and (torch is None or not torch.cuda.is_available()):
-            return ('cpu', 'CUDA not available. Falling back to CPU.')
-        return (forced_device, f'Device forced to {forced_device.upper()}.')
-    if torch is not None and torch.cuda.is_available():
-        return ('cuda', 'NVIDIA GPU (CUDA) detected.')
-    if torch_directml and torch_directml.is_available():
-        return ('dml', 'AMD/Intel GPU (DirectML) detected.')
-    return ('cpu', 'No compatible GPU found. Using CPU.')

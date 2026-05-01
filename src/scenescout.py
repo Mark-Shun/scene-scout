@@ -1,17 +1,15 @@
 import sys
-from tkinter import messagebox
-
-import config
-from cli import cli_mode
-from gui import SceneScoutApp, show_splash
 from update_checker import check_for_update
 
 if __name__ == '__main__':
     check_for_update()
 
     if len(sys.argv) > 1:
+        from cli import cli_mode
         cli_mode()
     else:
+        from tkinter import messagebox
+        from gui import SceneScoutApp, show_splash
         splash, splash_root = show_splash()
         splash.status_label.config(text="Starting Scene Scout GUI")
         splash.update()

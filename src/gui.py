@@ -600,10 +600,13 @@ class SceneScoutApp(TkinterDnD.Tk):
         device_choice = self.device_var.get() if hasattr(self, 'device_var') else 'cpu'
         
         # The callback 'self.update_status' updates the splash screen automatically
-        self.model, self.processor, self.device, self.dtype = load_siglip_model(
+        self.model, self.processor, self.device, self.dtype, active_device_str = load_siglip_model(
             device_choice, 
             status_callback=self.update_status
         )
+        
+        if hasattr(self, 'device_var'):
+            self.device_var.set(active_device_str)
 
     def threaded_load_model(self):
         self.load_model_button.config(state='disabled')
