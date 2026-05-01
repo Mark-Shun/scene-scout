@@ -235,7 +235,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.folder_var = tk.StringVar(master=self)
         self.folder_entry = ttk.Entry(folder_frame, textvariable=self.folder_var)
         self.folder_entry.pack(fill='x', pady=2)
-        ttk.Button(folder_frame, text='Browse...', command=self.browse_folder).pack(fill='x')
+        ttk.Button(folder_frame, text='Select Folder', command=self.browse_folder).pack(fill='x')
+        self.index_button = ttk.Button(folder_frame, text='Process Media In Folder', command=self.threaded_index, state='disabled')
+        self.index_button.pack(fill='x', pady=3)
 
         # 4. Search Query Section
         query_frame = ttk.LabelFrame(self.scrollable_controls, text='Search Query', padding=5)
@@ -254,6 +256,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         btn_frame.pack(fill='x', pady=2)
         ttk.Button(btn_frame, text='Load...', command=self.browse_query_image).pack(side='left', expand=True, fill='x')
         ttk.Button(btn_frame, text='Clear', command=self.clear_query_image).pack(side='left', expand=True, fill='x')
+
+        self.search_button = ttk.Button(query_frame, text='Search Scene', command=self.threaded_search, state='disabled')
+        self.search_button.pack(fill='x', pady=3)
 
         # 5. Options Section
         options_frame = ttk.LabelFrame(self.scrollable_controls, text='Options', padding=5)
@@ -325,15 +330,11 @@ class SceneScoutApp(TkinterDnD.Tk):
             command=self.apply_theme
         ).pack(side='left', padx=(5, 0))
 
-        # 6. Actions Section
-        actions_frame = ttk.LabelFrame(self.scrollable_controls, text='Actions', padding=5)
+        # 6. Additional actions Section
+        actions_frame = ttk.LabelFrame(self.scrollable_controls, text='Additional Actions', padding=5)
         actions_frame.pack(fill='x', pady=10)
-        self.load_model_button = ttk.Button(actions_frame, text='1. Load Model', command=self.threaded_load_model)
+        self.load_model_button = ttk.Button(actions_frame, text='Load Model', command=self.threaded_load_model)
         self.load_model_button.pack(fill='x', pady=3)
-        self.index_button = ttk.Button(actions_frame, text='2. Process Media Folder', command=self.threaded_index, state='disabled')
-        self.index_button.pack(fill='x', pady=3)
-        self.search_button = ttk.Button(actions_frame, text='3. Search Scene', command=self.threaded_search, state='disabled')
-        self.search_button.pack(fill='x', pady=3)
         ttk.Button(actions_frame, text='Cleanup Database', command=self.cleanup_database).pack(fill='x', pady=3)
 
         # Info Section
