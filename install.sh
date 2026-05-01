@@ -17,40 +17,41 @@ if [ ! -f "$UV_EXE" ]; then
     curl -LsSf https://astral.sh/uv/install.sh | sh 
 fi
 
-# Check for VLC Media Player
-echo "Checking for VLC..."
-if command -v vlc >/dev/null 2>&1; then
-    echo "VLC is already installed."
-else
-    echo "VLC was not found. This application requires VLC for the scene playback viewer."
-    read -p "Would you like to attempt to install VLC now? (y/n): " vlc_choice
-    
-    if [[ "$vlc_choice" =~ ^[Yy]$ ]]; then
-        if [[ "$OSTYPE" == "darwin"* ]]; then
-            echo "Detected macOS. Using Homebrew..."
-            if command -v brew >/dev/null 2>&1; then
-                brew install --cask vlc
-            else
-                echo "[!] Homebrew not found. Please install VLC manually from https://www.videolan.org/"
-                exit 1
-            fi
-        elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
-            echo "Detected Linux. Using apt..."
-            sudo apt update && sudo apt install vlc -y
-        else
-            echo "[!] Unsupported OS for automatic install. Please install VLC manually."
-            exit 1
+# --- System Dependency Check ---
+install_dependencies() {
+    # Detect Operating System
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "Detected macOS..."
+        if ! command -v brew &> /dev/null; then
+            echo "[!] Homebrew not found. Please install it at https://brew.sh/ to automate this process."
+            return 1
         fi
-
-        # Verify installation success
-        if [ $? -ne 0 ]; then
-            echo "[!] VLC installation failed."
-            exit 1
-        fi
-    else
-        echo "Skipping VLC installation. Please install it manually to ensure the app works."
-        exit 1
+        echo "Installing VLC and Tcl/Tk via Homebrew..."
+        brew install --cask vlc
+        brew install tcl-tk
+    elif [ -f /etc/os-release ]; then
+        . /etc/os-release
+        case "$ID" in
+            ubuntu|debian|linuxmint|lubuntu)
+                echo "Detected Debian-based system ($ID)..."
+                sudo apt update && sudo apt install -y python3-tk vlc
+                ;;
+            arch|manjaro)
+                echo "Detected Arch-based system ($ID)..."
+                sudo pacman -S --needed --noconfirm tk vlc
+                ;;
+            *)
+                echo "Unknown Linux distribution. Please install 'tk' and 'vlc' manually."
+                ;;
+        esac
     fi
+}
+
+# Ask the user for dependency check
+read -p "Check and install system dependencies (VLC & Tkinter)? [y/n] " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    install_dependencies
 fi
 
 # Add the isolated folder to this session's PATH 
@@ -61,9 +62,9 @@ echo "------------------------------------------"
 echo "Install options:"
 echo "1) NVIDIA CUDA 13.0 (RTX, newer GPUs)"
 echo "2) NVIDIA CUDA 12.6 (GTX, older GPUs)"
-echo "3) Intel Arc/Xe (XPU)" [cite: 2]
+echo "3) Intel Arc/Xe (XPU)" 
 echo "4) AMD ROCm"
-echo "5) CPU (Slow)"
+echo "5) CPU (Apple MAC: Fast with MPS support, but slow on regular CPU)"
 echo "------------------------------------------"
 
 read -p "Select an option [1-5]: " user_choice
