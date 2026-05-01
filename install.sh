@@ -84,7 +84,7 @@ esac
 
 echo "Running installer with extra: $EXTRA..."
 uv sync --extra "$EXTRA"
-echo "Installation succesful, you can now open run.bat"
+echo "Installation succesful, you can now open run.sh"
 
 # Pause functionality for shell
 read -p "Press [Enter] to continue..."
