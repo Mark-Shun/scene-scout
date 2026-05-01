@@ -38,7 +38,7 @@ install_dependencies() {
                 ;;
             arch|manjaro)
                 echo "Detected Arch-based system ($ID)..."
-                sudo pacman -S --needed --noconfirm tk vlc
+                sudo pacman -S --needed --noconfirm tk vlc vlc-plugin-ffmpeg vlc-plugin-mpeg2 vlc-plugin-x246 vlc-plugin-x265 vlc-plugin-matroska
                 ;;
             *)
                 echo "Unknown Linux distribution. Please install 'tk' and 'vlc' manually."
