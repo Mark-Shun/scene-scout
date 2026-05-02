@@ -6,7 +6,10 @@ cd "$SCRIPT_DIR" || { echo "Failed to enter directory"; exit 1; }
 UV_DIR="$SCRIPT_DIR/.uv" 
 UV_EXE="$UV_DIR/uv" 
 export UV_PYTHON_INSTALL_DIR="$UV_DIR/python" 
-export UV_CACHE_DIR="$UV_DIR/uv_cache" 
+export UV_CACHE_DIR="$UV_DIR/uv_cache"
+
+# Set UV options
+export UV_VENV_CLEAR=1
 
 # Install uv locally if missing 
 if [ ! -f "$UV_EXE" ]; then

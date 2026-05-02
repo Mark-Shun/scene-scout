@@ -9,6 +9,9 @@ set "UV_EXE=%UV_DIR%\uv.exe"
 set "UV_PYTHON_INSTALL_DIR=%UV_DIR%\python" 
 set "UV_CACHE_DIR=%UV_DIR%\uv_cache" 
 
+:: Set UV options
+set "UV_VENV_CLEAR=1"
+
 :: Install uv locally if missing 
 if not exist "%UV_EXE%" (
     echo Downloading uv to isolated folder... 

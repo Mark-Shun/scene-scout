@@ -1,5 +1,6 @@
 import sys
 from update_checker import check_for_update
+import multiprocessing
 
 if __name__ == '__main__':
     check_for_update()
@@ -8,6 +9,14 @@ if __name__ == '__main__':
         from cli import cli_mode
         cli_mode()
     else:
+        if sys.platform == 'darwin':
+            # Initialize multiprocessing for macOS stability
+            try:
+                multiprocessing.set_start_method('spawn', force=True)
+            except RuntimeError:
+                pass
+            multiprocessing.freeze_support()
+
         from tkinter import messagebox
         from gui import SceneScoutApp, show_splash
         splash, splash_root = show_splash()
