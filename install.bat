@@ -32,7 +32,7 @@ choice /C YN /M "Would you like to install VLC via winget now?"
 :: CHOICE sets errorlevel: 1 for Y, 2 for N
 :: Note: 'if errorlevel' checks if value is >= the number. Check 2 first.
 if errorlevel 2 (
-    echo Skipping automatic VLC installation. Please install VLC manually at: https://www.videolan.org/ [cite: 4, 5]
+    echo Skipping automatic VLC installation. Please install VLC manually at: https://www.videolan.org/
     pause 
     exit /b 1 
 )

@@ -1,5 +1,6 @@
 import json
 import warnings
+import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -31,3 +32,25 @@ def save_config(config: Dict[str, Any]) -> None:
             json.dump(config, f, indent=2)
     except IOError as e:
         print(f'Error saving config file: {e}')
+
+def get_vlc_args():
+    """Returns platform-specific VLC initialization flags."""
+    args = [
+        '--ignore-config',
+        '--quiet', 
+        '--no-audio', 
+        '--no-sub-autodetect-file', 
+        '--no-osd',       
+        '--no-spu',       
+        '--no-stats',     
+        '--no-video-title-show'
+    ]
+    
+    if sys.platform == 'darwin':
+        # Required for rendering in a Cocoa-based container on macOS
+        args.append('--vout=macosx')
+    elif sys.platform.startswith('linux'):
+        # Prevents X11 threading issues on Linux
+        args.append('--no-xlib')
+        
+    return args

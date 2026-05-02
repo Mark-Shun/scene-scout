@@ -247,8 +247,7 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
         return 'completed'
     images_to_process = [p for p in paths_to_process if p.lower().endswith(config.IMAGE_EXTENSIONS)]
     videos_to_process = [p for p in paths_to_process if p.lower().endswith(config.VIDEO_EXTENSIONS)]
-    if progress_callback:
-        progress_callback(f'Indexing {len(images_to_process)} images and {len(videos_to_process)} videos...\nCheck the terminal for details.')
+
     processed_count = 0
     total_to_process = len(paths_to_process)
     if(total_to_process > 0):
@@ -260,6 +259,14 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
             batch_paths = images_to_process[i:i + batch_size]
             batch_images, valid_paths, mtimes = ([], [], [])
             for path in batch_paths:
+                if progress_callback:
+                    progress_callback({
+                        "current": processed_count,
+                        "total": total_to_process,
+                        "file": f"Batch of {len(valid_paths)} images",
+                        "type": "image"
+                    })
+
                 try:
                     batch_images.append(Image.open(path).convert('RGB'))
                     valid_paths.append(path)
@@ -293,6 +300,12 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
             if is_cancelled():
                 conn.close()
                 return 'cancelled'
+            if progress_callback:
+                progress_callback({
+                    "current": processed_count + 1,
+                    "total": total_to_process,
+                    "file": os.path.basename(path)
+                })
             try:
                 cursor.execute('DELETE FROM scene_embeddings WHERE filepath = ?', (path,))
                 video_processed = False

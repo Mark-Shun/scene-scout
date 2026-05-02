@@ -135,17 +135,9 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.current_theme = "clam"
 
         self.theme_var = tk.StringVar(master=self, value=self.current_theme)
-        self.vlc_instance = vlc.Instance(
-            '--ignore-config',
-            '--quiet', 
-            '--no-xlib', # For Linux compatibility
-            '--no-audio', # Force disable audio
-            '--no-sub-autodetect-file', # Don't show subtitles
-            '--no-osd',       # Disables On-Screen Display (volume bars, etc.)
-            '--no-spu',       # Disables Subtitles/Sub-picture units
-            '--no-stats',     # Disables internal logging statistics
-            '--no-video-title-show' # Disables the filename appearing at the start
-        )
+
+        vlc_args = config.get_vlc_args()
+        self.vlc_instance = vlc.Instance(* vlc_args)
         self.player = self.vlc_instance.media_player_new()
         self.vlc_events = self.player.event_manager()
         self.vlc_events.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_end_reached)
@@ -469,7 +461,6 @@ class SceneScoutApp(TkinterDnD.Tk):
     def _update_status_ui(self, message: str):
         """Actual UI update logic that runs safely on the main loop."""
         self.status_var.set(message)
-        print(message)
         if self.splash_ref and self.splash_ref.winfo_exists():
             if hasattr(self.splash_ref, 'status_label'):
                 try:
@@ -627,13 +618,13 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         self.update_status(f'Loading model: {config.DEFAULT_MODEL}...')
         
-        # Pass the captured values to the task[cite: 18]
+        # Pass the captured values to the task
         self.threaded_task(self.load_model_task, device_choice, use_trt)
 
     def load_model_task(self, device_choice, use_trt):
-        """Background task runner[cite: 18]."""
+        """Background task runner."""
         try:
-            # Pass values through to load_model[cite: 18]
+            # Pass values through to load_model
             self.load_model(device_choice=device_choice, use_trt=use_trt)
             self.after(0, self.on_model_load_finished)
         except Exception as e:
@@ -669,19 +660,31 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.index_popup.title('Indexing files')
         self.index_popup.transient(self)
         self.index_popup.grab_set()
-        self.index_popup.minsize(300, 130)
+        self.index_popup.minsize(500, 220) # Slightly wider for filenames
         
         frame = ttk.Frame(self.index_popup, padding=20)
-        frame.pack()
+        frame.pack(fill='both', expand=True)
         
-        self.index_status_var = tk.StringVar(master=self.index_popup, value='Initializing...')
-        status_label = ttk.Label(frame, textvariable=self.index_status_var, font=('Arial', 10))
-        status_label.pack(pady=(0, 10))
+        # Label for the current file name
+        self.index_filename_var = tk.StringVar(master=self.index_popup, value='Initializing...')
+        ttk.Label(frame, textvariable=self.index_filename_var, font=('Arial', 10, 'bold'), wraplength=400).pack(pady=(0, 10))
+        
+        # Progress Bar (linked to DoubleVar)
+        self.progress_var = tk.DoubleVar(master=self.index_popup, value=0)
+        self.progress_bar = ttk.Progressbar(frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill='x', pady=5)
+        
+        # Status/Stats Label (adds whitespace via pady)
+        self.index_stats_var = tk.StringVar(master=self.index_popup, value='')
+        ttk.Label(frame, textvariable=self.index_stats_var, font=('Arial', 9)).pack(pady=(10, 15))
+        self.index_terminal_info = tk.StringVar(master=self.index_popup, value='Check terminal for more info.')
+        ttk.Label(frame, textvariable=self.index_terminal_info, font=('Arial', 9)).pack(pady=(10, 15))
         
         cancel_button = ttk.Button(frame, text='Cancel', command=self.cancel_indexing)
         cancel_button.pack()
         
         self.index_popup.update_idletasks()
+
         width = self.index_popup.winfo_width()
         height = self.index_popup.winfo_height()
         x = self.winfo_x() + (self.winfo_width() // 2) - (width // 2)
@@ -698,13 +701,31 @@ class SceneScoutApp(TkinterDnD.Tk):
         if hasattr(self, 'index_popup') and self.index_popup:
             self.index_popup.grab_release()
 
+    def update_gui_progress(self, data):
+        if isinstance(data, dict):
+            curr = data.get('current', 0)
+            total = data.get('total', 1)
+            fname = data.get('file', '')
+            
+            # Calculate percentage for the grey bar
+            percent = (curr / total) * 100
+            
+            # Update the UI on the main thread
+            self.after(0, lambda: self.progress_var.set(percent))
+            self.after(0, lambda: self.index_filename_var.set(f"File: {fname}"))
+            self.after(0, lambda: self.index_stats_var.set(f"Processed {curr} of {total} files"))
+            
+        else:
+            # Fallback for old-style string messages (e.g. "Checking files...")
+            self.after(0, lambda: self.index_filename_var.set(str(data)))
+
     def index_task(self, folder_path: str):
         assert self.db_path is not None
         try:
             result = index_files(
                 folder_path, self.device, self.processor, self.model, self.db_path,
                 batch_size=self.input_batch_size.get(),
-                progress_callback=lambda msg: self.after(0, lambda m=msg: (self.index_status_var.set(m), self.update_status(m))),
+                progress_callback=self.update_gui_progress,
                 max_num_patches=self.max_patches_var.get(),
                 fast_scene_detect=self.fast_detect_var.get(),
                 toggle_preview_callback=self.toggle_preview_playback,
@@ -1053,6 +1074,17 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.video_container.pack(fill='both', expand=True) 
             self.after(10, lambda: self._start_vlc_playback(path, start_ms, end_ms))
 
+    def _set_vlc_window_handle(self, window_id):
+        """Applies the correct window handle based on the platform."""
+        if sys.platform == 'win32':
+            self.player.set_hwnd(window_id)
+        elif sys.platform == 'darwin':
+            # macOS uses the NSObject handle for Cocoa windows
+            self.player.set_nsobject(window_id)
+        else:
+            # Linux and other Unix-like systems use X11
+            self.player.set_xwindow(window_id)
+
     def _start_vlc_playback(self, path, start_ms, end_ms):
         try:
             media = self.vlc_instance.media_new(path)
@@ -1073,10 +1105,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
             # Assign window handle
             h = self.video_container.winfo_id()
-            if sys.platform == 'win32':
-                self.player.set_hwnd(h)
-            else:
-                self.player.set_xwindow(h)
+            self._set_vlc_window_handle(h)
 
             self.player.play()
             
@@ -1197,7 +1226,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
 
                 if sys.platform == 'darwin':
-                    vlc_flags = [f":start-time={start_sec}", "--no-playlist-enqueue"]
+                    vlc_flags = [f":start-time={start_sec}"]
                 else:
                     vlc_flags = [f":start-time={start_sec}", "--one-instance", "--no-playlist-enqueue"]
 
