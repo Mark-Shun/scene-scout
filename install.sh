@@ -26,30 +26,29 @@ install_dependencies() {
     # Detect Operating System
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "Detected macOS..."
-        if [ ! -d "/Applications/VLC.app" ]; then
-            if ! command -v brew &> /dev/null; then
-                read -p "[?] Homebrew not found. Would you like to install it now? [y/n] " -n 1 -r
-                echo
-                if [[ $REPLY =~ ^[Yy]$ ]]; then
-                    echo "Installing Homebrew..."
-                    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-                    
-                    # Configure Homebrew for the current shell session (Required for Apple Silicon)
-                    if [[ -f /opt/homebrew/bin/brew ]]; then
-                        eval "$(/opt/homebrew/bin/brew shellenv)"
-                    elif [[ -f /usr/local/bin/brew ]]; then
-                        eval "$(/usr/local/bin/brew shellenv)"
-                    fi
-                else
-                    echo "[!] Homebrew is required for automated dependency installation. Skipping..."
-                    return 1
-                fi
-            fi
-            echo "Installing VLC and Tcl/Tk via Homebrew..."
-            brew install --cask vlc
-            brew install tcl-tk
+        if [[ -f /opt/homebrew/bin/brew ]]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
         fi
-        echo "VLC is already installed..."
+        if ! command -v brew &> /dev/null; then
+            read -p "[?] Homebrew not found. Would you like to install it now? [y/n] " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                echo "Installing Homebrew..."
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                # Configure Homebrew for the current shell session (Required for Apple Silicon)
+                if [[ -f /opt/homebrew/bin/brew ]]; then
+                    eval "$(/opt/homebrew/bin/brew shellenv)"
+                elif [[ -f /usr/local/bin/brew ]]; then
+                    eval "$(/usr/local/bin/brew shellenv)"
+                fi
+            else
+                echo "[!] Homebrew is required for automated dependency installation. Skipping..."
+                return 1
+            fi
+        fi
+        echo "Installing/Updating VLC and Tcl/Tk via Homebrew..."
+        brew install --cask vlc
+        brew install tcl-tk
     elif [ -f /etc/os-release ]; then
         . /etc/os-release
         case "$ID" in
