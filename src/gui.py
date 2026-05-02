@@ -91,6 +91,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def __init__(self, splash_ref=None):
         super().__init__()
+        self.is_active = True
         self.title('Scene Scout')
         self.splash_ref = splash_ref
         self.config = config.load_config()
@@ -156,6 +157,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         # when starting, lock interaction until model is ready
         self.set_controls_enabled(False)
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
         self.withdraw()
 
 
@@ -417,6 +419,11 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         paned_window.add(preview_frame, weight=1)
 
+    def _on_closing(self):
+        """Cleanup resources before destroying the window."""
+        self._stop_video_loop()
+        self.destroy()
+
     def on_handle_drop(self, event):
         # tkinterdnd2 returns paths in a specific format (spaces are handled with braces)
         paths = self.tk.splitlist(event.data)
@@ -453,8 +460,10 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.update_status("Unsupported file type dropped.")
 
     def threaded_task(self, target_func: Callable, *args):
-        thread = threading.Thread(target=target_func, args=args, daemon=True)
-        thread.start()
+        # Only spawn a thread if GUI is actively running
+        if getattr(self, 'is_running', True):
+            thread = threading.Thread(target=target_func, args=args, daemon=True)
+            thread.start()
 
     def set_controls_enabled(self, enabled: bool):
         state = 'normal' if enabled else 'disabled'
