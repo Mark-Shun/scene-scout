@@ -199,7 +199,7 @@ def cli_mode():
     parser.add_argument('--json', action='store_true', help='Output search results in JSON format')
     parser.add_argument('--top-k', type=int, default=10, help='Results to return')
     parser.add_argument('--db', type=str, default='siglip2_embeddings.db', help='DB path')
-    parser.add_argument('--device', type=str, choices=['cuda', 'cpu', 'dml'], help='Force device')
+    parser.add_argument('--device', type=str, choices=['cuda', 'cpu', 'dml', 'xpu', 'mps'], help='Force device')
     parser.add_argument('--max-patches', type=int, default=256, help='Max model patches')
     parser.add_argument('--batch-size', type=int, default=16, help='Inference batch size')
     parser.add_argument('--accurate', action='store_true', help='Use accurate detection')
