@@ -36,12 +36,10 @@ except Exception:
 
 from PIL import Image, ImageTk
 from transformers import AutoProcessor, Siglip2Model
-
+from model_loader import get_compute_device
 from database import init_db, db_is_empty, cleanup_orphaned_entries, search_scenes, search_db
 from processing import index_files, get_query_embedding
 import config
-
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
 big_logo = os.path.join(os.path.dirname(__file__),"../", "assets", "logo", "scene-scout-logo.png")
 text_logo = os.path.join(os.path.dirname(__file__),"../", "assets", "logo", "scene-scout-text-logo.png")
@@ -88,27 +86,6 @@ def show_splash():
     splash.lift()
     return splash, root
 
-def load_gui_config():
-    """Load GUI config from JSON, return dict with defaults."""
-    defaults = {"theme": "clam"}
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                return {**defaults, **json.load(f)}
-        except Exception:
-            pass
-    return defaults
-
-
-def save_gui_config(config_dict):
-    """Save GUI config to JSON."""
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config_dict, f, indent=2)
-    except Exception as e:
-        print(f"Error saving GUI config: {e}")
-
-
 class SceneScoutApp(TkinterDnD.Tk):
 
     def __init__(self, splash_ref=None):
@@ -116,7 +93,6 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.title('Scene Scout')
         self.splash_ref = splash_ref
         self.config = config.load_config()
-        self.gui_config = load_gui_config()
         screen_width = (self.winfo_screenwidth())-200
         screen_height = (self.winfo_screenheight())-200
         self.geometry(f"{screen_width}x{screen_height}+0+0")
@@ -128,6 +104,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.query_image_path: Optional[str] = None
         self.current_display_path: Optional[str] = None
         self.search_results: List[Tuple[str, float, str, Optional[float], Optional[int], Optional[int], Optional[int]]] = []
+        self.use_trt_var = tk.BooleanVar(master=self, value=self.config.get('use_trt', False))
+        self.use_trt_var.trace_add("write", lambda *args: self.save_trt_preference())
         self.use_vlc_open_var = tk.BooleanVar(
             master=self, 
             value=self.config.get('use_vlc_open', True)
@@ -148,7 +126,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.tk_image: Optional[ImageTk.PhotoImage] = None
         self.zoom_timer: Optional[str] = None
         self.style = ThemedStyle(self)
-        self.current_theme = self.gui_config.get("theme", "clam")
+        self.current_theme = self.config.get("theme", "clam")
         available_themes = self.style.theme_names()
         if self.current_theme in available_themes:
             self.style.theme_use(self.current_theme)
@@ -171,7 +149,11 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.player = self.vlc_instance.media_player_new()
         self.vlc_events = self.player.event_manager()
         self.vlc_events.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_end_reached)
-        
+
+        device_str, _, _, _ = get_compute_device(self.config.get("device"))
+        from model_loader import TRT_AVAILABLE
+        self.show_trt_option = (device_str == 'cuda' and TRT_AVAILABLE)
+
         self.drop_target_register(DND_FILES)
         self.dnd_bind('<<Drop>>', self.on_handle_drop)
 
@@ -274,7 +256,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         options_frame.pack(fill='x', pady=5)
         
         # GPU device or CPU detection
-        device_str, device_msg = config.setup_device()
+        device_str, device_msg, _, _ = get_compute_device()
         ttk.Label(options_frame, text='Compute Device:').pack(anchor='w', pady=(5, 0))
         self.device_var = tk.StringVar(master=self, value=device_str)
         
@@ -297,6 +279,18 @@ class SceneScoutApp(TkinterDnD.Tk):
         )
         self.device_combobox.pack(fill='x')
         ttk.Label(options_frame, text=f'Auto-detected: {device_msg}', font=('', 8, 'italic')).pack(anchor='w')
+
+        # Tensor RT option
+        if self.show_trt_option:
+            self.trt_check = ttk.Checkbutton(
+                options_frame,
+                text='Use TensorRT Acceleration', 
+                variable=self.use_trt_var,
+                onvalue=True, 
+                offvalue=False,
+                command=self.save_trt_preference
+            )
+            self.trt_check.pack(anchor='w', pady=(5, 0))
 
         # Detection Method Toggle (Replaces Checkbox)
         ttk.Label(options_frame, text='Detection method:').pack(anchor='w', pady=(5, 0))
@@ -458,22 +452,30 @@ class SceneScoutApp(TkinterDnD.Tk):
                 except Exception:
                     pass
     
+    def save_trt_preference(self):
+        """Save the TensorRT preference to the GUI config file."""
+        self.config['use_trt'] = self.use_trt_var.get()
+        config.save_config(self.config)
+
     def save_vlc_preference(self):
         """Save the VLC opening preference to the config file."""
         self.config['use_vlc_open'] = self.use_vlc_open_var.get()
         config.save_config(self.config)
 
     def update_status(self, message: str):
+        """Thread-safe wrapper to schedule UI updates on the main thread."""
+        self.after(0, self._update_status_ui, message)
+
+    def _update_status_ui(self, message: str):
+        """Actual UI update logic that runs safely on the main loop."""
         self.status_var.set(message)
         print(message)
-        # Check if the splash reference exists and the window is still alive
         if self.splash_ref and self.splash_ref.winfo_exists():
             if hasattr(self.splash_ref, 'status_label'):
                 try:
                     self.splash_ref.status_label.config(text=message)
                     self.splash_ref.update()
-                except tk.TclError:
-                    # Fallback in case it was destroyed between the check and the call
+                except (tk.TclError, AttributeError):
                     pass
         self.update_idletasks()
 
@@ -595,29 +597,44 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.after(0, lambda: messagebox.showinfo('Complete', f'Removed {count} orphaned embeddings.'))
         self.update_status('Cleanup complete.')
 
-    def load_model(self):
-        # Determine user choice from the GUI dropdown
-        device_choice = self.device_var.get() if hasattr(self, 'device_var') else 'cpu'
+    def load_model(self, device_choice=None, use_trt=None):
+        """
+        Loads the model. If no arguments are passed, it defaults F
+        to the current UI variables.
+        """
+        # Fallback to the current UI values if nothing is passed
+        if device_choice is None:
+            device_choice = self.device_var.get()
+        if use_trt is None:
+            use_trt = self.use_trt_var.get()
         
-        # The callback 'self.update_status' updates the splash screen automatically
-        self.model, self.processor, self.device, self.dtype, active_device_str = load_siglip_model(
+        # Store results in instance variables (not Tkinter variables)
+        self.model, self.processor, self.device, self.dtype, self._last_active_device = load_siglip_model(
             device_choice, 
-            status_callback=self.update_status
+            status_callback=self.update_status,
+            use_trt=use_trt
         )
-        
-        if hasattr(self, 'device_var'):
-            self.device_var.set(active_device_str)
 
     def threaded_load_model(self):
+        """Captures UI state on the main thread before starting the background task."""
         self.load_model_button.config(state='disabled')
         self.index_button.config(state='disabled')
         self.search_button.config(state='disabled')
+        
+        # CAPTURE VALUES HERE (Main Thread)
+        device_choice = self.device_var.get()
+        use_trt = self.use_trt_var.get()
+        
         self.update_status(f'Loading model: {config.DEFAULT_MODEL}...')
-        self.threaded_task(self.load_model_task)
+        
+        # Pass the captured values to the task[cite: 18]
+        self.threaded_task(self.load_model_task, device_choice, use_trt)
 
-    def load_model_task(self):
+    def load_model_task(self, device_choice, use_trt):
+        """Background task runner[cite: 18]."""
         try:
-            self.load_model()
+            # Pass values through to load_model[cite: 18]
+            self.load_model(device_choice=device_choice, use_trt=use_trt)
             self.after(0, self.on_model_load_finished)
         except Exception as e:
             self.after(0, lambda: messagebox.showerror('Model Error', f'Failed to load model: {e}'))
@@ -625,6 +642,11 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.after(0, lambda: self.update_status('Error loading model.'))
 
     def on_model_load_finished(self):
+        """Updates the GUI once the background loading thread is complete."""
+        # Now safely update the Tkinter variable on the main thread
+        if hasattr(self, '_last_active_device') and hasattr(self, 'device_var'):
+            self.device_var.set(self._last_active_device)
+
         self.update_status(f'Model loaded on {str(self.device).upper()}. Ready!')
         self.set_controls_enabled(True)
         self.load_model_button.config(text='Reload Model')
@@ -1089,8 +1111,10 @@ class SceneScoutApp(TkinterDnD.Tk):
             self._playback_toggle_btn.config(text=f'Toggle preview playback ({state})')
         # if we just disabled playback, stop any active loop
         if not config.SCENE_PLAYBACK:
-            self._stop_video_loop()
+            self._stop_video_loop()    
+        
         # refresh whatever is currently selected so the preview reflects the new mode
+        self.last_selected_entry = None
         self.on_result_select(None)
 
     def on_canvas_click(self, event: tk.Event):
@@ -1170,7 +1194,13 @@ class SceneScoutApp(TkinterDnD.Tk):
             # Handle VLC opening logic
             if self.use_vlc_open_var.get():
                 start_sec = start_ms / 1000.0
-                vlc_flags = [f":start-time={start_sec}", "--one-instance", "--no-playlist-enqueue"]
+
+
+                if sys.platform == 'darwin':
+                    vlc_flags = [f":start-time={start_sec}", "--no-playlist-enqueue"]
+                else:
+                    vlc_flags = [f":start-time={start_sec}", "--one-instance", "--no-playlist-enqueue"]
+
                 try:
                     if sys.platform == 'win32':
                         vlc_path = r"C:\Program Files\VideoLAN\VLC\vlc.exe"
@@ -1221,8 +1251,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         try:
             self.style.theme_use(new_theme)
             self.current_theme = new_theme
-            self.gui_config["theme"] = new_theme
-            save_gui_config(self.gui_config)
+            self.config['theme'] = new_theme
+            config.save_config(self.config)
             self.update_status(f"Theme changed to: {new_theme}")
         except Exception as e:
             messagebox.showerror("Theme Error", f"Failed to apply theme: {e}")

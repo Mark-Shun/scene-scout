@@ -1,6 +1,7 @@
 import torch
 from transformers import AutoProcessor, Siglip2Model
 import config
+import os
 
 # Hardware Backend Imports
 try:
@@ -12,6 +13,16 @@ try:
     import intel_extension_for_pytorch as ipex
 except ImportError:
     ipex = None
+
+try:
+    import torch_tensorrt
+    TRT_AVAILABLE = True
+except ImportError:
+    torch_tensorrt = None
+    TRT_AVAILABLE = False
+
+# Define a path for the cached engine
+ENGINE_CACHE_PATH = os.path.join(os.path.dirname(__file__), "../", "siglip2_trt_engine.ts")
 
 def get_compute_device(device_choice=None):
     """
@@ -43,10 +54,10 @@ def get_compute_device(device_choice=None):
         
     return 'cpu', 'No compatible GPU found. Using CPU.', torch.device('cpu'), torch.float32
 
-def load_siglip_model(device_choice=None, status_callback=None):
+def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
     """Initializes the processor and model."""
     device_str, msg, device, dtype = get_compute_device(device_choice)
-    
+
     def update(text):
         if status_callback:
             status_callback(text)
@@ -62,6 +73,27 @@ def load_siglip_model(device_choice=None, status_callback=None):
         torch_dtype=dtype, 
         attn_implementation=attn_implementation
     ).to(device)
+
+    if use_trt and device_str == 'cuda' and TRT_AVAILABLE:
+        import logging
+        import warnings
+        update("Applying TorchDynamo TensorRT optimization...")
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                logging.getLogger("torch_tensorrt").setLevel(logging.ERROR)
+                torch._dynamo.config.suppress_errors = True
+                
+            # Dynamo natively handles Hugging Face kwargs and dynamic batch sizes,
+            # while still utilizing the TensorRT backend for massive speedups.
+            model.vision_model = torch.compile(
+                model.vision_model, 
+                backend="tensorrt", 
+                dynamic=True
+            )
+            update("TensorRT JIT Compiler Active! (Optimization runs on first search)")
+        except Exception as e:
+            update(f"TensorRT Compilation Error: {e}. Falling back to standard CUDA.")
     
     model.eval()
     return model, processor, device, dtype, device_str

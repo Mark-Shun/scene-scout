@@ -22,18 +22,27 @@ dependencies = [
 [project.optional-dependencies]
 cpu   = ["torch==2.11.0"]
 cu126 = ["torch==2.11.0"]
+cu126-trt = ["torch==2.11.0", "torch-tensorrt ; sys_platform != 'darwin'"]
 cu130 = ["torch==2.11.0"]
-dml   = ["torch==2.4.1", "torch-directml"]
+cu130-trt = ["torch==2.11.0", "torch-tensorrt ; sys_platform != 'darwin'"]
+dml   = ["torch==2.4.1", "torch-directml ; sys_platform == 'win32'"]
 rocm  = ["torch==2.11.0", "triton-rocm==3.6.0 ; sys_platform == 'linux'"]
-xpu   = ["torch==2.11.0", "triton-xpu==3.7.0"]
+xpu   = ["torch==2.11.0", "triton-xpu==3.7.0 ; sys_platform != 'darwin'"]
 
 [tool.uv]
+environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'win32'",
+    "sys_platform == 'linux'"
+]
 package = false
 conflicts = [
   [
     { extra = "cpu" },
     { extra = "cu126" },
+    { extra = "cu126-trt" },
     { extra = "cu130" },
+    { extra = "cu130-trt" },
     { extra = "dml" },
     { extra = "rocm" },
     { extra = "xpu" },
@@ -42,10 +51,12 @@ conflicts = [
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu130", extra = "cu130" },
   { index = "pytorch-cu126", extra = "cu126" },
+  { index = "pytorch-cu126", extra = "cu126-trt" },
+  { index = "pytorch-cu130", extra = "cu130" },
+  { index = "pytorch-cu130", extra = "cu130-trt" },
   { index = "pytorch-rocm",  extra = "rocm", marker = "sys_platform == 'linux'" },
-  { index = "pytorch-xpu",   extra = "xpu" },
+  { index = "pytorch-xpu",   extra = "xpu", marker = "sys_platform != 'darwin'" },
   { index = "pytorch-cpu",   extra = "cpu" },
   { index = "pytorch-cpu",   extra = "dml" },
 ]
@@ -54,7 +65,7 @@ triton-rocm = [
   { index = "pytorch-rocm", marker = "sys_platform == 'linux'" },
 ]
 triton-xpu = [
-  { index = "pytorch-xpu" },
+  { index = "pytorch-xpu", marker = "sys_platform != 'darwin'" },
 ]
 
 [[tool.uv.index]]

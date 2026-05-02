@@ -46,6 +46,7 @@ install_dependencies() {
             brew install --cask vlc
             brew install tcl-tk
         fi
+        echo "VLC is already installed..."
     elif [ -f /etc/os-release ]; then
         . /etc/os-release
         case "$ID" in
@@ -76,12 +77,12 @@ export PATH="$UV_DIR:$PATH"
 
 # Interactive Menu
 echo "------------------------------------------"
-echo "Install options:"
+echo "Install options for graphics card acceleration:"
 echo "1) NVIDIA CUDA 13.0 (RTX, newer GPUs)"
 echo "2) NVIDIA CUDA 12.6 (GTX, older GPUs)"
 echo "3) Intel Arc/Xe (XPU)" 
-echo "4) AMD ROCm"
-echo "5) CPU (Apple MAC: Fast with MPS support, but slow on regular CPU)"
+echo "4) AMD ROCm (Linux only)"
+echo "5) CPU (Apple MAC: Fast with MPS support (M chips), but slow on regular CPU)"
 echo "------------------------------------------"
 
 read -p "Select an option [1-5]: " user_choice
@@ -100,8 +101,22 @@ case "$user_choice" in
 esac
 
 echo "Running installer with extra: $EXTRA..."
-uv sync --extra "$EXTRA"
-echo "Installation succesful, you can now open run.sh"
+if ! uv venv; then
+    echo "Error: Failed to create the virtual environment."
+    read -p "Press [Enter] to continue..."
+    exit 1
+fi
 
-# Pause functionality for shell
-read -p "Press [Enter] to continue..."
+if uv pip install -e .["$EXTRA"]; then
+    echo "------------------------------------------"
+    echo "Installation successful, you can now open run.sh"
+    echo "------------------------------------------"
+    read -p "Press [Enter] to continue..."
+else
+    echo "------------------------------------------"
+    echo "Error: Something went wrong during the installation."
+    echo "Please check the logs above for details."
+    echo "------------------------------------------"
+    read -p "Press [Enter] to continue..."
+    exit 1
+fi

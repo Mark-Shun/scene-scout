@@ -8,7 +8,7 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 warnings.filterwarnings('ignore', category=Image.DecompressionBombWarning)
 
-CONFIG_FILE = Path(__file__).parent / 'siglip2_config.json'
+CONFIG_FILE = Path(__file__).parent / 'scene_scout_config.json'
 DEFAULT_MODEL = 'google/siglip2-so400m-patch16-naflex'
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
 VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm')

@@ -51,30 +51,45 @@ echo VLC installed successfully.
 :MENU
 :: Interactive Menu
 echo ------------------------------------------
-echo Install options:
+echo Install options for graphics card acceleration:
 echo 1) NVIDIA CUDA 13.0 (RTX, newer GPUs)
 echo 2) NVIDIA CUDA 12.6 (GTX, older GPUs)
 echo 3) DirectML (AMD/Intel or Nvidia GPU, Windows only and a bit slower than native)
 echo 4) Intel Arc/Xe (XPU)
-echo 5) AMD ROCm (Note: Linux only)
-echo 6) CPU (Slow)
+echo 5) CPU (Slow)
 echo ------------------------------------------
 
-set /p user_choice="Select an option [1-6]: "
+set /p user_choice="Select an option [1-5]: "
 
-:: Map choices to uv extras
-if "%user_choice%"=="1" set "EXTRA=cu130"
-if "%user_choice%"=="2" set "EXTRA=cu126"
+:: Handle NVIDIA-specific TensorRT question
+if "%user_choice%"=="1" goto :TRT_PROMPT
+if "%user_choice%"=="2" goto :TRT_PROMPT
+goto :PROCEED_NORMAL
+
+:TRT_PROMPT
+echo.
+echo TensorRT can significantly speed up search on NVIDIA GPUs.
+echo Note: This requires an extra ~1GB download and compilation time.
+choice /C YN /M "Would you like to install with TensorRT optimization? "
+if errorlevel 2 (
+    if "%user_choice%"=="1" set "EXTRA=cu130"
+    if "%user_choice%"=="2" set "EXTRA=cu126"
+) else (
+    if "%user_choice%"=="1" set "EXTRA=cu130-trt"
+    if "%user_choice%"=="2" set "EXTRA=cu126-trt"
+)
+goto :INSTALL_START
+
+:PROCEED_NORMAL
 if "%user_choice%"=="3" (
     set "EXTRA=dml"
     set "FLAGS=--prerelease=allow"
-    :: Force 3.12 only for DirectML to satisfy Torch 2.4.1 requirements
     set "PY_VER=--python 3.12"
 )
 if "%user_choice%"=="4" set "EXTRA=xpu"
-if "%user_choice%"=="5" set "EXTRA=rocm"
-if "%user_choice%"=="6" set "EXTRA=cpu"
+if "%user_choice%"=="5" set "EXTRA=cpu"
 
+:INSTALL_START
 :: Validation check 
 if "%EXTRA%"=="" (
     echo Error: Invalid selection. 
@@ -83,7 +98,8 @@ if "%EXTRA%"=="" (
 )
 
 echo Running installer with extra: %EXTRA%...
-uv sync --extra %EXTRA% %FLAGS% %PY_VER%
+uv venv
+uv pip install -e .[%EXTRA%] %FLAGS% %PY_VER%
 
 :: Check if the previous command failed (errorlevel >= 1)
 if errorlevel 1 (
