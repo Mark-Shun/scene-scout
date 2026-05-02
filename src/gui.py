@@ -126,13 +126,13 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.tk_image: Optional[ImageTk.PhotoImage] = None
         self.zoom_timer: Optional[str] = None
         self.style = ThemedStyle(self)
-        self.current_theme = self.config.get("theme", "clam")
+        self.current_theme = self.config.get("theme", "radiance")
         available_themes = self.style.theme_names()
         if self.current_theme in available_themes:
             self.style.theme_use(self.current_theme)
         else:
-            self.style.theme_use("clam")
-            self.current_theme = "clam"
+            self.style.theme_use("radiance")
+            self.current_theme = "radiance"
 
         self.theme_var = tk.StringVar(master=self, value=self.current_theme)
 
