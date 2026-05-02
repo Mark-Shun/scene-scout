@@ -1,4 +1,5 @@
 import os
+import io
 import sqlite3
 import threading
 from pathlib import Path
@@ -9,6 +10,7 @@ av.logging.set_level(av.logging.PANIC)
 
 import numpy as np
 import torch
+
 from PIL import Image
 from scenedetect import detect
 from scenedetect.detectors import AdaptiveDetector
@@ -33,11 +35,23 @@ def _run_batch_inference(frames, info, model, processor, device, cursor, path, p
             embeddings = features.cpu().numpy().astype(np.float32)
         for idx, (scene_idx, start_ms, end_ms) in enumerate(info):
             emb_bytes = embeddings[idx].tobytes()
+
+            thumb = frames[idx].copy()
+            
+            # .thumbnail() preserves aspect ratio and modifies in-place.
+            # Using BILINEAR is the best balance of speed and quality for tiny images.
+            thumb.thumbnail((160, 160), Image.Resampling.BILINEAR)
+            
+            # Save the image into a memory buffer as a highly compressed JPEG
+            buffer = io.BytesIO()
+            thumb.save(buffer, format="JPEG", quality=60, optimize=True)
+            thumb_bytes = buffer.getvalue()
+
             cursor.execute('''
                 INSERT INTO scene_embeddings 
-                (filepath, scene_index, start_time_ms, end_time_ms, embedding) 
-                VALUES (?, ?, ?, ?, ?)
-            ''', (path, scene_idx, start_ms, end_ms, emb_bytes))
+                (filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (path, scene_idx, start_ms, end_ms, emb_bytes, thumb_bytes))
         
         if pbar:
             pbar.update(len(info))
