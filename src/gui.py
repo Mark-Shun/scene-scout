@@ -660,7 +660,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.index_popup.title('Indexing files')
         self.index_popup.transient(self)
         self.index_popup.grab_set()
-        self.index_popup.minsize(500, 220) # Slightly wider for filenames
+        self.index_popup.minsize(500, 230)
         
         frame = ttk.Frame(self.index_popup, padding=20)
         frame.pack(fill='both', expand=True)
@@ -676,8 +676,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         # Status/Stats Label (adds whitespace via pady)
         self.index_stats_var = tk.StringVar(master=self.index_popup, value='')
-        ttk.Label(frame, textvariable=self.index_stats_var, font=('Arial', 9)).pack(pady=(10, 15))
-        self.index_terminal_info = tk.StringVar(master=self.index_popup, value='Check terminal for more info.')
+        ttk.Label(frame, textvariable=self.index_stats_var, font=('Arial', 9)).pack(pady=(10, 0))
+        self.index_terminal_info = tk.StringVar(master=self.index_popup, value='Check the terminal for more detailed information.')
         ttk.Label(frame, textvariable=self.index_terminal_info, font=('Arial', 9)).pack(pady=(10, 15))
         
         cancel_button = ttk.Button(frame, text='Cancel', command=self.cancel_indexing)
