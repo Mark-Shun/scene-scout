@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS scene_embeddings (
     start_time_ms INTEGER NOT NULL,
     end_time_ms INTEGER NOT NULL,
     embedding BLOB NOT NULL,
+    thumbnail BLOB,
     FOREIGN KEY (filepath) REFERENCES processed_videos(filepath) ON DELETE CASCADE
 );
 
@@ -132,7 +133,7 @@ def search_db(query_embedding: np.ndarray, db_path: str, top_k: int=10, similari
 def search_scenes(query_embedding: np.ndarray, db_path: str, top_k: int = 50, similarity_threshold: float = -1.0, batch_size: int = 1000) -> List[Tuple[str, int, int, int, float]]:
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT filepath, scene_index, start_time_ms, end_time_ms, embedding FROM scene_embeddings')
+        cursor.execute('SELECT filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail FROM scene_embeddings')
         results = []
         while True:
             batch = cursor.fetchmany(batch_size)
@@ -143,11 +144,14 @@ def search_scenes(query_embedding: np.ndarray, db_path: str, top_k: int = 50, si
             start_times = [row[2] for row in batch]
             end_times = [row[3] for row in batch]
             db_embeddings = np.array([np.frombuffer(row[4], dtype=np.float32) for row in batch])
+            thumbnails = [row[5] for row in batch]
+
             if db_embeddings.ndim == 1:
                 db_embeddings = db_embeddings.reshape(1, -1)
             similarities = np.dot(db_embeddings, query_embedding.T).squeeze()
+
             for i, sim in enumerate(similarities):
                 if sim >= similarity_threshold:
-                    results.append((filepaths[i], scene_indices[i], start_times[i], end_times[i], float(sim)))
+                    results.append((filepaths[i], scene_indices[i], start_times[i], end_times[i], thumbnails[i], float(sim)))
     results.sort(key=lambda x: x[4], reverse=True)
     return results[:top_k]

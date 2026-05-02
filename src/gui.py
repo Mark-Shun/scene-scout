@@ -1,5 +1,6 @@
 import json
 import os
+import io
 import sys
 import threading
 import tkinter as tk
@@ -139,8 +140,6 @@ class SceneScoutApp(TkinterDnD.Tk):
         vlc_args = config.get_vlc_args()
         self.vlc_instance = vlc.Instance(* vlc_args)
         self.player = self.vlc_instance.media_player_new()
-        self.vlc_events = self.player.event_manager()
-        self.vlc_events.event_attach(vlc.EventType.MediaPlayerEndReached, self._on_vlc_end_reached)
 
         device_str, _, _, _ = get_compute_device(self.config.get("device"))
         from model_loader import TRT_AVAILABLE
@@ -392,7 +391,30 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.video_container = ttk.Frame(self.image_canvas)
         self.video_container.pack(fill='both', expand=True)
         self.video_container.bind("<Configure>", self.on_player_resize)
+
+        self.thumb_outer_frame = ttk.Frame(preview_frame, height=330) 
+        self.thumb_outer_frame.pack(fill='x', side='bottom', pady=(5,0))
+        self.thumb_outer_frame.pack_propagate(False)
+
+        # Scrollable canvas for the vertical strip
+        self.thumb_canvas = tk.Canvas(self.thumb_outer_frame, height=300, highlightthickness=0)
+        self.thumb_scrollbar = ttk.Scrollbar(self.thumb_outer_frame, orient='horizontal', command=self.thumb_canvas.xview)
         
+        self.thumb_canvas.configure(xscrollcommand=self.thumb_scrollbar.set)
+
+        self.thumb_inner_frame = ttk.Frame(self.thumb_canvas)
+        self.thumb_canvas.create_window((0, 0), window=self.thumb_inner_frame, anchor='nw')
+
+        # Auto-update the scroll region when thumbnails are added
+        self.thumb_inner_frame.bind('<Configure>', lambda e: self.thumb_canvas.configure(scrollregion=self.thumb_canvas.bbox('all')))
+        
+        self.thumb_canvas.pack(side='top', fill='x', expand=True)
+        self.thumb_scrollbar.pack(side='bottom', fill='x')
+        
+        # Persistent storage to prevent Python's garbage collector from deleting the images
+        self.thumbnail_references = []
+        self.thumbnail_widgets = []
+
         paned_window.add(preview_frame, weight=1)
 
     def on_handle_drop(self, event):
@@ -651,6 +673,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.index_button.config(state='disabled')
         self.search_button.config(state='disabled')
         self._cancel_event = threading.Event()
+        self._stop_video_loop()
         self.show_indexing_popup()
         self.update_status('Indexing in progress...')
         self.threaded_task(self.index_task, self.folder_var.get())
@@ -763,6 +786,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             messagebox.showwarning('Warning', 'Please enter text or select an image to search.')
             return
         self.search_button.config(state='disabled')
+        self._stop_video_loop()
         self.update_status('Searching...')
         self.threaded_task(self.search_task)
 
@@ -780,9 +804,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         finally:
             self.after(0, lambda: self.search_button.config(state='normal'))
 
-    def on_search_finished(self, results: List[Tuple[str, int, int, int, float]]):
-        self.search_results = [(path, score, 'video', None, scene_idx, start_time, end_time) 
-                              for path, scene_idx, start_time, end_time, score in results]
+    def on_search_finished(self, results: List[Tuple[str, int, int, int, bytes, float]]):
+        self.search_results = [(path, score, 'video', None, scene_idx, start_time, end_time, thumb_bytes) 
+                              for path, scene_idx, start_time, end_time, thumb_bytes, score in results]
         self._update_listview()
         self.update_status(f'Found {len(results)} results.')
         self.rescore_button.config(state='normal' if results else 'disabled')
@@ -802,17 +826,29 @@ class SceneScoutApp(TkinterDnD.Tk):
         # Clear existing rows
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
+
+        # Clear existing thumbnails
+        for widget in self.thumb_inner_frame.winfo_children():
+            widget.destroy()
+        self.thumbnail_references.clear()
+        self.thumbnail_widgets.clear()
+
         if not self.search_results:
             self.stats_label.config(text='No results found.')
             return
+        
         self.last_selected_entry = None
         has_rescore = self.search_results and self.search_results[0][3] is not None
         sort_key = lambda x: x[3] if has_rescore else x[1]
         self.search_results.sort(key=sort_key, reverse=True)
-        for i, (path, score, ftype, rescore, scene_idx, scene_time, scene_end) in enumerate(self.search_results, 1):
+        for i, data in enumerate(self.search_results, 1):
+            # Unpack the updated 8-item tuple
+            path, score, ftype, rescore, scene_idx, scene_time, scene_end, thumb_bytes = data
+            
             filename = os.path.basename(path)
             time_str = ''
             scene_str = ''
+
             if scene_idx is not None and scene_time is not None:
                 # convert milliseconds to M:SS.mmm timecode
                 start_str = self._format_ms(scene_time)
@@ -824,17 +860,52 @@ class SceneScoutApp(TkinterDnD.Tk):
                     time_str = start_str
                 # Display human-friendly scene number (1-based)
                 scene_str = str(scene_idx + 1)
-            # Values match columns
+            
             values = [filename, scene_str, time_str, f'{score:.4f}', f'{rescore:.4f}' if rescore is not None else '']
-            self.results_tree.insert('', 'end', iid=str(i-1), values=values)
-        scores = [rescore if has_rescore and rescore is not None else score for _, score, _, rescore, _, _, _ in self.search_results]
+            tree_id = str(i-1)
+            self.results_tree.insert('', 'end', iid=tree_id, values=values)
+
+            # Insert into Thumbnail Strip
+            if thumb_bytes:
+                img_data = io.BytesIO(thumb_bytes)
+                img = Image.open(img_data)
+                tk_img = ImageTk.PhotoImage(img, master=self)
+                self.thumbnail_references.append(tk_img) # Keep alive
+                
+                # Create a frame to hold the image
+                thumb_container = tk.Frame(self.thumb_inner_frame, bd=2, relief='flat')
+                
+                # Use the current count to determine position.
+                # Evens go to row 0 (top), odds go to row 1 (bottom).
+                thumb_count = len(self.thumbnail_widgets)
+                row_idx = thumb_count % 3       # Alternate between 0 and 1
+                col_idx = thumb_count // 3      # Move to a new column every 2 items
+                
+                thumb_container.grid(row=row_idx, column=col_idx, padx=2, pady=2)
+                
+                thumb_lbl = tk.Label(thumb_container, image=tk_img, cursor='hand2')
+                thumb_lbl.pack()
+                
+                # Bind click event to sync with the treeview
+                thumb_lbl.bind('<Button-1>', lambda e, iid=tree_id: self.on_thumbnail_click(iid))
+                
+                self.thumbnail_widgets.append(thumb_container)
+
+        scores = [rescore if has_rescore and rescore is not None else score for _, score, _, rescore, _, _, _, _ in self.search_results]
         stats_text = f'Found {len(scores)} results | Max: {max(scores):.3f} | Avg: {np.mean(scores):.3f}'
         self.stats_label.config(text=stats_text)
-        # select first row
+        
+        # Select first row automatically
         first = self.results_tree.get_children()
         if first:
             self.results_tree.selection_set(first[0])
             self.on_result_select(None)
+
+    def on_thumbnail_click(self, tree_iid: str):
+        """Triggered when a thumbnail is clicked. Selects the corresponding row in the treeview."""
+        self.results_tree.selection_set(tree_iid)
+        self.results_tree.see(tree_iid) # Scroll treeview to the item
+        self.on_result_select(None)
 
     def open_rescore_dialog(self):
         query_text = simpledialog.askstring('Rescore', 'Enter new text query to rescore results:', parent=self)
@@ -851,7 +922,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                 
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                for i, (path, score, ftype, _, scene_idx, scene_time, scene_end) in enumerate(self.search_results):
+                for i, (path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes) in enumerate(self.search_results):
                     
                     if ftype == 'image':
                         cursor.execute('SELECT embedding FROM image_embeddings WHERE filepath=?', (path,))
@@ -859,7 +930,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                         if result:
                             embedding = np.frombuffer(result[0], dtype=np.float32)
                             similarity = np.dot(embedding, rescore_embedding.T).squeeze()
-                            self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end)
+                            self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes)
                             
                     elif ftype == 'video':
                         # Handle merged scenes (tuples) and single scenes (ints)
@@ -878,14 +949,14 @@ class SceneScoutApp(TkinterDnD.Tk):
                                     sim = float(np.dot(emb, rescore_embedding.T).squeeze())
                                     if sim > max_sim:
                                         max_sim = sim
-                                self.search_results[i] = (path, score, ftype, max_sim, scene_idx, scene_time, scene_end)
+                                self.search_results[i] = (path, score, ftype, max_sim, scene_idx, scene_time, scene_end, thumb_bytes)
                         else:
                             cursor.execute('SELECT embedding FROM scene_embeddings WHERE filepath=? AND scene_index=?', (path, scene_idx))
                             result = cursor.fetchone()
                             if result:
                                 embedding = np.frombuffer(result[0], dtype=np.float32)
                                 similarity = np.dot(embedding, rescore_embedding.T).squeeze()
-                                self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end)
+                                self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes)
                                 
             self.after(0, self.on_rescore_finished)
         except Exception as e:
@@ -912,10 +983,28 @@ class SceneScoutApp(TkinterDnD.Tk):
             return
         
         self.last_selected_entry = current_selected_entry
-        
         index = int(current_selected_entry)
-        path, _, file_type, _, scene_idx, scene_time, scene_end = self.search_results[index]
+        
+        path, _, file_type, _, scene_idx, scene_time, scene_end, _ = self.search_results[index]
         self.current_display_path = path
+        
+        # Reset all thumbnail borders to flat
+        for widget in self.thumbnail_widgets:
+            widget.config(relief='flat', bg=self.cget('bg'))
+            
+        # Highlight the selected thumbnail with a colored border
+        if index < len(self.thumbnail_widgets):
+            selected_widget = self.thumbnail_widgets[index]
+            # Use 'solid' relief and a distinct color like blue to indicate selection
+            selected_widget.config(relief='solid', bg='#0078D7') 
+            
+            # Automatically scroll the thumbnail canvas to ensure the selected thumb is visible
+            x_pos = selected_widget.winfo_x()
+            canvas_width = self.thumb_canvas.winfo_width()
+            # Calculate scroll fraction (approximate center)
+            scroll_fraction = max(0, (x_pos - (canvas_width / 2)) / self.thumb_inner_frame.winfo_width())
+            self.thumb_canvas.xview_moveto(scroll_fraction)
+        
         if file_type == 'image':
             self.display_media(path, is_video=False)
         else:
@@ -987,9 +1076,10 @@ class SceneScoutApp(TkinterDnD.Tk):
         """Triggered when the video finishes. Bounces to a thread to prevent freezing."""
         self.threaded_task(self._vlc_loop_restart)
 
-    def _vlc_loop_restart(self, media):
-        """Restart media using the globally stored current_media reference."""
+    def _vlc_loop_restart(self):
+        """Restarts the currently assigned media to create a loop effect."""
         if hasattr(self, 'current_media') and self.current_media:
+            # Re-setting the media is required in VLC to respect start/stop-time options
             self.player.set_media(self.current_media)
             self.player.play()
 
@@ -1097,11 +1187,16 @@ class SceneScoutApp(TkinterDnD.Tk):
                 media.add_option(f'start-time={start_ms / 1000.0}')
             if end_ms:
                 # Ensure we don't accidentally set the end time before the start time
-                safe_end_ms = max(start_ms + 10, end_ms - playback_margin_ms)
+                safe_end_ms = max(start_ms + 50, end_ms - playback_margin_ms)
                 media.add_option(f'stop-time={safe_end_ms / 1000.0}')
 
             self.current_media = media 
             self.player.set_media(media)
+            
+            # Set up looping using a clean thread bounce
+            events = self.player.event_manager()
+            events.event_attach(vlc.EventType.MediaPlayerEndReached, 
+                            lambda e: self.threaded_task(self._vlc_loop_restart))
 
             # Assign window handle
             h = self.video_container.winfo_id()
@@ -1109,10 +1204,6 @@ class SceneScoutApp(TkinterDnD.Tk):
 
             self.player.play()
             
-            # Setup looping
-            events = self.player.event_manager()
-            events.event_attach(vlc.EventType.MediaPlayerEndReached, 
-                              lambda e: self.threaded_task(self._vlc_loop_restart, media))
         except Exception as e:
             self.update_status(f"VLC Error: {e}")
 
@@ -1125,6 +1216,9 @@ class SceneScoutApp(TkinterDnD.Tk):
     def _stop_video_loop(self):
         if hasattr(self, 'player'):
             self.player.stop()
+            # Force macOS to release the hardware/GPU lock
+            if sys.platform == 'darwin':
+                self.player.set_media(None)
 
     def on_player_resize(self, event):
         """Force VLC to re-sync with the window handle on resize."""
