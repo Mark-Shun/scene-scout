@@ -153,5 +153,5 @@ def search_scenes(query_embedding: np.ndarray, db_path: str, top_k: int = 50, si
             for i, sim in enumerate(similarities):
                 if sim >= similarity_threshold:
                     results.append((filepaths[i], scene_indices[i], start_times[i], end_times[i], thumbnails[i], float(sim)))
-    results.sort(key=lambda x: x[4], reverse=True)
+    results.sort(key=lambda x: x[5], reverse=True)
     return results[:top_k]
