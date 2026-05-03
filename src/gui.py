@@ -1,4 +1,3 @@
-import json
 import os
 import io
 import sys
@@ -36,9 +35,8 @@ except Exception:
     sys.exit(1)
 
 from PIL import Image, ImageTk
-from transformers import AutoProcessor, Siglip2Model
 from model_loader import get_compute_device
-from database import init_db, db_is_empty, cleanup_orphaned_entries, search_scenes, search_db
+from database import init_db, db_is_empty, cleanup_orphaned_entries, search_scenes
 from processing import index_files, get_query_embedding
 import config
 
@@ -410,7 +408,6 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         self.video_container = ttk.Frame(self.preview_image_canvas)
         self.video_container.pack(fill='both', expand=True)
-        self.video_container.bind("<Configure>", self.on_player_resize)
 
         self.thumb_outer_frame = ttk.Frame(preview_frame, height=330) 
         self.thumb_outer_frame.pack(fill='x', side='bottom', pady=(5,0))
@@ -508,11 +505,6 @@ class SceneScoutApp(TkinterDnD.Tk):
     def save_trt_preference(self):
         """Save the TensorRT preference to the GUI config file."""
         self.config['use_trt'] = self.use_trt_var.get()
-        config.save_config(self.config)
-
-    def save_vlc_preference(self):
-        """Save the VLC opening preference to the config file."""
-        self.config['use_vlc_open'] = self.use_vlc_open_var.get()
         config.save_config(self.config)
 
     def update_status(self, message: str):
@@ -1095,33 +1087,10 @@ class SceneScoutApp(TkinterDnD.Tk):
         draw_y = canvas_h / 2 + self.canvas_offset_y
         self.preview_image_canvas.create_image(draw_x, draw_y, image=self.tk_image)
 
-    def _reset_pan_zoom(self):
-        self.canvas_scale = 1.0
-        self.canvas_offset_x = 0
-        self.canvas_offset_y = 0
-        # stop any running video loop when resetting view
-        self._stop_video_loop()
-
-    def _show_vlc_player(self, path, start_ms, end_ms):
-        media = self.vlc_instance.media_new(path)
-        
-        # Precise start/stop for scene preview
-        if start_ms:
-            media.add_option(f'start-time={start_ms / 1000.0}')
-        if end_ms:
-            media.add_option(f'stop-time={end_ms / 1000.0}')
-            
-        self.player.set_media(media)
-        self.player.play()
-
     def _show_static_pil_image(self, path):
         # Use your existing high-quality PIL rendering here
         self.original_image = Image.open(path).convert('RGB')
         self._render_preview_image_on_canvas(use_fast_quality=False) # Use LANCZOS for static
-
-    def _on_vlc_end_reached(self, event):
-        """Triggered when the video finishes. Bounces to a thread to prevent freezing."""
-        self.threaded_task(self._vlc_loop_restart)
 
     def _vlc_loop_restart(self):
         """Restarts the currently assigned media to create a loop effect."""
@@ -1266,13 +1235,6 @@ class SceneScoutApp(TkinterDnD.Tk):
             # Force macOS to release the hardware/GPU lock
             if sys.platform == 'darwin':
                 self.player.set_media(None)
-
-    def on_player_resize(self, event):
-        """Force VLC to re-sync with the window handle on resize."""
-        # Added safety check to prevent crash during initialization
-        if hasattr(self, 'player') and self.player and self.player.is_playing():
-            # Briefly toggle or update the video output
-            pass
 
     def toggle_preview_playback(self):
         # Toggle the global state
