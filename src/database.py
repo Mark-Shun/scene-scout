@@ -40,6 +40,9 @@ def init_db(db_path: str) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.executescript(DB_SCHEMA)
 
+    # Migration/healing check
+    migrate_database(db_path)
+
 def db_is_empty(db_path: str) -> bool:
     """Return True if there are no entries in `embeddings`,`processed_videos` or `scene_embeddings`."""
     try:
@@ -155,3 +158,18 @@ def search_scenes(query_embedding: np.ndarray, db_path: str, top_k: int = 50, si
                     results.append((filepaths[i], scene_indices[i], start_times[i], end_times[i], thumbnails[i], float(sim)))
     results.sort(key=lambda x: x[5], reverse=True)
     return results[:top_k]
+
+def migrate_database(db_path: str):
+    with sqlite3.connect(db_path) as conn:
+        # Get the current version of the loaded file
+        current_version = conn.execute("PRAGMA user_version").fetchone()[0]
+
+        # VERSION 1: Added thumbnail blob
+        if current_version < 1:
+            try:
+                conn.execute("ALTER TABLE scene_embeddings ADD COLUMN thumbnail BLOB")
+            except sqlite3.OperationalError:
+                pass
+            
+            conn.execute("PRAGMA user_version = 1")
+            conn.commit()
