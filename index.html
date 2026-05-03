@@ -3,49 +3,265 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Project Name | Download</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-            line-height: 1.6;
-            color: #24292e;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            text-align: center;
-        }
-        h1 { border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
-        .description { color: #586069; font-size: 1.2em; margin-bottom: 30px; }
-        .download-button {
-            background-color: #2ea44f;
-            color: white;
-            padding: 15px 32px;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: 600;
-            display: inline-block;
-            transition: background-color 0.2s;
-        }
-        .download-button:hover { background-color: #2c974b; }
-        footer { margin-top: 50px; font-size: 0.8em; color: #6a737d; }
-    </style>
+    <title>Scene Scout - Natural Language Video Scene Search</title>
+    <meta name="description" content="A natural language scene search tool powered by Google's SigLIP 2 model. Search through your local video collection using text descriptions or image similarity.">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/logo/scene-scout-logo.png">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 </head>
 <body>
 
-    <h1>🚀 My Awesome Project</h1>
-    <p class="description">
-        A short, punchy description of what your project does and why it's great.
-    </p>
+    <button class="menu-toggle" aria-label="Toggle menu">
+        <i class="fa-solid fa-bars"></i>
+    </button>
 
-    <!-- Test -->
-    <!-- This link uses the "Quick & Easy" redirect mentioned earlier -->
-    <a href="https://github.com/YOUR_USERNAME/YOUR_REPO/releases/latest" class="download-button">
-        Download Latest Release
-    </a>
+    <nav class="sidebar">
+        <div class="sidebar-brand">
+            <h1>Scene Scout</h1>
+            <p>Video Scene Search Tool</p>
+        </div>
+        <div class="sidebar-nav">
+            <ul>
+                <li><a href="#hero" class="active"><i class="fa-solid fa-house"></i> Home</a></li>
+                <li><a href="#features"><i class="fa-solid fa-sparkles"></i> Features</a></li>
+                <li><a href="#screenshots"><i class="fa-solid fa-images"></i> Screenshots</a></li>
+                <li><a href="#install"><i class="fa-solid fa-download"></i> Installation</a></li>
+                <li><a href="#author"><i class="fa-solid fa-circle-info"></i> About</a></li>
+            </ul>
+        </div>
+        <div class="sidebar-footer">
+            <a href="https://github.com/Mark-Shun/scene-scout/releases/latest/download/scene-scout.zip" target="_blank">
+                <i class="fa-solid fa-arrow-down-to-bracket"></i> Download Latest
+            </a>
+        </div>
+    </nav>
 
-    <footer>
-        View the source code on <a href="https://github.com/YOUR_USERNAME/YOUR_REPO">GitHub</a>
-    </footer>
+    <main class="main-content">
+        <section id="hero" class="hero">
+            <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/logo/scene-scout-text-logo.png" alt="Scene Scout Logo" class="hero-logo">
+            <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/big-buck-bunny-search.png" alt="Scene Scout search results preview" class="hero-screenshot">
+            <p class="hero-tagline">
+                Search through your local video collection using natural language queries or image similarity, powered by Google's SigLIP 2 model.
+            </p>
+            <div class="hero-badges">
+                <a href="https://github.com/Mark-Shun/scene-scout/releases/latest">
+                    <img src="https://img.shields.io/github/v/release/Mark-Shun/scene-scout?style=for-the-badge&label=release" alt="Latest Release">
+                </a>
+                <a href="https://github.com/Mark-Shun/scene-scout/blob/main/LICENSE">
+                    <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="License MIT">
+                </a>
+                <a href="https://github.com/Mark-Shun/scene-scout/stargazers">
+                    <img src="https://img.shields.io/github/stars/Mark-Shun/scene-scout?style=for-the-badge&color=yellow" alt="Stars">
+                </a>
+                <a href="https://github.com/Mark-Shun/scene-scout/releases">
+                    <img src="https://img.shields.io/github/downloads/Mark-Shun/scene-scout/total?style=for-the-badge&label=downloads" alt="Downloads">
+                </a>
+            </div>
+            <a href="https://github.com/Mark-Shun/scene-scout/releases/latest/download/scene-scout.zip" class="download-btn" target="_blank">
+                <i class="fa-solid fa-download"></i>
+                Download Latest Release
+            </a>
+        </section>
+
+        <section id="features" class="section">
+            <h2 class="section-title"><span class="glass-pill">Features</span></h2>
+            <p class="section-subtitle">Everything you need to search and discover scenes in your video collection</p>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-magnifying-glass"></i></div>
+                    <h3 class="feature-title">Natural Language Search</h3>
+                    <p class="feature-description">Find video scenes using text descriptions. Simply type what you are looking for and get instant results.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-image"></i></div>
+                    <h3 class="feature-title">Image-to-Scene Search</h3>
+                    <p class="feature-description">Use a reference image to find similar scenes in your video collection with visual similarity matching.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-film"></i></div>
+                    <h3 class="feature-title">Video Playback</h3>
+                    <p class="feature-description">Watch scenes play directly in the GUI with integrated VLC video player support.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-desktop"></i></div>
+                    <h3 class="feature-title">Multiplatform Support</h3>
+                    <p class="feature-description">Works on Windows, Linux, and Mac with automated install scripts for easy setup.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-bolt"></i></div>
+                    <h3 class="feature-title">GPU Acceleration</h3>
+                    <p class="feature-description">Supports CUDA, TensorRT, DML, Intel Arc/Xe, AMD ROCm, and Apple MPS for fast processing.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-database"></i></div>
+                    <h3 class="feature-title">SQLite Database</h3>
+                    <p class="feature-description">Efficient embedding storage with scene data and thumbnails. Incremental indexing for new files only.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="screenshots" class="screenshots">
+            <h2 class="section-title"><span class="glass-pill">Screenshots</span></h2>
+            <p class="section-subtitle">See Scene Scout in action</p>
+            <div class="screenshot-grid">
+                <div class="screenshot-card" data-full="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/big-buck-bunny-search.png">
+                    <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/big-buck-bunny-search.png" alt="Big Buck Bunny Search Example">
+                    <div class="screenshot-caption">Search results with similarity scores</div>
+                </div>
+                <div class="screenshot-card" data-full="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/computer-monitor-search.png">
+                    <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/computer-monitor-search.png" alt="Computer Monitor Search">
+                    <div class="screenshot-caption">Text query: computer monitor</div>
+                </div>
+                <div class="screenshot-card" data-full="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/frog-suit-search.png">
+                    <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/frog-suit-search.png" alt="Frog Suit Search">
+                    <div class="screenshot-caption">Text query: frog in a suit</div>
+                </div>
+                <div class="screenshot-card" data-full="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/glowing-eye-search.png">
+                    <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/glowing-eye-search.png" alt="Glowing Eye Search">
+                    <div class="screenshot-caption">Text query: glowing eye</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="install" class="section">
+            <h2 class="section-title"><span class="glass-pill">Installation</span></h2>
+            <p class="section-subtitle">Get up and running in three simple steps</p>
+            <div class="install-steps">
+                <div class="install-step">
+                    <div class="step-number">1</div>
+                    <h3 class="step-title">Download</h3>
+                    <p class="step-description">Get the latest release from GitHub or clone the repository</p>
+                    <div class="code-block">git clone https://github.com/Mark-Shun/scene-scout</div>
+                </div>
+                <div class="install-step">
+                    <div class="step-number">2</div>
+                    <h3 class="step-title">Install</h3>
+                    <p class="step-description">Run the install script to set up UV, Python, VLC, and dependencies</p>
+                    <div class="code-block">Windows: install.bat<br>Mac/Linux: ./install.sh</div>
+                </div>
+                <div class="install-step">
+                    <div class="step-number">3</div>
+                    <h3 class="step-title">Launch</h3>
+                    <p class="step-description">Start Scene Scout GUI and begin searching your video collection</p>
+                    <div class="code-block">Windows: run_gui.bat<br>Mac/Linux: ./run_gui.sh</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="author" class="author-section">
+            <h2 class="section-title"><span class="glass-pill">About</span></h2>
+            <p class="section-subtitle">Created by Mark-Shun / Sonicfreak<br>Forked from Gabrjiele's SigLip 2 NaFlex Project</p>
+            <div class="author-info">
+                <p>
+                    Scene Scout is a natural language scene search tool powered by Google's SigLIP 2 model with NaFlex architecture. This project has been forked from <a href="https://github.com/Gabrjiele/siglip2-naflex-search" target="_blank">Gabrjiele's open source SigLip 2 NaFlex project</a>, with a focus shift to specifically searching for scenes through natural language queries.
+                </p>
+                <p>
+                    Icon and logo made by <a href="https://4miwo.carrd.co/" target="_blank">Miwo</a>
+                </p>
+                <div class="author-links">
+                    <a href="https://github.com/Mark-Shun/scene-scout" class="author-link" target="_blank">
+                        <i class="fa-brands fa-github"></i>
+                        GitHub Repository
+                    </a>
+                    <a href="https://codeberg.org/Mark-Shun/scene-scout" class="author-link" target="_blank">
+                        <i class="fa-solid fa-code-branch"></i>
+                        Codeberg Mirror
+                    </a>
+                    <a href="https://www.youtube.com/@sonicfreak1111" class="author-link" target="_blank">
+                        <i class="fa-brands fa-youtube"></i>
+                        YouTube Channel
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <footer class="footer">
+            <p>Scene Scout is licensed under the <a href="https://github.com/Mark-Shun/scene-scout/blob/main/LICENSE" target="_blank">MIT License</a>. Created by <a href="https://github.com/Mark-Shun" target="_blank">Mark-Shun / <a href="https://www.youtube.com/@sonicfreak1111" target="_blank">Sonicfreak1111</a>.</p>
+        </footer>
+    </main>
+
+    <div class="lightbox" id="lightbox">
+        <button class="lightbox-close" aria-label="Close lightbox">&times;</button>
+        <img src="" alt="Expanded screenshot" id="lightbox-img">
+    </div>
+
+    <script>
+        const sidebar = document.querySelector('.sidebar');
+        const menuToggle = document.querySelector('.menu-toggle');
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightbox-img');
+        const lightboxClose = document.querySelector('.lightbox-close');
+
+        menuToggle.addEventListener('click', () => {
+            sidebar.classList.toggle('open');
+        });
+
+        document.querySelectorAll('.sidebar-nav a').forEach(link => {
+            link.addEventListener('click', () => {
+                sidebar.classList.remove('open');
+                document.querySelectorAll('.sidebar-nav a').forEach(l => l.classList.remove('active'));
+                link.classList.add('active');
+            });
+        });
+
+        document.querySelectorAll('.screenshot-card').forEach(card => {
+            card.addEventListener('click', () => {
+                lightboxImg.src = card.dataset.full;
+                lightbox.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            });
+        });
+
+        const closeLightbox = () => {
+            lightbox.classList.remove('active');
+            document.body.style.overflow = '';
+        };
+
+        lightboxClose.addEventListener('click', closeLightbox);
+        lightbox.addEventListener('click', (e) => {
+            if (e.target === lightbox) closeLightbox();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeLightbox();
+        });
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    document.querySelectorAll('.sidebar-nav a').forEach(link => {
+                        link.classList.remove('active');
+                        if (link.getAttribute('href') === `#${entry.target.id}`) {
+                            link.classList.add('active');
+                        }
+                    });
+                }
+            });
+        }, { threshold: 0.3 });
+
+        document.querySelectorAll('section[id]').forEach(section => {
+            observer.observe(section);
+        });
+
+        const directUrl = 'https://github.com/Mark-Shun/scene-scout/releases/latest/download/scene-scout.zip';
+        const fallbackUrl = 'https://github.com/Mark-Shun/scene-scout/releases/latest';
+        const downloadBtn = document.querySelector('.download-btn');
+        const sidebarDownload = document.querySelector('.sidebar-footer a');
+
+        fetch('https://api.github.com/repos/Mark-Shun/scene-scout/releases/latest')
+            .then(res => res.json())
+            .then(data => {
+                const assetExists = data.assets.some(a => a.name === 'scene-scout.zip');
+                if (!assetExists) {
+                    downloadBtn.href = fallbackUrl;
+                    sidebarDownload.href = fallbackUrl;
+                }
+            })
+            .catch(() => {
+                downloadBtn.href = fallbackUrl;
+                sidebarDownload.href = fallbackUrl;
+            });
+    </script>
 
 </body>
 </html>
