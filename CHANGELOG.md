@@ -2,13 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
-## Post-fork [1.0.0] - 2026-4-24
+## Post-fork [1.0.0] - 2026-5-03
 
 ### Added
+- **Wide GPU processing support**: Original project had limited support. Now at this moment: CPU, CUDA, TensorRT, DirectML, Intel XPU, AMD Rocm and Apple MPS
 - **Video playback**: Added support for video scene playback through VLC backend.
+- **Thumbnail**: Shows low quality small thumbnails of search results.
 - **Scene time extraction**: Added support to extract time data of scenes (scene change detect and extraction from metadata).
 - **Scene indexing**: Index and search for scenes inside the app.
 - **UV installation**: New installation method by using UV for new users.
+- **Themes**: GUI now supports different TTK themes
+- **Automated installation**: Various scripts to automate installation
+- **Interactive shell**: An interactive CLI to interact with scene scout in the terminal while keeping the weights loaded.
+- **Options**: Added various options which are saved in a config file
+- **Drag and drop**: Drag and drop database files and folders to automatically load into scene scout.
 
 ### Changed
 - **Refactor file functions**: Refactored the code to seperate functionality into different files.
