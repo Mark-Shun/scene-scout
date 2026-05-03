@@ -9,22 +9,45 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 warnings.filterwarnings('ignore', category=Image.DecompressionBombWarning)
 
-CONFIG_FILE = Path(__file__).parent / 'scene_scout_config.json'
+PROJECT_ROOT = Path(__file__).parent.parent
+TEMP_FOLDER = PROJECT_ROOT / "temp"
+CONFIG_FILE = PROJECT_ROOT / 'scene_scout_config.json'
 DEFAULT_MODEL = 'google/siglip2-so400m-patch16-naflex'
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
 VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm')
 
 SCENE_DETECTOR_THRESHOLD = 30
-SCENE_PLAYBACK = True
+
+# Defining every possible setting and its baseline value
+DEFAULT_CONFIG = {
+    "generate_thumbnails": True,
+    "scene_playback": True,
+    "theme": "radiance",
+    "use_trt": False,
+    "use_vlc_open": True,
+    "device": None,
+    "top_k": 20,
+    "batch_size": 16,
+    "fast_detect": True,
+    "max_patches": 256,
+    "folder_path": "",
+    "db_path": ""
+}
 
 def load_config() -> Dict[str, Any]:
+    # Start with a fresh copy of defaults
+    current_config = DEFAULT_CONFIG.copy()
+    
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, 'r') as f:
-                return json.load(f)
+                saved_data = json.load(f)
+                # Overwrite defaults with whatever is in the file
+                current_config.update(saved_data)
         except (json.JSONDecodeError, IOError) as e:
             print(f'Error loading config file: {e}')
-    return {}
+            
+    return current_config
 
 def save_config(config: Dict[str, Any]) -> None:
     try:

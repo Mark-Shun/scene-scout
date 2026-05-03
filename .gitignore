@@ -48,3 +48,6 @@ models/
 
 # Configuration
 *.json
+
+# Scene Scout specific folder
+temp/

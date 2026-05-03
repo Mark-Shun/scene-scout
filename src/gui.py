@@ -94,75 +94,77 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.is_active = True
         self.title('Scene Scout')
         self.splash_ref = splash_ref
-        self.config = config.load_config()
-        screen_width = (self.winfo_screenwidth())-200
-        screen_height = (self.winfo_screenheight())-200
-        self.geometry(f"{screen_width}x{screen_height}+0+0")
-        self.model: Optional[Siglip2Model] = None
-        self.processor = None
-        self.device: Optional[torch.device] = None
-        self.dtype: Optional[torch.dtype] = None
-        self.db_path: Optional[str] = None
-        self.query_image_path: Optional[str] = None
-        self.current_display_path: Optional[str] = None
-        self.search_results: List[Tuple[str, float, str, Optional[float], Optional[int], Optional[int], Optional[int]]] = []
-        self.use_trt_var = tk.BooleanVar(master=self, value=self.config.get('use_trt', False))
-        self.use_trt_var.trace_add("write", lambda *args: self.save_trt_preference())
-        self.use_vlc_open_var = tk.BooleanVar(
-            master=self, 
-            value=self.config.get('use_vlc_open', True)
-        )
-        self.video_cap = None
-        self.video_loop_id = None
-        self.loop_start_ms: Optional[int] = None
-        self.loop_end_ms: Optional[int] = None
-        self.loop_start_ms: Optional[int] = None
-        self.loop_end_ms: Optional[int] = None
-        self.last_selected_entry = None
-        self.canvas_scale = 1.0
-        self._loop_scale_set = False
-        self.canvas_offset_x, self.canvas_offset_y = (0, 0)
-        self.drag_start_x, self.drag_start_y = (0, 0)
-        self.original_image: Optional[Image.Image] = None
-        self.display_image: Optional[Image.Image] = None
-        self.tk_image: Optional[ImageTk.PhotoImage] = None
-        self.zoom_timer: Optional[str] = None
-        self.style = ThemedStyle(self)
-        self.current_theme = self.config.get("theme", "radiance")
-        available_themes = self.style.theme_names()
-        if self.current_theme in available_themes:
-            self.style.theme_use(self.current_theme)
-        else:
-            self.style.theme_use("radiance")
-            self.current_theme = "radiance"
 
-        self.theme_var = tk.StringVar(master=self, value=self.current_theme)
-
-        vlc_args = config.get_vlc_args()
-        self.vlc_instance = vlc.Instance(* vlc_args)
-        self.player = self.vlc_instance.media_player_new()
-
-        device_str, _, _, _ = get_compute_device(self.config.get("device"))
-        from model_loader import TRT_AVAILABLE
-        self.show_trt_option = (device_str == 'cuda' and TRT_AVAILABLE)
-
-        self.drop_target_register(DND_FILES)
-        self.dnd_bind('<<Drop>>', self.on_handle_drop)
-
-        self.setup_widgets()
-        self.load_saved_paths()
         image = Image.open(big_logo)
         self.icon = ImageTk.PhotoImage(image, master=self)
         self.iconphoto(True, self.icon)
 
-        # when starting, lock interaction until model is ready
+        # 1. Load configuration and sync global state
+        self.config = config.load_config()
+        config.SCENE_PLAYBACK = self.config['scene_playback']
+
+        # 2. INITIALIZE TRACKING VARIABLES IMMEDIATELY
+        # This prevents the AttributeError if update_status is called early
+        self.status_var = tk.StringVar(master=self, value='Initializing...')
+        
+        # 3. Setup window geometry and themes
+        screen_width = (self.winfo_screenwidth()) - 200
+        screen_height = (self.winfo_screenheight()) - 200
+        self.geometry(f"{screen_width}x{screen_height}+0+0")
+        
+        self.style = ThemedStyle(self)
+        self.current_theme = self.config['theme']
+        self.style.theme_use(self.current_theme)
+        self.theme_var = tk.StringVar(master=self, value=self.current_theme)
+
+        # 4. Initialize Config-linked UI Variables
+        self.generate_thumbnails_var = tk.BooleanVar(master=self, value=self.config['generate_thumbnails'])
+        self.use_trt_var = tk.BooleanVar(master=self, value=self.config['use_trt'])
+        self.use_vlc_open_var = tk.BooleanVar(master=self, value=self.config['use_vlc_open'])
+        
+        # 5. Initialize Hardware/Model Variables
+        saved_device = self.config.get('device')
+        device_str, device_msg, _, _ = get_compute_device(saved_device)
+        self.device_msg = device_msg
+        self.device_var = tk.StringVar(master=self, value=device_str)
+        
+        from model_loader import TRT_AVAILABLE
+        self.show_trt_option = (device_str == 'cuda' and TRT_AVAILABLE)
+
+        # 6. Search and index variables
+        self.top_k_var = tk.IntVar(master=self, value=self.config['top_k'])
+        self.input_batch_size = tk.IntVar(master=self, value=self.config['batch_size'])
+        self.fast_detect_var = tk.BooleanVar(master=self, value=self.config['fast_detect'])
+        self.max_patches_var = tk.IntVar(master=self, value=self.config['max_patches'])
+
+        # 6. Internal state setup
+        self.model = None
+        self.processor = None
+        self.db_path = None
+        self.query_image_path = None
+        self.search_results = []
+        self.last_selected_entry = None
+        
+        vlc_args = config.get_vlc_args()
+        self.vlc_instance = vlc.Instance(*vlc_args)
+        self.player = self.vlc_instance.media_player_new()
+
+        # 7. Run UI construction
+        self.setup_widgets()
+
+        self.drop_target_register(DND_FILES)
+        self.dnd_bind('<<Drop>>', self.on_handle_drop)
+
+        self.load_saved_paths()
         self.set_controls_enabled(False)
+        
+        # When closing the app, run the on_closing logic
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
         self.withdraw()
 
 
     def setup_widgets(self):
-        # 1. Main Layout Containers
+        # Main Layout Containers
         mainframe = ttk.Frame(self, padding='10')
         mainframe.pack(fill='both', expand=True)
         
@@ -173,36 +175,33 @@ class SceneScoutApp(TkinterDnD.Tk):
         controls_pane = ttk.Frame(main_paned)
         main_paned.add(controls_pane, weight=0)
 
-        # Scrollbar and Canvas setup
         canvas = tk.Canvas(controls_pane, highlightthickness=0, width=320)
         scrollbar = ttk.Scrollbar(controls_pane, orient="vertical", command=canvas.yview)
-        
-        # The frame that actually holds the widgets
         self.scrollable_controls = ttk.Frame(canvas, padding="10")
         
-        # Inner window setup
         window_id = canvas.create_window((0, 0), window=self.scrollable_controls, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
-
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # Layout management bindings
         def _on_frame_configure(event):
             canvas.configure(scrollregion=canvas.bbox("all"))
 
         def _on_canvas_configure(event):
             canvas.itemconfig(window_id, width=event.width)
 
-        self.scrollable_controls.bind("<Configure>", _on_frame_configure)
-        canvas.bind("<Configure>", _on_canvas_configure)
-
-        # Mousewheel support
         def _on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        # Use Enter/Leave to prevent this from highjacking the whole app
+        canvas.bind('<Enter>', lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind('<Leave>', lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        self.scrollable_controls.bind("<Configure>", _on_frame_configure)
+        canvas.bind("<Configure>", _on_canvas_configure)
         canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
-        # 2. Database Section
+        # Database Section
         db_frame = ttk.LabelFrame(self.scrollable_controls, text='Database', padding=5)
         db_frame.pack(fill='x', pady=5)
         self.db_var = tk.StringVar(master=self, value='No database selected')
@@ -213,7 +212,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         ttk.Button(db_btn_frame, text='Open Existing...', command=self.browse_existing_database).pack(side='left', expand=True, fill='x', padx=(0, 2))
         ttk.Button(db_btn_frame, text='Create New...', command=self.browse_database).pack(side='left', expand=True, fill='x', padx=(2, 0))
 
-        # 3. Folder Section
+        # Folder Section
         folder_frame = ttk.LabelFrame(self.scrollable_controls, text='Folder to process', padding=5)
         folder_frame.pack(fill='x', pady=5)
         self.folder_var = tk.StringVar(master=self)
@@ -223,7 +222,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.index_button = ttk.Button(folder_frame, text='Process Media In Folder', command=self.threaded_index, state='disabled')
         self.index_button.pack(fill='x', pady=3)
 
-        # 4. Search Query Section
+        # Search Query Section
         query_frame = ttk.LabelFrame(self.scrollable_controls, text='Search Query', padding=5)
         query_frame.pack(fill='x', pady=5)
         ttk.Label(query_frame, text='Text:').pack(anchor='w')
@@ -232,7 +231,6 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.query_text_entry.pack(fill='x', pady=(0, 5))
         self.query_text_entry.bind('<Return>', lambda e: self.threaded_search())
         
-        ttk.Label(query_frame, text='Image:').pack(anchor='w')
         self.query_image_var = tk.StringVar(master=self, value='No query image')
         ttk.Label(query_frame, textvariable=self.query_image_var, wraplength=250).pack(anchor='w')
         
@@ -240,30 +238,19 @@ class SceneScoutApp(TkinterDnD.Tk):
         btn_frame.pack(fill='x', pady=2)
         ttk.Button(btn_frame, text='Load...', command=self.browse_query_image).pack(side='left', expand=True, fill='x')
         ttk.Button(btn_frame, text='Clear', command=self.clear_query_image).pack(side='left', expand=True, fill='x')
-
         self.search_button = ttk.Button(query_frame, text='Search Scene', command=self.threaded_search, state='disabled')
         self.search_button.pack(fill='x', pady=3)
 
-        # 5. Options Section
+        # Options Section
         options_frame = ttk.LabelFrame(self.scrollable_controls, text='Options', padding=5)
         options_frame.pack(fill='x', pady=5)
-        
-        # GPU device or CPU detection
-        device_str, device_msg, _, _ = get_compute_device()
+
+        # Compute Device (Fixes the device_var AttributeError)
         ttk.Label(options_frame, text='Compute Device:').pack(anchor='w', pady=(5, 0))
-        self.device_var = tk.StringVar(master=self, value=device_str)
-        
-        # Build available options dynamically
         device_options = ['cpu']
-        if torch.cuda.is_available():
-            device_options.append('cuda')
-        if torch_directml is not None:
-            device_options.append('dml')
-            
-        # Ensure the default is in the list, otherwise fallback to CPU
-        if self.device_var.get() not in device_options:
-            self.device_var.set('cpu')
-            
+        if torch.cuda.is_available(): device_options.append('cuda')
+        if torch_directml is not None: device_options.append('dml')
+
         self.device_combobox = ttk.Combobox(
             options_frame, 
             textvariable=self.device_var, 
@@ -271,74 +258,85 @@ class SceneScoutApp(TkinterDnD.Tk):
             state='readonly'
         )
         self.device_combobox.pack(fill='x')
-        ttk.Label(options_frame, text=f'Auto-detected: {device_msg}', font=('', 8, 'italic')).pack(anchor='w')
 
-        # Tensor RT option
+        # Save config when selection changes
+        self.device_combobox.bind("<<ComboboxSelected>>", 
+            lambda e: self.save_config_key('device', self.device_var.get()))
+        self.device_combobox.pack(fill='x')
+
+        ttk.Label(options_frame, text=f'Auto-detected: {self.device_msg}', font=('', 8, 'italic')).pack(anchor='w')
+
+        # Add TRT Toggle if hardware supports it
         if self.show_trt_option:
             self.trt_check = ttk.Checkbutton(
                 options_frame,
                 text='Use TensorRT Acceleration', 
                 variable=self.use_trt_var,
-                onvalue=True, 
-                offvalue=False,
                 command=self.save_trt_preference
             )
             self.trt_check.pack(anchor='w', pady=(5, 0))
-
-        # Detection Method Toggle (Replaces Checkbox)
+        
         ttk.Label(options_frame, text='Detection method:').pack(anchor='w', pady=(5, 0))
         detect_method_frame = ttk.Frame(options_frame)
         detect_method_frame.pack(fill='x', pady=5)
-        self.fast_detect_var = tk.BooleanVar(master=self, value=True)
-
         ttk.Radiobutton(detect_method_frame, text='Fast', variable=self.fast_detect_var, 
-                        value=True, style='Toolbutton').pack(side='left', expand=True, fill='x', padx=(0, 2))
+                value=True, style='Toolbutton',
+                command=lambda: self.save_config_key('fast_detect', True)).pack(side='left', expand=True, fill='x', padx=(0, 2))
+
         ttk.Radiobutton(detect_method_frame, text='Accurate', variable=self.fast_detect_var, 
-                        value=False, style='Toolbutton').pack(side='left', expand=True, fill='x', padx=(2, 0))
+                        value=False, style='Toolbutton',
+                        command=lambda: self.save_config_key('fast_detect', False)).pack(side='left', expand=True, fill='x', padx=(2, 0))
 
-        ttk.Label(options_frame, text='Max Patches:').pack(anchor='w', pady=(5, 0))
-        self.max_patches_var = tk.IntVar(master=self, value=256)
-        ttk.Spinbox(options_frame, from_=128, to=1024, increment=128, textvariable=self.max_patches_var).pack(fill='x')
-        
+        # Max Patches
+        ttk.Label(options_frame, text='Max patches:').pack(anchor='w', pady=(5, 0))
+        ttk.Spinbox(options_frame, from_=128, to=1024, increment=128, 
+                    textvariable=self.max_patches_var,
+                    command=lambda: self.save_config_key('max_patches', self.max_patches_var.get())).pack(fill='x')
+
+        # Results (top_k)
         ttk.Label(options_frame, text='Results:').pack(anchor='w', pady=(5, 0))
-        self.top_k_var = tk.IntVar(master=self, value=20)
-        ttk.Spinbox(options_frame, from_=1, to=100, textvariable=self.top_k_var).pack(fill='x')
-        
-        ttk.Label(options_frame, text='Scene embed batch size:').pack(anchor='w', pady=(5, 0))
-        self.input_batch_size = tk.IntVar(master=self, value=16)
-        ttk.Spinbox(options_frame, from_=8, to=160, textvariable=self.input_batch_size).pack(fill='x')
+        ttk.Spinbox(options_frame, from_=1, to=100, 
+                    textvariable=self.top_k_var,
+                    command=lambda: self.save_config_key('top_k', self.top_k_var.get())).pack(fill='x')
 
+        # Batch Size
+        ttk.Label(options_frame, text='Scene embed batch size:').pack(anchor='w', pady=(5, 0))
+        ttk.Spinbox(options_frame, from_=8, to=160, 
+                    textvariable=self.input_batch_size,
+                    command=lambda: self.save_config_key('batch_size', self.input_batch_size.get())).pack(fill='x')
+
+        # VLC Open Preference
         self.vlc_open_check = ttk.Checkbutton(
             options_frame, 
             text='Open video in VLC', 
             variable=self.use_vlc_open_var,
-            command=self.save_vlc_preference
+            command=lambda: self.save_config_key('use_vlc_open', self.use_vlc_open_var.get())
         )
         self.vlc_open_check.pack(anchor='w', pady=(5, 0))
 
-        # Theme selection
-        ttk.Label(options_frame, text='Theme:').pack(anchor='w', pady=(5, 0))
-        theme_frame = ttk.Frame(options_frame)
-        theme_frame.pack(fill='x', pady=(0, 5))
-        available_themes = sorted(self.style.theme_names())
-        self.theme_combobox = ttk.Combobox(
-            theme_frame,
-            textvariable=self.theme_var,
-            values=available_themes,
-            state='readonly'
+        # Thumbnail Toggle
+        self.thumb_check = ttk.Checkbutton(
+            options_frame, 
+            text='Generate Thumbnails (increases DB size)', 
+            variable=self.generate_thumbnails_var,
+            command=lambda: self.save_config_key('generate_thumbnails', self.generate_thumbnails_var.get())
         )
+        self.thumb_check.pack(anchor='w', pady=(5, 0))
+        
+        # Theme frame
+        theme_frame = ttk.Frame(options_frame)
+        theme_frame.pack(fill='x', pady=5)
+        self.theme_combobox = ttk.Combobox(theme_frame, textvariable=self.theme_var, values=sorted(self.style.theme_names()), state='readonly')
         self.theme_combobox.pack(side='left', fill='x', expand=True)
-        ttk.Button(
-            theme_frame,
-            text='Apply',
-            command=self.apply_theme
-        ).pack(side='left', padx=(5, 0))
+        ttk.Button(theme_frame, text='Apply', command=self.apply_theme).pack(side='left', padx=(5, 0))
 
-        # 6. Additional actions Section
+        # Additional actions Section
         actions_frame = ttk.LabelFrame(self.scrollable_controls, text='Additional Actions', padding=5)
         actions_frame.pack(fill='x', pady=10)
+        
         self.load_model_button = ttk.Button(actions_frame, text='Load Model', command=self.threaded_load_model)
         self.load_model_button.pack(fill='x', pady=3)
+        
         ttk.Button(actions_frame, text='Cleanup Database', command=self.cleanup_database).pack(fill='x', pady=3)
 
         # Info Section
@@ -346,8 +344,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         info_frame.pack(fill='x', pady=(0,10))
         ttk.Button(info_frame, text='About', command=self.open_about_dialog).pack(fill='x')
 
-        self.status_var = tk.StringVar(master=self, value='Select database and load model')
-        ttk.Label(self.scrollable_controls, textvariable=self.status_var, wraplength=280).pack(side='bottom', fill='x', pady=10)
+        # Status Label
+        ttk.Label(self.scrollable_controls, textvariable=self.status_var, wraplength=280).pack(side='bottom', fill='x', pady=10)       
 
         # --- RIGHT SIDE: Results and Preview ---
         results_frame = ttk.LabelFrame(main_paned, text='Results', padding='10')
@@ -387,10 +385,16 @@ class SceneScoutApp(TkinterDnD.Tk):
         self._playback_toggle_btn = ttk.Button(preview_frame, text=f'Toggle preview playback ({playback_state})', command=self.toggle_preview_playback)
         self._playback_toggle_btn.pack(fill='x', pady=(0,5))
         
-        self.image_canvas = tk.Canvas(preview_frame, bg='gray')
-        self.image_canvas.pack(fill='both', expand=True)
+        self.preview_image_canvas = tk.Canvas(preview_frame, bg='gray')
+        self.preview_image_canvas.pack(fill='both', expand=True)
+
+        self.preview_image_canvas.bind('<Button-1>', self.on_canvas_click)
+        self.preview_image_canvas.bind('<B1-Motion>', self.on_canvas_drag)
+        self.preview_image_canvas.bind('<MouseWheel>', self.on_canvas_zoom)
+        self.preview_image_canvas.bind('<Double-1>', self.on_canvas_double_click)
+        self.preview_image_canvas.bind('<Button-3>', self.on_canvas_right_click)
         
-        self.video_container = ttk.Frame(self.image_canvas)
+        self.video_container = ttk.Frame(self.preview_image_canvas)
         self.video_container.pack(fill='both', expand=True)
         self.video_container.bind("<Configure>", self.on_player_resize)
 
@@ -412,10 +416,17 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         self.thumb_canvas.pack(side='top', fill='x', expand=True)
         self.thumb_scrollbar.pack(side='bottom', fill='x')
+
+        def _on_thumb_mousewheel(event):
+            # Scrolls horizontally since the thumbnail bar is horizontal
+            self.thumb_canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        self.thumb_canvas.bind('<Enter>', lambda e: self.thumb_canvas.bind_all("<MouseWheel>", _on_thumb_mousewheel))
+        self.thumb_canvas.bind('<Leave>', lambda e: self.thumb_canvas.unbind_all("<MouseWheel>"))
         
         # Persistent storage to prevent Python's garbage collector from deleting the images
         self.thumbnail_references = []
-        self.thumbnail_widgets = []
+        self.thumbnail_widgets = {}
 
         paned_window.add(preview_frame, weight=1)
 
@@ -475,6 +486,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                 except Exception:
                     pass
     
+    def save_config_key(self, key, value):
+        """Updates internal config and persists to disk."""
+        self.config[key] = value
+        config.save_config(self.config)
+
     def save_trt_preference(self):
         """Save the TensorRT preference to the GUI config file."""
         self.config['use_trt'] = self.use_trt_var.get()
@@ -757,6 +773,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             result = index_files(
                 folder_path, self.device, self.processor, self.model, self.db_path,
                 batch_size=self.input_batch_size.get(),
+                generate_thumbnails=self.generate_thumbnails_var.get(),
                 progress_callback=self.update_gui_progress,
                 max_num_patches=self.max_patches_var.get(),
                 fast_scene_detect=self.fast_detect_var.get(),
@@ -830,17 +847,18 @@ class SceneScoutApp(TkinterDnD.Tk):
         if hours > 0:
             return f"{hours}:{mins:02d}:{secs:02d}.{milli:03d}"
         return f"{mins}:{secs:02d}.{milli:03d}"
-
+    
     def _update_listview(self):
-        # Clear existing rows
+        # 1. Clear existing rows and thumbnails
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
 
-        # Clear existing thumbnails
         for widget in self.thumb_inner_frame.winfo_children():
             widget.destroy()
+
         self.thumbnail_references.clear()
-        self.thumbnail_widgets.clear()
+        self.thumbnail_widgets = {} 
+        visible_thumb_count = 0
 
         if not self.search_results:
             self.stats_label.config(text='No results found.')
@@ -850,61 +868,51 @@ class SceneScoutApp(TkinterDnD.Tk):
         has_rescore = self.search_results and self.search_results[0][3] is not None
         sort_key = lambda x: x[3] if has_rescore else x[1]
         self.search_results.sort(key=sort_key, reverse=True)
+
+        # 2. Populate the Treeview and Thumbnail Strip
         for i, data in enumerate(self.search_results, 1):
-            # Unpack the updated 8-item tuple
             path, score, ftype, rescore, scene_idx, scene_time, scene_end, thumb_bytes = data
+            tree_id = str(i-1)
             
             filename = os.path.basename(path)
             time_str = ''
             scene_str = ''
 
             if scene_idx is not None and scene_time is not None:
-                # convert milliseconds to M:SS.mmm timecode
                 start_str = self._format_ms(scene_time)
-                
                 if scene_end is not None:
                     end_str = self._format_ms(scene_end)
                     time_str = f'{start_str}-{end_str}'
                 else:
                     time_str = start_str
-                # Display human-friendly scene number (1-based)
                 scene_str = str(scene_idx + 1)
             
             values = [filename, scene_str, time_str, f'{score:.4f}', f'{rescore:.4f}' if rescore is not None else '']
-            tree_id = str(i-1)
             self.results_tree.insert('', 'end', iid=tree_id, values=values)
 
-            # Insert into Thumbnail Strip
             if thumb_bytes:
                 img_data = io.BytesIO(thumb_bytes)
                 img = Image.open(img_data)
                 tk_img = ImageTk.PhotoImage(img, master=self)
-                self.thumbnail_references.append(tk_img) # Keep alive
+                self.thumbnail_references.append(tk_img)
                 
-                # Create a frame to hold the image
                 thumb_container = tk.Frame(self.thumb_inner_frame, bd=2, relief='flat')
-                
-                # Use the current count to determine position.
-                # Evens go to row 0 (top), odds go to row 1 (bottom).
-                thumb_count = len(self.thumbnail_widgets)
-                row_idx = thumb_count % 3       # Alternate between 0 and 1
-                col_idx = thumb_count // 3      # Move to a new column every 2 items
-                
+                row_idx = visible_thumb_count % 3       
+                col_idx = visible_thumb_count // 3      
                 thumb_container.grid(row=row_idx, column=col_idx, padx=2, pady=2)
                 
                 thumb_lbl = tk.Label(thumb_container, image=tk_img, cursor='hand2')
                 thumb_lbl.pack()
-                
-                # Bind click event to sync with the treeview
                 thumb_lbl.bind('<Button-1>', lambda e, iid=tree_id: self.on_thumbnail_click(iid))
                 
-                self.thumbnail_widgets.append(thumb_container)
+                self.thumbnail_widgets[tree_id] = thumb_container
+                visible_thumb_count += 1
 
+        # 3. Update status and auto-select first result
         scores = [rescore if has_rescore and rescore is not None else score for _, score, _, rescore, _, _, _, _ in self.search_results]
         stats_text = f'Found {len(scores)} results | Max: {max(scores):.3f} | Avg: {np.mean(scores):.3f}'
         self.stats_label.config(text=stats_text)
         
-        # Select first row automatically
         first = self.results_tree.get_children()
         if first:
             self.results_tree.selection_set(first[0])
@@ -983,41 +991,52 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.clear_rescore_button.config(state='disabled')
 
     def on_result_select(self, event: Optional[tk.Event]):
-        sel = self.results_tree.selection()
-        if not sel:
-            return
-        
-        current_selected_entry = sel[0]
-        if current_selected_entry == self.last_selected_entry:
-            return
-        
-        self.last_selected_entry = current_selected_entry
-        index = int(current_selected_entry)
-        
-        path, _, file_type, _, scene_idx, scene_time, scene_end, _ = self.search_results[index]
-        self.current_display_path = path
-        
-        # Reset all thumbnail borders to flat
-        for widget in self.thumbnail_widgets:
-            widget.config(relief='flat', bg=self.cget('bg'))
+            sel = self.results_tree.selection()
+            if not sel:
+                return
             
-        # Highlight the selected thumbnail with a colored border
-        if index < len(self.thumbnail_widgets):
-            selected_widget = self.thumbnail_widgets[index]
-            # Use 'solid' relief and a distinct color like blue to indicate selection
-            selected_widget.config(relief='solid', bg='#0078D7') 
+            # Retrieve the unique ID string for the row (e.g., '0', '1', '2')
+            current_selected_entry = sel[0]
+            if current_selected_entry == self.last_selected_entry:
+                return
             
-            # Automatically scroll the thumbnail canvas to ensure the selected thumb is visible
-            x_pos = selected_widget.winfo_x()
-            canvas_width = self.thumb_canvas.winfo_width()
-            # Calculate scroll fraction (approximate center)
-            scroll_fraction = max(0, (x_pos - (canvas_width / 2)) / self.thumb_inner_frame.winfo_width())
-            self.thumb_canvas.xview_moveto(scroll_fraction)
-        
-        if file_type == 'image':
-            self.display_media(path, is_video=False)
-        else:
-            self.display_media(path, is_video=True, start_ms=scene_time, end_ms=scene_end)
+            self.last_selected_entry = current_selected_entry
+            index = int(current_selected_entry)
+            
+            # Extract metadata from search_results (matches the 8-item tuple structure)
+            # Structure: path, score, ftype, rescore, scene_idx, start_ms, end_ms, thumb_bytes
+            path, _, file_type, _, _, scene_time, scene_end, _ = self.search_results[index]
+            self.current_display_path = path
+            
+            # --- THUMBNAIL HIGHLIGHTING LOGIC ---
+            # Reset all existing thumbnail borders using dictionary values
+            for widget in self.thumbnail_widgets.values():
+                widget.config(relief='flat', bg=self.cget('bg'))
+                
+            # Highlight ONLY if this result actually has a visual thumbnail widget mapped to its ID
+            if current_selected_entry in self.thumbnail_widgets:
+                selected_widget = self.thumbnail_widgets[current_selected_entry]
+                selected_widget.config(relief='solid', bg='#0078D7') 
+                
+                # Update geometry to ensure scrolling coordinates are fresh
+                self.update_idletasks()
+                
+                # Automatically scroll the horizontal thumbnail canvas to the widget
+                x_pos = selected_widget.winfo_x()
+                canvas_width = self.thumb_canvas.winfo_width()
+                inner_width = self.thumb_inner_frame.winfo_width()
+                
+                if inner_width > canvas_width:
+                    # Calculate the fraction needed to bring the thumbnail into view
+                    scroll_fraction = max(0, (x_pos - (canvas_width / 2)) / inner_width)
+                    self.thumb_canvas.xview_moveto(scroll_fraction)
+            
+            # --- MEDIA DISPLAY LOGIC ---
+            if file_type == 'image':
+                self.display_media(path, is_video=False)
+            else:
+                # scene_time and scene_end are in milliseconds
+                self.display_media(path, is_video=True, start_ms=scene_time, end_ms=scene_end)
 
     def on_result_double_click(self, event: tk.Event):
         """Handle double-click on a search result to open the file."""
@@ -1034,28 +1053,33 @@ class SceneScoutApp(TkinterDnD.Tk):
         # Open the file using the system's default application
         self.open_current_file()
 
-    def _render_image_on_canvas(self, use_fast_quality: bool=False):
+    def _render_preview_image_on_canvas(self, use_fast_quality: bool=False):
         if not self.original_image:
-            self.image_canvas.delete('all')
+            self.preview_image_canvas.delete('all')
             return
-        canvas_w = self.image_canvas.winfo_width()
-        canvas_h = self.image_canvas.winfo_height()
+
+        canvas_w = self.preview_image_canvas.winfo_width()
+        canvas_h = self.preview_image_canvas.winfo_height()
+
         if canvas_w <= 1 or canvas_h <= 1:
-            self.after(100, self._render_image_on_canvas)
+            self.after(100, self._render_preview_image_on_canvas)
             return
+
         new_w = int(self.original_image.width * self.canvas_scale)
         new_h = int(self.original_image.height * self.canvas_scale)
+
         if new_w < 1 or new_h < 1:
-            self.image_canvas.delete('all')
+            self.preview_image_canvas.delete('all')
             return
-        if self.display_image is None or self.display_image.size != (new_w, new_h):
-            resample_method = Image.Resampling.BILINEAR if use_fast_quality else Image.Resampling.LANCZOS
-            self.display_image = self.original_image.resize((new_w, new_h), resample_method)
+
+        # Always use high-quality resampling
+        self.display_image = self.original_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
         self.tk_image = ImageTk.PhotoImage(self.display_image, master=self)
-        self.image_canvas.delete('all')
+        
+        self.preview_image_canvas.delete('all')
         draw_x = canvas_w / 2 + self.canvas_offset_x
         draw_y = canvas_h / 2 + self.canvas_offset_y
-        self.image_canvas.create_image(draw_x, draw_y, image=self.tk_image)
+        self.preview_image_canvas.create_image(draw_x, draw_y, image=self.tk_image)
 
     def _reset_pan_zoom(self):
         self.canvas_scale = 1.0
@@ -1079,7 +1103,7 @@ class SceneScoutApp(TkinterDnD.Tk):
     def _show_static_pil_image(self, path):
         # Use your existing high-quality PIL rendering here
         self.original_image = Image.open(path).convert('RGB')
-        self._render_image_on_canvas(use_fast_quality=False) # Use LANCZOS for static
+        self._render_preview_image_on_canvas(use_fast_quality=False) # Use LANCZOS for static
 
     def _on_vlc_end_reached(self, event):
         """Triggered when the video finishes. Bounces to a thread to prevent freezing."""
@@ -1131,26 +1155,26 @@ class SceneScoutApp(TkinterDnD.Tk):
     def _finalize_frame_update(self, pil_img):
         """Main-thread helper to update the image and redraw immediately."""
         self.original_image = pil_img
-        self.display_image = None  # Force a re-resize in _render_image_on_canvas
+        self.display_image = None  # Force a re-resize in _render_preview_image_on_canvas
         
         # Reset view and calculate fitting scale
         self.canvas_offset_x = 0
         self.canvas_offset_y = 0
         
-        canvas_w = self.image_canvas.winfo_width()
+        canvas_w = self.preview_image_canvas.winfo_width()
         if canvas_w > 1:
             self.canvas_scale = canvas_w / self.original_image.width
         else:
             self.canvas_scale = 1.0
 
         # FORCE the actual drawing to happen now
-        self._render_image_on_canvas()
+        self._render_preview_image_on_canvas()
         # Optional: Force a GUI update to ensure the canvas refreshes visually
-        self.image_canvas.update_idletasks()
+        self.preview_image_canvas.update_idletasks()
 
     def display_media(self, path: str, is_video: bool, start_ms: int = 0, end_ms: int = 0):
         self._stop_video_loop()
-        self.image_canvas.delete("all")
+        self.preview_image_canvas.delete("all")
         
         # Reset image state to prevent ghosting
         self.original_image = None
@@ -1237,15 +1261,22 @@ class SceneScoutApp(TkinterDnD.Tk):
             pass
 
     def toggle_preview_playback(self):
+        # Toggle the global state
         config.SCENE_PLAYBACK = not config.SCENE_PLAYBACK
-        if hasattr(self, '_playback_toggle_btn'):
-            state = 'On' if config.SCENE_PLAYBACK else 'Off'
-            self._playback_toggle_btn.config(text=f'Toggle preview playback ({state})')
-        # if we just disabled playback, stop any active loop
+        
+        # Update the internal config dictionary
+        self.config['scene_playback'] = config.SCENE_PLAYBACK
+        
+        # Persist the change to the JSON file
+        config.save_config(self.config)
+        
+        # Refresh UI elements
+        state = 'On' if config.SCENE_PLAYBACK else 'Off'
+        self._playback_toggle_btn.config(text=f'Toggle preview playback ({state})')
+        
         if not config.SCENE_PLAYBACK:
             self._stop_video_loop()    
         
-        # refresh whatever is currently selected so the preview reflects the new mode
         self.last_selected_entry = None
         self.on_result_select(None)
 
@@ -1253,24 +1284,23 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.drag_start_x, self.drag_start_y = (event.x, event.y)
 
     def on_canvas_drag(self, event: tk.Event):
-        # ignore dragging while video is looping (either cached or live)
+        # Ignore dragging while video is looping
         if (getattr(self, 'video_cap', None) is not None or getattr(self, 'loop_display_frames', None)) and self.video_loop_id:
             return
+        
         self.canvas_offset_x += event.x - self.drag_start_x
         self.canvas_offset_y += event.y - self.drag_start_y
         self.drag_start_x, self.drag_start_y = (event.x, event.y)
-        self._render_image_on_canvas(use_fast_quality=True)
+        self._render_preview_image_on_canvas()
 
     def on_canvas_zoom(self, event: tk.Event):
-        # disable zoom while looping video (cached or live)
+        # Disable zoom while looping video
         if (getattr(self, 'video_cap', None) is not None or getattr(self, 'loop_display_frames', None)) and self.video_loop_id:
             return
+            
         factor = 1.1 if event.delta > 0 else 1 / 1.1
         self.canvas_scale = max(0.1, min(10.0, self.canvas_scale * factor))
-        self._render_image_on_canvas(use_fast_quality=True)
-        if self.zoom_timer:
-            self.after_cancel(self.zoom_timer)
-        self.zoom_timer = self.after(300, lambda: self._render_image_on_canvas(use_fast_quality=False))
+        self._render_preview_image_on_canvas()
 
     def on_canvas_double_click(self, event: tk.Event):
         if self.current_display_path:
@@ -1291,7 +1321,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         menu.add_command(label='Copy Path', command=lambda path=self.current_display_path: self.clipboard_append(path))
         menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
         menu.add_separator()
-        menu.add_command(label='Search for Similar', command=self.search_for_similar)
+        menu.add_command(label='Search for Similar', command=self.search_for_similar_preview_frame)
         menu.tk_popup(event.x_root, event.y_root)
 
     def on_results_right_click(self, event: tk.Event):
@@ -1389,10 +1419,35 @@ class SceneScoutApp(TkinterDnD.Tk):
         except Exception as e:
             messagebox.showerror("Theme Error", f"Failed to apply theme: {e}")
 
-    def search_for_similar(self):
-        if self.current_display_path:
-            self.query_image_path = self.current_display_path
-            self.query_image_var.set(os.path.basename(self.current_display_path))
-            self.query_text_var.set('')
-            self.threaded_search()
+    def search_for_similar_preview_frame(self):
+        if not self.current_display_path:
+                    return
+
+        # If we have a frame in memory (Image or extracted Video frame)
+        if self.original_image:
+            os.makedirs(config.TEMP_FOLDER, exist_ok=True)
+            # Store image in temporary folder
+            temp_filename = "temp_search_query.jpg"
+            temp_path = os.path.abspath(os.path.join(config.TEMP_FOLDER, temp_filename))
+
+            try:
+                # Save the high-quality original frame
+                self.original_image.save(temp_path, "JPEG", quality=95)
+                
+                # Set this temp file as the query image
+                self.query_image_path = temp_path
+                self.query_image_var.set(f"Frame from {os.path.basename(self.current_display_path)}")
+                self.query_text_var.set('')
+                
+                # Run the search
+                self.threaded_search()
+            except Exception as e:
+                messagebox.showerror("Search Error", f"Could not capture frame: {e}")
+        else:
+            # Fallback: if it's a standard image file and original_image isn't set
+            if self.current_display_path.lower().endswith(config.IMAGE_EXTENSIONS):
+                self.query_image_path = self.current_display_path
+                self.query_image_var.set(os.path.basename(self.current_display_path))
+                self.query_text_var.set('')
+                self.threaded_search()
 

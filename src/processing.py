@@ -21,7 +21,7 @@ from database import cleanup_orphaned_entries
 from utils import normalize_embedding
 
 
-def _run_batch_inference(frames, info, model, processor, device, cursor, path, pbar=None):
+def _run_batch_inference(frames, info, model, processor, device, cursor, path, generate_thumbnails, pbar=None):
     """Internal helper to handle SigLIP2 inference and DB insertion."""
     if not frames:
         return
@@ -35,17 +35,14 @@ def _run_batch_inference(frames, info, model, processor, device, cursor, path, p
             embeddings = features.cpu().numpy().astype(np.float32)
         for idx, (scene_idx, start_ms, end_ms) in enumerate(info):
             emb_bytes = embeddings[idx].tobytes()
+            thumb_bytes = None
 
-            thumb = frames[idx].copy()
-            
-            # .thumbnail() preserves aspect ratio and modifies in-place.
-            # Using BILINEAR is the best balance of speed and quality for tiny images.
-            thumb.thumbnail((160, 160), Image.Resampling.BILINEAR)
-            
-            # Save the image into a memory buffer as a highly compressed JPEG
-            buffer = io.BytesIO()
-            thumb.save(buffer, format="JPEG", quality=60, optimize=True)
-            thumb_bytes = buffer.getvalue()
+            if generate_thumbnails:
+                thumb = frames[idx].copy()
+                thumb.thumbnail((160, 160), Image.Resampling.BILINEAR)
+                buffer = io.BytesIO()
+                thumb.save(buffer, format="JPEG", quality=60, optimize=True)
+                thumb_bytes = buffer.getvalue()
 
             cursor.execute('''
                 INSERT INTO scene_embeddings 
@@ -58,7 +55,7 @@ def _run_batch_inference(frames, info, model, processor, device, cursor, path, p
     except Exception as e:
         tqdm.write(f"Inference Error: {e}")
 
-def fast_process_and_embed(video_path, model, processor, device, cursor, batch_size=16, cancel_event=None):
+def fast_process_and_embed(video_path, model, processor, device, cursor, generate_thumbnails, batch_size=16, cancel_event=None):
     tqdm.write(f"Fast processing: {os.path.basename(video_path)}")
     
     try:
@@ -112,7 +109,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, batch_s
                 pending_start_ms = current_ms
 
                 if len(batch_frames) >= batch_size:
-                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path)
+                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, generate_thumbnails=generate_thumbnails)
                     pbar.update((batch_info[-1][2] - last_pbar_update) / 60000)
                     last_pbar_update = batch_info[-1][2]
                     batch_frames, batch_info = [], []
@@ -127,7 +124,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, batch_s
             batch_info.append((scene_idx, pending_start_ms, total_duration_ms))
 
         if batch_frames:
-            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path)
+            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, generate_thumbnails=generate_thumbnails)
             pbar.update((batch_info[-1][2] - last_pbar_update) / 60000)
 
         container.close()
@@ -138,7 +135,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, batch_s
         tqdm.write(f"Fatal error: {e}")
         return False
 
-def accurate_process_and_embed(video_path, model, processor, device, cursor, batch_size=16, cancel_event=None):
+def accurate_process_and_embed(video_path, model, processor, device, cursor, generate_thumbnails, batch_size=16, cancel_event=None,):
     """
     Two-pass accurate detection:
     1. PySceneDetect finds precise cut points (slower, looks at every frame).
@@ -204,12 +201,12 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, bat
                 target_idx += 1
 
                 if len(batch_frames) >= batch_size:
-                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, pbar)
+                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, pbar, generate_thumbnails=generate_thumbnails)
                     batch_frames, batch_info = [], []
 
         # Cleanup final batch
         if batch_frames:
-            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, pbar)
+            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, pbar, generate_thumbnails=generate_thumbnails)
 
     finally:
         container.close()
@@ -217,7 +214,7 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, bat
 
     return True
 
-def index_files(folder_path: str, device: torch.device, processor, model, db_path: str, batch_size: int=16, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, toggle_preview_callback: Optional[Callable]=None, cancel_event: Optional[threading.Event] = None) -> str:
+def index_files(folder_path: str, device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, toggle_preview_callback: Optional[Callable]=None, cancel_event: Optional[threading.Event] = None) -> str:
     """
     Index files in the given folder. Returns 'completed', 'cancelled', or 'error'.
     """
@@ -324,9 +321,9 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
                 cursor.execute('DELETE FROM scene_embeddings WHERE filepath = ?', (path,))
                 video_processed = False
                 if fast_scene_detect:
-                    video_processed = fast_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event)
+                    video_processed = fast_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails)
                 else:
-                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event)
+                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails)
 
                 if not video_processed:
                     # Video processing was cancelled or failed
