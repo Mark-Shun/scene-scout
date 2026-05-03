@@ -102,7 +102,7 @@ body::before {
 .sidebar-brand h1 {
   display: inline-block;
   padding: 0.3rem 0.9rem;
-  background: linear-gradient(180deg, #7cc5f6 0%, #4a90d9 50%, #3570b3 100%);
+  background: linear-gradient(180deg, #7cc5f6 0%, #2596be 50%, #2596be 100%);
   color: white;
   font-size: 1.2rem;
   font-weight: 700;
@@ -266,7 +266,7 @@ body::before {
 }
 
 .hero-logo {
-  max-width: 240px;
+  max-width: 400px;
   width: 100%;
   margin-bottom: 1.5rem;
   position: relative;
@@ -274,7 +274,7 @@ body::before {
 }
 
 .hero-screenshot {
-  max-width: 600px;
+  max-width: 900px;
   width: 100%;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.8);
@@ -286,6 +286,11 @@ body::before {
   position: relative;
   z-index: 1;
   transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.hero-screenshot.screenshot-click,
+.screenshot-card img {
+  cursor: pointer;
 }
 
 .hero-screenshot:hover {

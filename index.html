@@ -23,7 +23,7 @@
         <div class="sidebar-nav">
             <ul>
                 <li><a href="#hero" class="active"><i class="fa-solid fa-house"></i> Home</a></li>
-                <li><a href="#features"><i class="fa-solid fa-sparkles"></i> Features</a></li>
+                <li><a href="#features"><i class="fa-regular fa-star"></i> Features</a></li>
                 <li><a href="#screenshots"><i class="fa-solid fa-images"></i> Screenshots</a></li>
                 <li><a href="#install"><i class="fa-solid fa-download"></i> Installation</a></li>
                 <li><a href="#author"><i class="fa-solid fa-circle-info"></i> About</a></li>
@@ -39,7 +39,7 @@
     <main class="main-content">
         <section id="hero" class="hero">
             <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/logo/scene-scout-text-logo.png" alt="Scene Scout Logo" class="hero-logo">
-            <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/big-buck-bunny-search.png" alt="Scene Scout search results preview" class="hero-screenshot">
+            <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/big-buck-bunny-search.png" alt="Scene Scout search results preview" class="hero-screenshot screenshot-click" data-full="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/big-buck-bunny-search.png">
             <p class="hero-tagline">
                 Search through your local video collection using natural language queries or image similarity, powered by Google's SigLIP 2 model.
             </p>
@@ -104,10 +104,6 @@
             <h2 class="section-title"><span class="glass-pill">Screenshots</span></h2>
             <p class="section-subtitle">See Scene Scout in action</p>
             <div class="screenshot-grid">
-                <div class="screenshot-card" data-full="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/big-buck-bunny-search.png">
-                    <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/big-buck-bunny-search.png" alt="Big Buck Bunny Search Example">
-                    <div class="screenshot-caption">Search results with similarity scores</div>
-                </div>
                 <div class="screenshot-card" data-full="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/computer-monitor-search.png">
                     <img src="https://raw.githubusercontent.com/Mark-Shun/scene-scout/main/assets/screenshots/computer-monitor-search.png" alt="Computer Monitor Search">
                     <div class="screenshot-caption">Text query: computer monitor</div>
@@ -167,6 +163,10 @@
                         <i class="fa-solid fa-code-branch"></i>
                         Codeberg Mirror
                     </a>
+                    <a href="https://gitlab.com/Mark-Shun/scene-scout" class="author-link" target="_blank">
+                        <i class="fa-solid fa-code-branch"></i>
+                        Gitlab Mirror
+                    </a>
                     <a href="https://www.youtube.com/@sonicfreak1111" class="author-link" target="_blank">
                         <i class="fa-brands fa-youtube"></i>
                         YouTube Channel
@@ -207,6 +207,14 @@
         document.querySelectorAll('.screenshot-card').forEach(card => {
             card.addEventListener('click', () => {
                 lightboxImg.src = card.dataset.full;
+                lightbox.classList.add('active');
+                document.body.style.overflow = 'hidden';
+            });
+        });
+
+        document.querySelectorAll('.screenshot-click').forEach(img => {
+            img.addEventListener('click', () => {
+                lightboxImg.src = img.dataset.full || img.src;
                 lightbox.classList.add('active');
                 document.body.style.overflow = 'hidden';
             });
