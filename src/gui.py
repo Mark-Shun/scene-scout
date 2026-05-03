@@ -57,19 +57,18 @@ def show_splash():
     tk_img = ImageTk.PhotoImage(img, master=splash)
     
     # Image Label
-    label = tk.Label(splash, image=tk_img)
+    label = ttk.Label(splash, image=tk_img)
     label.image = tk_img
     label.pack()
 
     # Attach to splash object so it can be referenced later
-    splash.status_label = tk.Label(
+    splash.status_label = ttk.Label(
         splash, 
         text="Initializing...", 
-        font=("Arial", 10), 
-        pady=10,
-        fg="#333333"
+        font=("Arial", 10),
+        anchor="center"
     )
-    splash.status_label.pack(fill='x')
+    splash.status_label.pack(fill='x', pady=10)
     
     # Calculate center position including the new label height
     splash.update_idletasks()
@@ -168,31 +167,31 @@ class SceneScoutApp(TkinterDnD.Tk):
         controls_pane = ttk.Frame(main_paned)
         main_paned.add(controls_pane, weight=0)
 
-        canvas = tk.Canvas(controls_pane, highlightthickness=0, width=320)
-        scrollbar = ttk.Scrollbar(controls_pane, orient="vertical", command=canvas.yview)
-        self.scrollable_controls = ttk.Frame(canvas, padding="10")
+        self.canvas = tk.Canvas(controls_pane, highlightthickness=0, width=320)
+        scrollbar = ttk.Scrollbar(controls_pane, orient="vertical", command=self.canvas.yview)
+        self.scrollable_controls = ttk.Frame(self.canvas, padding="10")
         
-        window_id = canvas.create_window((0, 0), window=self.scrollable_controls, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        canvas.pack(side="left", fill="both", expand=True)
+        window_id = self.canvas.create_window((0, 0), window=self.scrollable_controls, anchor="nw")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
         def _on_frame_configure(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
         def _on_canvas_configure(event):
-            canvas.itemconfig(window_id, width=event.width)
+            self.canvas.itemconfig(window_id, width=event.width)
 
         def _on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         # Use Enter/Leave to prevent this from highjacking the whole app
-        canvas.bind('<Enter>', lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
-        canvas.bind('<Leave>', lambda e: canvas.unbind_all("<MouseWheel>"))
+        self.canvas.bind('<Enter>', lambda e: self.canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        self.canvas.bind('<Leave>', lambda e: self.canvas.unbind_all("<MouseWheel>"))
 
         self.scrollable_controls.bind("<Configure>", _on_frame_configure)
-        canvas.bind("<Configure>", _on_canvas_configure)
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self.canvas.bind("<Configure>", _on_canvas_configure)
+        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
 
         # Database Section
         db_frame = ttk.LabelFrame(self.scrollable_controls, text='Database', padding=5)
@@ -897,7 +896,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                 col_idx = visible_thumb_count // 3      
                 thumb_container.grid(row=row_idx, column=col_idx, padx=2, pady=2)
                 
-                thumb_lbl = tk.Label(thumb_container, image=tk_img, cursor='hand2')
+                thumb_lbl = ttk.Label(thumb_container, image=tk_img, cursor='hand2')
                 thumb_lbl.pack()
                 thumb_lbl.bind('<Button-1>', lambda e, iid=tree_id: self.on_thumbnail_click(iid))
                 
@@ -1368,20 +1367,20 @@ class SceneScoutApp(TkinterDnD.Tk):
                 subprocess.run(['xdg-open', folder])
 
     def apply_theme(self):
-        """Apply selected theme and save to config."""
         new_theme = self.theme_var.get()
-        available_themes = self.style.theme_names()
-
-        if new_theme not in available_themes:
-            messagebox.showwarning("Invalid Theme", f"Theme '{new_theme}' not available.")
-            return
-
         try:
             self.style.theme_use(new_theme)
-            self.current_theme = new_theme
+            
+            # Manually grab the background color from the new theme
+            bg_color = self.style.lookup('TFrame', 'background')
+            
+            # Update the standard tk widgets that don't auto-theme
+            self.preview_image_canvas.config(bg=bg_color)
+            self.canvas.config(bg=bg_color) 
+            self.thumb_canvas.config(bg=bg_color)            
+
             self.config['theme'] = new_theme
             config.save_config(self.config)
-            self.update_status(f"Theme changed to: {new_theme}")
         except Exception as e:
             messagebox.showerror("Theme Error", f"Failed to apply theme: {e}")
 
