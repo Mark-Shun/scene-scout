@@ -36,7 +36,8 @@ DEFAULT_CONFIG = {
     "fast_detect": True,
     "max_patches": 256,
     "folder_path": "",
-    "db_path": ""
+    "db_path": "",
+    "github_token": ""
 }
 
 def load_config() -> Dict[str, Any]:

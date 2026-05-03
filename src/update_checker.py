@@ -1,31 +1,65 @@
+import logging
+from pathlib import Path
+
 import requests
 import toml
+from packaging.version import InvalidVersion, parse
+
+from config import load_config
+
+logger = logging.getLogger(__name__)
 
 
 def check_for_update():
     """Check GitHub releases API and print update message if newer version exists."""
     try:
-        # Read current version from pyproject.toml
-        with open("pyproject.toml", "r") as f:
+        current_config = load_config()
+        github_token = current_config.get("github_token", "")
+
+        config_path = Path("pyproject.toml")
+        if not config_path.exists():
+            logger.error("pyproject.toml not found for update check.")
+            return
+
+        with config_path.open("r", encoding="utf-8") as f:
             config = toml.load(f)
-        current_version = config.get("project", {}).get("version", "0.1.0")
-        
-        # Query GitHub API for latest release
+
+        current_version = config.get("project", {}).get("version")
+        if not current_version:
+            logger.error("Version not found in pyproject.toml.")
+            return
+
         api_url = "https://api.github.com/repos/Mark-Shun/scene-scout/releases/latest"
-        resp = requests.get(api_url, timeout=5)
-        if resp.status_code != 200:
-            return
-        
+        headers = {"Accept": "application/vnd.github+json"}
+        if github_token:
+            headers["Authorization"] = f"token {github_token}"
+
+        resp = requests.get(api_url, headers=headers, timeout=5)
+        resp.raise_for_status()
+
         data = resp.json()
-        latest_version = data.get("tag_name", "").lstrip("v")
-        
+        latest_version = data.get("tag_name", "")
         if not latest_version:
+            logger.error("GitHub release response missing tag_name.")
             return
-        
-        # Compare versions
-        if latest_version != current_version.lstrip("v"):
-            # Use /releases/latest - GitHub redirects automatically
+
+        latest_version = latest_version.lstrip("v")
+        current_version_clean = str(current_version).lstrip("v")
+
+        try:
+            current_parsed = parse(current_version_clean)
+            latest_parsed = parse(latest_version)
+        except InvalidVersion as exc:
+            logger.error("Invalid version format during update check: %s", exc)
+            return
+
+        if latest_parsed > current_parsed:
             latest_url = "https://github.com/Mark-Shun/scene-scout/releases/latest"
-            print(f"[UPDATE] Scene Scout version: {current_version}, latest version: {latest_version}\nFind the latest release over at: {latest_url}\n\n")
+            print(
+                f"[UPDATE] Scene Scout version: {current_version}, latest version: {latest_version}\n"
+                f"Find the latest release over at: {latest_url}\n\n"
+            )
+    except requests.RequestException as exc:
+        logger.error("Update check failed due to network or GitHub API error: %s", exc)
     except Exception:
-        pass  # Fail silently - don't block startup
+        logger.exception("Unexpected error during update check.")
