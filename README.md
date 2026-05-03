@@ -63,7 +63,12 @@ During this step the install script will automatically install UV, Python, VLC, 
 
 During installation you can choose the appropriate option for your system. If you don't have a graphics card or your setup is not supported, then it's also possible to run the tool with the CPU. However general performance is way slower.
 
-<img src="assets/screenshots/install-options.png" width=50%>
+! Specifically for Apple Mac with M chips, there is MPS support which is faster (choose the CPU option if that is the case).
+
+<div style="display: flex; gap: 10px;">
+  <img src="assets/screenshots/install-options-windows.png" width="50%">
+  <img src="assets/screenshots/install-options-linux-mac.png" width="50%">
+</div>
 
 - 3: Launch Scene Scout
 ```
