@@ -245,11 +245,25 @@ class SceneScoutApp(TkinterDnD.Tk):
         options_frame = ttk.LabelFrame(self.scrollable_controls, text='Options', padding=5)
         options_frame.pack(fill='x', pady=5)
 
-        # Compute Device (Fixes the device_var AttributeError)
+        # Compute Device Section
         ttk.Label(options_frame, text='Compute Device:').pack(anchor='w', pady=(5, 0))
         device_options = ['cpu']
-        if torch.cuda.is_available(): device_options.append('cuda')
-        if torch_directml is not None: device_options.append('dml')
+        
+        # Check for CUDA (NVIDIA/AMD via ROCm)
+        if torch.cuda.is_available(): 
+            device_options.append('cuda')
+            
+        # Check for DirectML (Windows AMD/Intel)
+        if torch_directml is not None and torch_directml.is_available(): 
+            device_options.append('dml')
+            
+        # Check for Intel Extension for PyTorch (Intel Arc/Integrated XPU)
+        if ipex is not None and hasattr(torch, 'xpu') and torch.xpu.is_available():
+            device_options.append('xpu')
+
+        # Check for Apple Silicon (MPS)
+        if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device_options.append('mps')
 
         self.device_combobox = ttk.Combobox(
             options_frame, 
