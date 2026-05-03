@@ -39,10 +39,7 @@ from model_loader import get_compute_device
 from database import init_db, db_is_empty, cleanup_orphaned_entries, search_scenes
 from processing import index_files, get_query_embedding
 import config
-
-big_logo = os.path.join(os.path.dirname(__file__),"../", "assets", "logo", "scene-scout-logo.png")
-text_logo = os.path.join(os.path.dirname(__file__),"../", "assets", "logo", "scene-scout-text-logo.png")
-scene_scout_logo = Image.open(big_logo)
+import gui_utils
 
 def show_splash():
     root = tk.Tk()
@@ -52,7 +49,7 @@ def show_splash():
     splash.overrideredirect(True)
     
     # Load and resize logo
-    img = Image.open(text_logo)
+    img = Image.open(config.text_logo)
     logo_w, logo_h = img.size
     scale = 400 / logo_w
     new_w, new_h = int(logo_w * scale), int(logo_h * scale)
@@ -93,9 +90,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.title('Scene Scout')
         self.splash_ref = splash_ref
 
-        image = Image.open(big_logo)
-        self.icon = ImageTk.PhotoImage(image, master=self)
-        self.iconphoto(True, self.icon)
+        self.app_icon = gui_utils.load_app_icon(self, config.big_logo)
 
         # 1. Load configuration and sync global state
         self.config = config.load_config()
@@ -577,17 +572,11 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def open_about_dialog(self):
         dlg = tk.Toplevel(self)
+        gui_utils.apply_window_icon(dlg, self.app_icon)
+        gui_utils.center_window(dlg, 400, 260)
         dlg.title('About Scene Scout')
         dlg.transient(self)
         dlg.resizable(False, False)
-
-        # Center the dialog over parent
-        dlg.update_idletasks()
-        w, h = 400, 260
-        sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
-        x = (sw - w) // 2
-        y = (sh - h) // 2
-        dlg.geometry(f"{w}x{h}+{x}+{y}")
 
         frame = ttk.Frame(dlg, padding=10)
         frame.pack(fill='both', expand=True)
@@ -711,6 +700,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def show_indexing_popup(self):
         self.index_popup = tk.Toplevel(self)
+        gui_utils.apply_window_icon(self.index_popup, self.app_icon)
         self.index_popup.title('Indexing files')
         self.index_popup.transient(self)
         self.index_popup.grab_set()
@@ -1426,4 +1416,3 @@ class SceneScoutApp(TkinterDnD.Tk):
                 self.query_image_var.set(os.path.basename(self.current_display_path))
                 self.query_text_var.set('')
                 self.threaded_search()
-

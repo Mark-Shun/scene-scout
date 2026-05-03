@@ -9,9 +9,14 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 warnings.filterwarnings('ignore', category=Image.DecompressionBombWarning)
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMP_FOLDER = PROJECT_ROOT / "temp"
-CONFIG_FILE = PROJECT_ROOT / 'scene_scout_config.json'
+CONFIG_FILE = PROJECT_ROOT / "scene_scout_config.json"
+ASSETS_DIR = PROJECT_ROOT / "assets"
+
+big_logo = ASSETS_DIR / "logo" / "scene-scout-logo.png"
+text_logo = ASSETS_DIR / "logo" / "scene-scout-text-logo.png"
+
 DEFAULT_MODEL = 'google/siglip2-so400m-patch16-naflex'
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
 VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm')
