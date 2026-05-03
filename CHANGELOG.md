@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Post-fork [1.0.0] - 2026-5-03
+## Post-fork [1.0.0] - 2026-5-04
 
 ### Added
 - **Wide GPU processing support**: Original project had limited support. Now at this moment: CPU, CUDA, TensorRT, DirectML, Intel XPU, AMD Rocm and Apple MPS
@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - **Interactive shell**: An interactive CLI to interact with scene scout in the terminal while keeping the weights loaded.
 - **Options**: Added various options which are saved in a config file
 - **Drag and drop**: Drag and drop database files and folders to automatically load into scene scout.
+- **Update checking**: Though not automatic added an update check with indication where to download it.
 
 ### Changed
 - **Refactor file functions**: Refactored the code to seperate functionality into different files.
