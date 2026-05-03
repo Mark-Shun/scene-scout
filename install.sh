@@ -84,7 +84,11 @@ echo "1) NVIDIA CUDA 13.0 (RTX, newer GPUs)"
 echo "2) NVIDIA CUDA 12.6 (GTX, older GPUs)"
 echo "3) Intel Arc/Xe (XPU)" 
 echo "4) AMD ROCm (Linux only)"
-echo "5) CPU (Apple MAC: Fast with MPS support (M chips), but slow on regular CPU)"
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    echo "5) CPU (Apple MAC: Fast with MPS support (M chips), but slow on regular CPU)"
+else
+    echo "5) CPU (Slow)"
+fi
 echo "------------------------------------------"
 
 read -p "Select an option [1-5]: " user_choice
