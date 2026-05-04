@@ -649,47 +649,88 @@ class SceneScoutApp(TkinterDnD.Tk):
     def open_about_dialog(self):
         dlg = tk.Toplevel(self)
         gui_utils.apply_window_icon(dlg, self.app_icon)
-        gui_utils.center_window(dlg, 400, 260)
+        gui_utils.center_window(dlg, 450, 380)
         dlg.title('About Scene Scout')
         dlg.transient(self)
         dlg.resizable(False, False)
+        dlg.grab_set()
 
-        frame = ttk.Frame(dlg, padding=10)
-        frame.pack(fill='both', expand=True)
+        main_frame = ttk.Frame(dlg, padding=20)
+        main_frame.pack(fill='both', expand=True)
 
-        text = tk.Text(frame, wrap='word', height=10)
-        text.pack(fill='both', expand=True)
+        # --- Header: Icon + Title + Version ---
+        header_frame = ttk.Frame(main_frame)
+        header_frame.pack(fill='x', pady=(0, 15))
 
-        about_text = (
-            "Scene Scout\n\n"
-            "Scene scout is a tool written to help with searching for specific scenes using keywords."
-            "It is forked and build on top of Gabrjiele project and uses Google's Siglip2 for embedding- and extracting the visual information.\n\n"
-            "Made by: Mark-Shun/Sonicfreak\n"
-            "Logo made by Miwo: https://4miwo.carrd.co\n"
-            "Project site: https://github.com/Mark-Shun/scene-scout\n"
-            "Original source: https://github.com/Gabrjiele/siglip2-naflex-search\n"
+        # Resize app icon for dialog
+        icon_size = 48
+        icon_photo = None
+        if self.app_icon and hasattr(self.app_icon, '_PhotoImage__photo'):
+            original_img = Image.open(config.big_logo).resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+            icon_photo = ImageTk.PhotoImage(original_img, master=dlg)
+        elif self.app_icon:
+            original_img = Image.open(config.big_logo).resize((icon_size, icon_size), Image.Resampling.LANCZOS)
+            icon_photo = ImageTk.PhotoImage(original_img, master=dlg)
+
+        if icon_photo:
+            icon_label = ttk.Label(header_frame, image=icon_photo)
+            icon_label.image = icon_photo
+            icon_label.pack(side='left', padx=(0, 12))
+
+        title_frame = ttk.Frame(header_frame)
+        title_frame.pack(side='left', fill='both', expand=True)
+
+        title_label = ttk.Label(title_frame, text='Scene Scout', font=('', 14, 'bold'))
+        title_label.pack(anchor='w')
+
+        # Load version from pyproject.toml
+        version_text = ''
+        try:
+            import toml
+            pyproject_path = config.PROJECT_ROOT / 'pyproject.toml'
+            if pyproject_path.exists():
+                with open(pyproject_path, 'r') as f:
+                    pyproject = toml.load(f)
+                ver = pyproject.get('project', {}).get('version', '')
+                if ver:
+                    version_text = f'v{ver}'
+        except Exception:
+            pass
+
+        if version_text:
+            version_label = ttk.Label(title_frame, text=version_text, font=('', 10))
+            version_label.pack(anchor='w')
+
+        # --- Description Card ---
+        desc_frame = ttk.LabelFrame(main_frame, text='About', padding=12)
+        desc_frame.pack(fill='both', expand=True, pady=(0, 15))
+
+        desc_text = (
+            "Scene Scout is a tool written to help with searching for "
+            "specific scenes using keywords. It is forked and built on "
+            "top of Gabrjiele's project and uses Google's SigLIP 2 model "
+            "for embedding and extracting visual information."
         )
-        text.insert('1.0', about_text)
+        desc_label = ttk.Label(desc_frame, text=desc_text, wraplength=380, justify='left')
+        desc_label.pack(anchor='w')
 
-        # make links clickable
-        def _make_link(tag_start, tag_end, url):
-            text.tag_add(url, tag_start, tag_end)
-            text.tag_config(url, foreground='blue', underline=True)
-            def _open(event, target=url):
-                webbrowser.open_new(target)
-            text.tag_bind(url, '<Button-1>', _open)
+        # --- Link Pills ---
+        link_frame = ttk.Frame(main_frame)
+        link_frame.pack(fill='x', pady=(0, 15))
 
-        # find URLs in the inserted text and tag them
-        for url in ['https://4miwo.carrd.co/', 'https://github.com/Mark-Shun/scene-scout', 'https://github.com/Gabrjiele/siglip2-naflex-search']:
-            idx = text.search(url, '1.0', tk.END)
-            if idx:
-                end = f"{idx}+{len(url)}c"
-                _make_link(idx, end, url)
+        def make_pill(parent, text, url):
+            btn = ttk.Button(parent, text=text, command=lambda: webbrowser.open_new(url))
+            btn.pack(side='left', padx=3)
 
-        text.config(state='disabled')
+        make_pill(link_frame, 'Original Source', 'https://github.com/Gabrjiele/siglip2-naflex-search')
+        make_pill(link_frame, 'Logo by Miwo', 'https://4miwo.carrd.co')
+        make_pill(link_frame, 'GitHub Repo', 'https://github.com/Mark-Shun/scene-scout')
+        make_pill(link_frame, 'Codeberg Repo', 'https://codeberg.org/Mark-Shun/scene-scout')
+        make_pill(link_frame, 'Gitlab Repo', 'https://gitlab.com/Mark-Shun/scene-scout')
 
-        btn = ttk.Button(frame, text='Close', command=dlg.destroy)
-        btn.pack(pady=(8, 0))
+        # --- Close Button ---
+        close_btn = ttk.Button(main_frame, text='Close', command=dlg.destroy)
+        close_btn.pack(pady=(5, 0))
 
     def cleanup_database(self):
         if not self.db_path:
