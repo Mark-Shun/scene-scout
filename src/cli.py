@@ -5,8 +5,8 @@ import cmd
 import shlex
 import json
 import base64
+from pathlib import Path
 
-# Cross-platform readline support for command history
 try:
     import readline
     HISTORY_AVAILABLE = True
@@ -55,14 +55,15 @@ def display_results(results, as_json=False, include_thumbs=False, output_file=No
 
     if as_json:
         json_data = []
-        for path, scene_idx, start_time, end_time, thumb, score in results:
+        for path, scene_idx, start_time, end_time, thumb, score, source_db in results:
             entry = {
                 "filepath": path,
                 "filename": os.path.basename(path),
                 "scene_index": scene_idx + 1 if scene_idx is not None else None,
                 "start_time_ms": start_time,
                 "end_time_ms": end_time,
-                "score": round(score, 4)
+                "score": round(score, 4),
+                "source_database": source_db
             }
             
             # Encode thumbnail to Base64 if requested and data exists
@@ -79,11 +80,11 @@ def display_results(results, as_json=False, include_thumbs=False, output_file=No
     if silent:
         return
     print(f'\n--- Top {len(results)} Scene Results ---')
-    for i, (path, scene_idx, start_time, end_time, thumb, score) in enumerate(results, 1):
+    for i, (path, scene_idx, start_time, end_time, thumb, score, source_db) in enumerate(results, 1):
         time_str = format_time(start_time)
         if end_time is not None:
             time_str = f'{time_str}-{format_time(end_time)}'
-        print(f'{i:2d}. [Scene {scene_idx+1} @ {time_str}] Score: {score:.4f} | {os.path.basename(path)}')
+        print(f'{i:2d}. [Scene {scene_idx+1} @ {time_str}] Score: {score:.4f} | {os.path.basename(path)} [{source_db}]')
     print('-' * 20)
 
 def _write_output(content, output_file=None, silent=False):
@@ -103,16 +104,22 @@ def _write_output(content, output_file=None, silent=False):
 
 def run_search(text, image, device, proc, model, args):
     from processing import get_query_embedding
-    if db_is_empty(args.db):
+    active_dbs = getattr(args, 'active_databases', [getattr(args, 'db', '')])
+    if not active_dbs:
         if not getattr(args, 'silent', False):
-            print('Warning: The database appears to be empty. Please index files first.')
+            print('Error: No active databases for search.')
+        return
+    
+    all_empty = all(db_is_empty(db) for db in active_dbs)
+    if all_empty:
+        if not getattr(args, 'silent', False):
+            print('Warning: All databases appear to be empty. Please index files first.')
         return
 
     query_embedding = get_query_embedding(text, image, device, proc, model, args.max_patches)
     if query_embedding is not None:
-        results = search_scenes(query_embedding, args.db, top_k=args.top_k)
+        results = search_scenes(query_embedding, active_dbs, top_k=args.top_k)
         
-        # Pull flags from args
         use_json = getattr(args, 'json', False)
         include_thumbs = getattr(args, 'include_thumbs', False)
         output_file = getattr(args, 'output', None)
@@ -129,19 +136,26 @@ class SceneScoutShell(cmd.Cmd):
     intro = "\nInteractive Mode Active. Type 'help' to list commands. Type 'exit' to quit."
     prompt = 'Scene Scout> '
 
-    # Known variables for tab completion
-    _settable_vars = ['db', 'json', 'include_thumbs', 'top_k', 'device', 'max_patches', 'batch_size', 'accurate', 'silent', 'output']
+    _settable_vars = ['json', 'include_thumbs', 'top_k', 'device', 'max_patches', 'batch_size', 'accurate', 'silent', 'output']
 
     def __init__(self, initial_args):
         super().__init__()
         self.state = initial_args
+        self.active_databases = list(getattr(initial_args, 'active_databases', []))
+        self.target_db = getattr(initial_args, 'target_db', None)
         self.model = None
         self.processor = None
         self.device = None
         self._load_history()
 
+    def _get_effective_target(self):
+        if self.target_db and os.path.exists(self.target_db):
+            return self.target_db
+        if self.active_databases:
+            return self.active_databases[0]
+        return None
+
     def _load_history(self):
-        """Load command history from file."""
         if not HISTORY_AVAILABLE or readline is None:
             return
         try:
@@ -151,7 +165,6 @@ class SceneScoutShell(cmd.Cmd):
         readline.set_history_length(1000)
 
     def postcmd(self, stop, line):
-        """Save history after each command."""
         if HISTORY_AVAILABLE and readline is not None:
             try:
                 readline.write_history_file(HISTORY_FILE)
@@ -160,7 +173,6 @@ class SceneScoutShell(cmd.Cmd):
         return stop
 
     def cmdloop(self, intro=None):
-        """Override cmdloop to handle command aliases."""
         try:
             while True:
                 try:
@@ -170,13 +182,11 @@ class SceneScoutShell(cmd.Cmd):
                     line = line.strip()
                     if not line:
                         continue
-                    # Resolve alias
                     parts = line.split(None, 1)
                     if parts[0] in COMMAND_ALIASES:
                         line = COMMAND_ALIASES[parts[0]]
                         if len(parts) > 1:
                             line += ' ' + parts[1]
-                    # Dispatch
                     stop = self.onecmd(line)
                     if stop:
                         break
@@ -191,7 +201,6 @@ class SceneScoutShell(cmd.Cmd):
                     pass
 
     def cmdloop_line(self):
-        """Read a single line of input."""
         try:
             return input(self.prompt)
         except EOFError:
@@ -199,11 +208,9 @@ class SceneScoutShell(cmd.Cmd):
             return None
 
     def _load_model(self):
-        """Lazy-loads the model only when a heavy operation is requested."""
         if self.model is None:
             from model_loader import load_siglip_model
             
-            # Check if JSON is requested. If it is, suppress status prints.
             use_json = getattr(self.state, 'json', False)
             is_silent = getattr(self.state, 'silent', False)
             def callback(msg):
@@ -215,11 +222,91 @@ class SceneScoutShell(cmd.Cmd):
             )
 
     def complete_set(self, text, line, begidx, endidx):
-        """Tab completion for set command variable names."""
         return [v for v in self._settable_vars if v.startswith(text)]
 
+    def do_db(self, arg):
+        """Manage databases. Usage: db [ls | add <path> | rm <index> | target <index> | clear]"""
+        args = shlex.split(arg)
+        subcmd = args[0] if args else 'ls'
+        
+        if subcmd == 'ls':
+            print("\n--- Active Databases ---")
+            if not self.active_databases:
+                print("  (none)")
+            else:
+                effective = self._get_effective_target()
+                for i, db_path in enumerate(self.active_databases):
+                    marker = " [TARGET]" if db_path == effective else ""
+                    print(f"  [{i}] {os.path.basename(db_path)}{marker}")
+                    print(f"      {db_path}")
+            print()
+            
+        elif subcmd == 'add':
+            if len(args) < 2:
+                print("Usage: db add <path>")
+                return
+            path = os.path.expanduser(args[1])
+            if not os.path.exists(path):
+                print(f"Error: File not found: {path}")
+                return
+            abs_path = str(Path(path).resolve())
+            if abs_path in self.active_databases:
+                print("Database already in the list.")
+                return
+            self.active_databases.append(abs_path)
+            try:
+                init_db(abs_path)
+            except Exception as e:
+                print(f"Error initializing database: {e}")
+                self.active_databases.remove(abs_path)
+                return
+            if not self.target_db:
+                self.target_db = abs_path
+            print(f"Added: {os.path.basename(abs_path)}")
+            
+        elif subcmd == 'rm':
+            if len(args) < 2:
+                print("Usage: db rm <index>")
+                return
+            try:
+                idx = int(args[1])
+            except ValueError:
+                print("Invalid index. Please provide a numeric index.")
+                return
+            if idx < 0 or idx >= len(self.active_databases):
+                print(f"Invalid index. Valid range: 0-{len(self.active_databases)-1}")
+                return
+            removed = self.active_databases.pop(idx)
+            effective = self._get_effective_target()
+            if not effective:
+                self.target_db = None
+            print(f"Removed: {os.path.basename(removed)}")
+            
+        elif subcmd == 'target':
+            if len(args) < 2:
+                print("Usage: db target <index>")
+                return
+            try:
+                idx = int(args[1])
+            except ValueError:
+                print("Invalid index. Please provide a numeric index.")
+                return
+            if idx < 0 or idx >= len(self.active_databases):
+                print(f"Invalid index. Valid range: 0-{len(self.active_databases)-1}")
+                return
+            self.target_db = self.active_databases[idx]
+            print(f"Target set to: {os.path.basename(self.target_db)}")
+            
+        elif subcmd == 'clear':
+            self.active_databases.clear()
+            self.target_db = None
+            print("All databases cleared.")
+            
+        else:
+            print(f"Unknown db command: {subcmd}")
+            print("Usage: db [ls | add <path> | rm <index> | target <index> | clear]")
+
     def do_load_db(self, arg):
-        """Load specified database. Usage: load_db <path>"""
         if not arg:
             print("Please provide a path to the database file.")
             return
@@ -232,79 +319,91 @@ class SceneScoutShell(cmd.Cmd):
             return
             
         try:
-            init_db(db_path)
-            self.state.db = db_path 
+            abs_path = str(Path(db_path).resolve())
+            init_db(abs_path)
+            if abs_path not in self.active_databases:
+                self.active_databases.append(abs_path)
+            if not self.target_db:
+                self.target_db = abs_path
             if not getattr(self.state, 'silent', False):
-                print(f"Database loaded successfully: {db_path}")
+                print(f"Database loaded successfully: {abs_path}")
         except Exception as e:
             print(f"Failed to load database: {e}", file=sys.stderr)
             return 2
 
     def do_set(self, arg):
-        """Set a variable. Usage: set <variable> <value> (e.g., set json true)"""
         args = shlex.split(arg)
         if len(args) != 2:
             print("Usage: set <variable> <value>")
             return
         key, val = args[0], args[1]
         
-        # 1. Handle explicit Boolean strings
         val_lower = val.lower()
         if val_lower in ['true', '1', 'yes', 'y']:
             parsed_val = True
         elif val_lower in ['false', '0', 'no', 'n']:
             parsed_val = False
-        # 2. Try integer parsing
         elif val.isdigit():
             parsed_val = int(val)
-        # 3. Fallback to string
         else:
             parsed_val = val
 
-        # 4. Set the attribute (even if it wasn't strictly defined by argparse)
         setattr(self.state, key, parsed_val)
         if not getattr(self.state, 'silent', False):
             print(f"{key} updated to {getattr(self.state, key)}")
 
     def do_vars(self, arg):
-        """List all editable variables with their current values."""
         print("\n--- Editable Variables ---")
         for v in self._settable_vars:
             val = getattr(self.state, v, '<not set>')
             print(f"  {v}: {val}")
+        effective = self._get_effective_target()
+        print(f"  target_db: {effective}")
+        print(f"  active_databases: {len(self.active_databases)}")
         print()
 
     def do_status(self, arg):
-        """Show current configuration."""
         if getattr(self.state, 'silent', False):
             return
         print("\n--- Current State ---")
         for k, v in vars(self.state).items():
             print(f"{k}: {v}")
+        print(f"Active databases: {len(self.active_databases)}")
+        print(f"Target database: {self._get_effective_target()}")
         print(f"Model Loaded: {self.model is not None}\n")
 
     def do_search(self, arg):
-        """Search the database. Usage: search <text or image path>"""
         if not arg:
             print("Please provide a search query.")
+            return
+        
+        if not self.active_databases:
+            print("Error: No active databases. Use 'db add <path>' to add one.")
             return
         
         self._load_model()
         
         s_image = arg if (os.path.exists(arg) and arg.lower().endswith(config.IMAGE_EXTENSIONS)) else None
         s_text = None if s_image else arg
+        
+        saved_db = getattr(self.state, 'db', None)
+        self.state.active_databases = self.active_databases
         run_search(s_text, s_image, self.device, self.processor, self.model, self.state)
+        self.state.db = saved_db
 
     def do_queue(self, arg):
-            """Manage the index queue. Usage: queue [ls | rm <id> | clear]"""
             args = shlex.split(arg)
-            init_db(self.state.db)
+            target = self._get_effective_target()
+            if not target:
+                print("Error: No target database set. Use 'db target <index>' to set one.")
+                return
+            init_db(target)
             from database import get_queue, remove_from_queue, clear_queue
             
             cmd_action = args[0] if args else 'ls'
             
             if cmd_action == 'ls':
-                items = get_queue(self.state.db)
+                items = get_queue(target)
                 if not items:
                     print("Queue is empty.")
                     return
@@ -321,26 +420,30 @@ class SceneScoutShell(cmd.Cmd):
                     return
                 try:
                     qid = int(args[1])
-                    remove_from_queue(self.state.db, qid)
+                    remove_from_queue(target, qid)
                     print(f"Removed item [{qid}] from the queue.")
                 except ValueError:
                     print("Invalid ID. Please provide a numeric ID.")
                     
             elif cmd_action == 'clear':
-                clear_queue(self.state.db)
+                clear_queue(target)
                 print("Queue cleared.")
                 
             else:
                 print("Unknown queue command. Use 'ls', 'rm <id>', or 'clear'.")
 
     def do_index(self, arg):
-        """Index paths. Usage: index <path1> [path2] [path3]..."""
         if not arg:
             print("Please provide at least one path.")
             return
+        
+        target = self._get_effective_target()
+        if not target:
+            print("Error: No target database set. Use 'db target <index>' to set one.")
+            return
             
         paths = shlex.split(arg)
-        init_db(self.state.db)
+        init_db(target)
         
         from database import add_to_queue
         added = 0
@@ -350,7 +453,7 @@ class SceneScoutShell(cmd.Cmd):
             if not is_dir and not folder_path.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS):
                 print(f"Warning: Skipping invalid path: {folder_path}")
                 continue
-            add_to_queue(self.state.db, folder_path, is_directory=is_dir, recursive=is_dir)
+            add_to_queue(target, folder_path, is_directory=is_dir, recursive=is_dir)
             added += 1
         
         if added == 0:
@@ -361,24 +464,26 @@ class SceneScoutShell(cmd.Cmd):
         
         from processing import index_files
         is_silent = getattr(self.state, 'silent', False)
-        result = index_files(self.device, self.processor, self.model, self.state.db, 
+        result = index_files(self.device, self.processor, self.model, target, 
                     batch_size=self.state.batch_size, max_num_patches=self.state.max_patches, 
                     fast_scene_detect=not self.state.accurate, silent=is_silent)
         if result == 'completed':
             from database import clear_queue
-            clear_queue(self.state.db)
+            clear_queue(target)
             if not is_silent:
                 print("Queue successfully processed and cleared.")
 
     def do_cleanup(self, arg):
-        """Clean up orphaned database entries."""
-        init_db(self.state.db)
-        count = cleanup_orphaned_entries(self.state.db)
+        target = self._get_effective_target()
+        if not target:
+            print("Error: No target database set. Use 'db target <index>' to set one.")
+            return
+        init_db(target)
+        count = cleanup_orphaned_entries(target)
         if not getattr(self.state, 'silent', False):
             print(f'Removed {count} orphaned embeddings.')
 
     def do_exit(self, arg):
-        """Exit the shell."""
         if not getattr(self.state, 'silent', False):
             print("Exiting...")
         return True
@@ -406,7 +511,8 @@ def cli_mode():
     parser.add_argument('--search-text', type=str, help='Text to search for (use "-" for stdin)')
     parser.add_argument('--search-image', type=str, help='Image path to search with')
     parser.add_argument('--top-k', type=int, default=10, help='Results to return')
-    parser.add_argument('--db', type=str, default='siglip2_embeddings.db', help='DB path')
+    parser.add_argument('--db', type=str, action='append', dest='db', default=None, help='Database path(s) for search (can be specified multiple times)')
+    parser.add_argument('--target-db', type=str, default=None, help='Database path for indexing/queue operations')
     parser.add_argument('--device', type=str, choices=['cuda', 'cpu', 'dml', 'xpu', 'mps'], help='Force device')
     parser.add_argument('--max-patches', type=int, default=256, help='Max model patches')
     parser.add_argument('--batch-size', type=int, default=16, help='Inference batch size')
@@ -415,7 +521,28 @@ def cli_mode():
     parser.add_argument('--silent', action='store_true', help='Suppress all non-essential output')
     args = parser.parse_args()
 
-    # Handle stdin piping for search text
+    saved_config = config.load_config()
+    
+    if args.db:
+        active_dbs = [str(Path(p).resolve()) for p in args.db]
+    else:
+        saved_dbs = saved_config.get('active_databases', [])
+        active_dbs = [p for p in saved_dbs if os.path.exists(p)] if saved_dbs else ['siglip2_embeddings.db']
+    
+    if args.target_db:
+        target_db = str(Path(args.target_db).resolve())
+    else:
+        saved_primary = saved_config.get('primary_database', '')
+        if saved_primary and os.path.exists(saved_primary):
+            target_db = saved_primary
+        elif active_dbs:
+            target_db = active_dbs[0]
+        else:
+            target_db = None
+    
+    args.active_databases = active_dbs
+    args.target_db = target_db
+
     if args.search_text == '-':
         try:
             args.search_text = sys.stdin.read().strip()
@@ -429,16 +556,29 @@ def cli_mode():
         sys.exit(EXIT_SUCCESS)
         return
 
-    try:
-        init_db(args.db)
-    except Exception as e:
-        if not args.silent:
-            print(f'Database error: {e}', file=sys.stderr)
-        sys.exit(EXIT_DB_ERROR)
+    for db_path in active_dbs:
+        try:
+            init_db(db_path)
+        except Exception as e:
+            if not args.silent:
+                print(f'Database error ({db_path}): {e}', file=sys.stderr)
+
+    if target_db:
+        try:
+            init_db(target_db)
+        except Exception as e:
+            if not args.silent:
+                print(f'Target database error: {e}', file=sys.stderr)
+            sys.exit(EXIT_DB_ERROR)
 
     if args.cleanup:
+        db_to_cleanup = target_db if target_db else active_dbs[0] if active_dbs else None
+        if not db_to_cleanup:
+            if not args.silent:
+                print('Error: No database specified for cleanup.', file=sys.stderr)
+            sys.exit(EXIT_DB_ERROR)
         try:
-            count = cleanup_orphaned_entries(args.db)
+            count = cleanup_orphaned_entries(db_to_cleanup)
             if not args.silent:
                 print(f'Removed {count} orphaned embeddings.')
         except Exception as e:
@@ -452,6 +592,12 @@ def cli_mode():
         if not args.silent:
             print('No action specified. Use --help for options.')
         sys.exit(EXIT_INVALID_INPUT)
+
+    if args.show_queue or args.remove_queue or args.clear_queue or args.index:
+        if not target_db:
+            if not args.silent:
+                print('Error: No target database set for queue/index operations. Use --target-db.', file=sys.stderr)
+            sys.exit(EXIT_DB_ERROR)
 
     try:
         from model_loader import load_siglip_model
@@ -468,20 +614,20 @@ def cli_mode():
         
     if args.clear_queue:
         from database import clear_queue
-        clear_queue(args.db)
+        clear_queue(target_db)
         if not args.silent:
             print("Queue cleared.")
             
     if args.remove_queue:
         from database import remove_from_queue
         for qid in args.remove_queue:
-            remove_from_queue(args.db, qid)
+            remove_from_queue(target_db, qid)
             if not args.silent:
                 print(f"Removed ID [{qid}] from queue.")
 
     if args.show_queue:
         from database import get_queue
-        items = get_queue(args.db)
+        items = get_queue(target_db)
         if not args.silent:
             if not items:
                 print("Queue is empty.")
@@ -505,13 +651,13 @@ def cli_mode():
                     if not args.silent:
                         print(f'Warning: Skipping invalid path: {path}', file=sys.stderr)
                     continue
-                add_to_queue(args.db, expanded, is_directory=is_dir, recursive=is_dir)
+                add_to_queue(target_db, expanded, is_directory=is_dir, recursive=is_dir)
                 added += 1
             if added == 0:
                 if not args.silent:
                     print('Error: No valid paths provided.', file=sys.stderr)
                 sys.exit(EXIT_INVALID_INPUT)
-            index_files(device, processor, model, args.db, 
+            index_files(device, processor, model, target_db, 
                         batch_size=args.batch_size, max_num_patches=args.max_patches, 
                         fast_scene_detect=not args.accurate, silent=args.silent)
         except Exception as e:
@@ -520,6 +666,10 @@ def cli_mode():
             sys.exit(EXIT_DB_ERROR)
     
     if args.search_text or args.search_image:
+        if not active_dbs:
+            if not args.silent:
+                print('Error: No active databases for search. Use --db to specify.', file=sys.stderr)
+            sys.exit(EXIT_DB_ERROR)
         try:
             run_search(args.search_text, args.search_image, device, processor, model, args)
         except Exception as e:

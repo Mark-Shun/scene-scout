@@ -121,7 +121,7 @@ def cleanup_orphaned_entries(db_path: str, progress_callback: Optional[Callable]
 
     return total_removed
 
-def search_db(query_embedding: np.ndarray, db_path: str, top_k: int=10, similarity_threshold: float=-1.0, batch_size: int=1000) -> List[Tuple[str, float, str]]:
+def _search_db_single(query_embedding: np.ndarray, db_path: str, source_name: str, top_k: int=10, similarity_threshold: float=-1.0, batch_size: int=1000) -> List[Tuple[str, float, str, str]]:
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT filepath, embedding, file_type FROM image_embeddings')
@@ -138,11 +138,32 @@ def search_db(query_embedding: np.ndarray, db_path: str, top_k: int=10, similari
             similarities = np.dot(db_embeddings, query_embedding.T).squeeze()
             for i, sim in enumerate(similarities):
                 if sim >= similarity_threshold:
-                    results.append((filepaths[i], float(sim), file_types[i]))
+                    results.append((filepaths[i], float(sim), file_types[i], source_name))
     results.sort(key=lambda x: x[1], reverse=True)
     return results[:top_k]
 
-def search_scenes(query_embedding: np.ndarray, db_path: str, top_k: int = 50, similarity_threshold: float = -1.0, batch_size: int = 1000) -> List[Tuple[str, int, int, int, float]]:
+def search_db(query_embedding: np.ndarray, db_paths: List[str], top_k: int=10, similarity_threshold: float=-1.0, batch_size: int=1000) -> List[Tuple[str, float, str, str]]:
+    all_results = []
+    for db_path in db_paths:
+        if not os.path.exists(db_path):
+            continue
+        source_name = os.path.basename(db_path)
+        db_results = _search_db_single(query_embedding, db_path, source_name, top_k, similarity_threshold, batch_size)
+        all_results.extend(db_results)
+    
+    all_results.sort(key=lambda x: x[1], reverse=True)
+    
+    seen = set()
+    deduped = []
+    for result in all_results:
+        key = result[0]
+        if key not in seen:
+            seen.add(key)
+            deduped.append(result)
+    
+    return deduped[:top_k]
+
+def _search_scenes_single(query_embedding: np.ndarray, db_path: str, source_name: str, top_k: int = 50, similarity_threshold: float = -1.0, batch_size: int = 1000) -> List[Tuple[str, int, int, int, bytes, float, str]]:
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail FROM scene_embeddings')
@@ -164,9 +185,30 @@ def search_scenes(query_embedding: np.ndarray, db_path: str, top_k: int = 50, si
 
             for i, sim in enumerate(similarities):
                 if sim >= similarity_threshold:
-                    results.append((filepaths[i], scene_indices[i], start_times[i], end_times[i], thumbnails[i], float(sim)))
-    results.sort(key=lambda x: x[5], reverse=True)
-    return results[:top_k]
+                    results.append((filepaths[i], scene_indices[i], start_times[i], end_times[i], thumbnails[i], float(sim), source_name))
+        results.sort(key=lambda x: x[5], reverse=True)
+        return results[:top_k]
+
+def search_scenes(query_embedding: np.ndarray, db_paths: List[str], top_k: int = 50, similarity_threshold: float = -1.0, batch_size: int = 1000) -> List[Tuple[str, int, int, int, bytes, float, str]]:
+    all_results = []
+    for db_path in db_paths:
+        if not os.path.exists(db_path):
+            continue
+        source_name = os.path.basename(db_path)
+        db_results = _search_scenes_single(query_embedding, db_path, source_name, top_k, similarity_threshold, batch_size)
+        all_results.extend(db_results)
+    
+    all_results.sort(key=lambda x: x[5], reverse=True)
+    
+    seen = set()
+    deduped = []
+    for result in all_results:
+        key = (result[0], result[1])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(result)
+    
+    return deduped[:top_k]
 
 def migrate_database(db_path: str):
     with sqlite3.connect(db_path) as conn:
@@ -265,3 +307,21 @@ def queue_count(db_path: str) -> int:
             return cursor.fetchone()[0]
     except sqlite3.Error:
         return 0
+
+def get_db_stats(db_path: str) -> dict:
+    """Return metadata about a database: scene_count, video_count, image_count, file_size_kb."""
+    stats = {'scene_count': 0, 'video_count': 0, 'image_count': 0, 'file_size_kb': 0}
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT COUNT(*) FROM scene_embeddings')
+            stats['scene_count'] = cursor.fetchone()[0]
+            cursor.execute('SELECT COUNT(*) FROM processed_videos')
+            stats['video_count'] = cursor.fetchone()[0]
+            cursor.execute('SELECT COUNT(*) FROM image_embeddings')
+            stats['image_count'] = cursor.fetchone()[0]
+        if os.path.exists(db_path):
+            stats['file_size_kb'] = round(os.path.getsize(db_path) / 1024, 1)
+    except sqlite3.Error:
+        pass
+    return stats

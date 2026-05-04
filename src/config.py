@@ -1,4 +1,5 @@
 import json
+import os
 import warnings
 import sys
 from pathlib import Path
@@ -35,7 +36,8 @@ DEFAULT_CONFIG = {
     "batch_size": 16,
     "fast_detect": True,
     "max_patches": 256,
-    "db_path": "",
+    "active_databases": [],
+    "primary_database": "",
     "github_token": ""
 }
 
@@ -49,6 +51,23 @@ def load_config() -> Dict[str, Any]:
                 saved_data = json.load(f)
                 # Overwrite defaults with whatever is in the file
                 current_config.update(saved_data)
+                
+            # Migration: convert old db_path → active_databases + primary_database
+            if 'db_path' in current_config:
+                old_db_path = current_config.pop('db_path')
+                if old_db_path and os.path.exists(old_db_path):
+                    abs_path = str(Path(old_db_path).resolve())
+                    if abs_path not in current_config['active_databases']:
+                        current_config['active_databases'].append(abs_path)
+                    if not current_config['primary_database']:
+                        current_config['primary_database'] = abs_path
+                    save_config(current_config)
+            
+            # Cleanup legacy folder_path
+            if 'folder_path' in current_config:
+                current_config.pop('folder_path')
+                save_config(current_config)
+                
         except (json.JSONDecodeError, IOError) as e:
             print(f'Error loading config file: {e}')
             

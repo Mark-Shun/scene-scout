@@ -176,7 +176,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         # 7. Internal state setup
         self.model = None
         self.processor = None
-        self.db_path = None
+        self.active_databases: List[str] = []
+        self.primary_db: Optional[str] = None
         self.query_image_path = None
         self.search_results = []
         self.last_selected_entry = None
@@ -240,14 +241,24 @@ class SceneScoutApp(TkinterDnD.Tk):
         # Database Section
         db_frame = ttk.LabelFrame(self.scrollable_controls, text='Database', padding=5)
         db_frame.pack(fill='x', pady=5)
-        self.db_var = tk.StringVar(master=self, value='No database selected')
-        ttk.Label(db_frame, textvariable=self.db_var, wraplength=250).pack(anchor='w')
+        
+        self.db_target_label = ttk.Label(db_frame, text='No database loaded', wraplength=280, font=('', 9, 'bold'))
+        self.db_target_label.pack(anchor='w')
+        
+        self.db_search_label = ttk.Label(db_frame, text='', wraplength=280, font=('', 9))
+        self.db_search_label.pack(anchor='w')
+        
+        ttk.Separator(db_frame, orient='horizontal').pack(fill='x', pady=5)
+        
+        manage_db_button = ttk.Button(db_frame, text='Manage Databases...', command=self.open_db_manager)
+        manage_db_button.pack(fill='x', pady=2)
+        ToolTip(manage_db_button, 'Open the database manager to view, add, remove, and configure databases.')
         
         db_btn_frame = ttk.Frame(db_frame)
         db_btn_frame.pack(fill='x', pady=2)
-        open_db_button = ttk.Button(db_btn_frame, text='Open Existing...', command=self.browse_existing_database)
-        open_db_button.pack(side='left', expand=True, fill='x', padx=(0, 2))
-        ToolTip(open_db_button, 'Open an existing Scene Scout database (.db) file.')
+        add_db_button = ttk.Button(db_btn_frame, text='Add Existing...', command=self.browse_existing_database)
+        add_db_button.pack(side='left', expand=True, fill='x', padx=(0, 2))
+        ToolTip(add_db_button, 'Add existing Scene Scout database (.db) files to the search list.')
         create_db_button = ttk.Button(db_btn_frame, text='Create New...', command=self.browse_database)
         create_db_button.pack(side='left', expand=True, fill='x', padx=(2, 0))
         ToolTip(create_db_button, 'Create a new database for indexing media files.')
@@ -477,10 +488,10 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.clear_rescore_button.pack(side='left', padx=5)
         ToolTip(self.clear_rescore_button, 'Clear any custom rescore adjustments from results.')
         
-        self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','score','rescore'), show='headings', selectmode='browse')
-        for col, width in zip(['filename', 'scene', 'time', 'score', 'rescore'], [300, 80, 150, 80, 80]):
+        self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','source','score','rescore'), show='headings', selectmode='browse')
+        for col, width in zip(['filename', 'scene', 'time', 'source', 'score', 'rescore'], [300, 80, 150, 140, 80, 80]):
             self.results_tree.heading(col, text=col.capitalize())
-            self.results_tree.column(col, width=width, anchor='center' if col != 'filename' else 'w')
+            self.results_tree.column(col, width=width, anchor='center' if col not in ('filename', 'source') else 'w')
         
         self.results_tree.pack(side='left', fill='both', expand=True)
         list_scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.results_tree.yview)
@@ -542,28 +553,251 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         paned_window.add(preview_frame, weight=1)
 
+    def _update_db_section(self):
+        if self.primary_db:
+            target_name = os.path.basename(self.primary_db)
+            self.db_target_label.config(text=f'\u2605 {target_name}')
+        else:
+            self.db_target_label.config(text='No target database set')
+        
+        search_count = len(self.active_databases)
+        if search_count > 0:
+            extra = search_count - 1 if self.primary_db in self.active_databases else search_count
+            if extra > 0:
+                self.db_search_label.config(text=f'+ {extra} additional search database(s)')
+            else:
+                self.db_search_label.config(text='')
+        else:
+            self.db_search_label.config(text='')
+
+    def _add_databases(self, paths):
+        added = []
+        for path in paths:
+            abs_path = str(Path(path).resolve())
+            if abs_path not in self.active_databases:
+                self.active_databases.append(abs_path)
+                init_db(abs_path)
+                added.append(abs_path)
+        if added:
+            if not self.primary_db:
+                self.primary_db = added[0]
+            self._update_db_section()
+            self.save_db_config()
+            self._update_button_states()
+            self.update_status(f'Added {len(added)} database(s).')
+
+    def save_db_config(self):
+        self.config['active_databases'] = self.active_databases
+        self.config['primary_database'] = self.primary_db if self.primary_db else ''
+        config.save_config(self.config)
+
+    def open_db_manager(self):
+        from database import get_db_stats
+        
+        dlg = tk.Toplevel(self)
+        gui_utils.apply_window_icon(dlg, self.app_icon)
+        dlg.title('Database Manager')
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.minsize(700, 450)
+        gui_utils.center_window(dlg, 700, 450)
+
+        main_frame = ttk.Frame(dlg, padding=10)
+        main_frame.pack(fill='both', expand=True)
+
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill='both', expand=True, pady=(0, 10))
+
+        columns = ('target', 'name', 'path', 'scenes', 'videos', 'images')
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings',
+                           selectmode='browse', height=10)
+        tree.heading('target', text='')
+        tree.heading('name', text='Name')
+        tree.heading('path', text='Path')
+        tree.heading('scenes', text='Scenes')
+        tree.heading('videos', text='Videos')
+        tree.heading('images', text='Images')
+
+        tree.column('target', width=30, anchor='center')
+        tree.column('name', width=160, anchor='w')
+        tree.column('path', width=300, anchor='w')
+        tree.column('scenes', width=60, anchor='center')
+        tree.column('videos', width=60, anchor='center')
+        tree.column('images', width=60, anchor='center')
+
+        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        item_to_db = {}
+
+        def refresh_tree():
+            for item in tree.get_children():
+                tree.delete(item)
+            item_to_db.clear()
+            total_scenes = 0
+            for db_path in self.active_databases:
+                stats = get_db_stats(db_path)
+                total_scenes += stats['scene_count']
+                marker = '\u2605' if db_path == self.primary_db else ''
+                iid = tree.insert('', 'end', values=(
+                    marker,
+                    os.path.basename(db_path),
+                    db_path,
+                    stats['scene_count'],
+                    stats['video_count'],
+                    stats['image_count']
+                ))
+                item_to_db[iid] = db_path
+            update_status(total_scenes)
+
+        def update_status(total_scenes=0):
+            count = len(self.active_databases)
+            text = f'{count} database(s) | {total_scenes:,} scenes total'
+            status_var.set(text)
+
+        status_var = tk.StringVar(master=dlg)
+        ttk.Label(main_frame, textvariable=status_var, font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0, 5))
+
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x', pady=5)
+
+        def add_existing():
+            paths = filedialog.askopenfilenames(title='Select Database Files', filetypes=[('SQLite Database', '*.db')])
+            if paths:
+                self._add_databases(paths)
+                refresh_tree()
+
+        def create_new():
+            path = filedialog.asksaveasfilename(title='Create New Database', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
+            if path:
+                abs_path = str(Path(path).resolve())
+                init_db(abs_path)
+                self.active_databases.append(abs_path)
+                if not self.primary_db:
+                    self.primary_db = abs_path
+                self.save_db_config()
+                refresh_tree()
+
+        def set_target():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning('Warning', 'No database selected.')
+                return
+            db_path = item_to_db.get(sel[0])
+            if db_path:
+                self.primary_db = db_path
+                self.save_db_config()
+                refresh_tree()
+                self._update_db_section()
+                self._update_button_states()
+                self.update_queue_status()
+
+        def remove_selected():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning('Warning', 'No database selected.')
+                return
+            db_path = item_to_db.get(sel[0])
+            if db_path:
+                self.active_databases.remove(db_path)
+                if self.primary_db == db_path:
+                    self.primary_db = self.active_databases[0] if self.active_databases else None
+                self.save_db_config()
+                refresh_tree()
+                self._update_db_section()
+                self._update_button_states()
+                self.update_queue_status()
+
+        add_existing_btn = ttk.Button(btn_frame, text='Add Existing...', command=add_existing)
+        add_existing_btn.pack(side='left', padx=(0, 5))
+        ToolTip(add_existing_btn, 'Add existing Scene Scout database (.db) files to the search list.')
+        
+        create_new_btn = ttk.Button(btn_frame, text='Create New...', command=create_new)
+        create_new_btn.pack(side='left', padx=5)
+        ToolTip(create_new_btn, 'Create a new empty database and add it to the list.')
+        
+        set_target_btn = ttk.Button(btn_frame, text='Set Target', command=set_target)
+        set_target_btn.pack(side='left', padx=5)
+        ToolTip(set_target_btn, 'Set the selected database as the indexing/queue target.')
+        
+        remove_btn = ttk.Button(btn_frame, text='Remove', command=remove_selected)
+        remove_btn.pack(side='left', padx=5)
+        ToolTip(remove_btn, 'Remove the selected database from the search list.')
+        
+        refresh_btn = ttk.Button(btn_frame, text='Refresh', command=refresh_tree)
+        refresh_btn.pack(side='left', padx=5)
+        ToolTip(refresh_btn, 'Re-query all databases for updated scene/video/image counts.')
+
+        def on_double_click(event):
+            item = tree.identify_row(event.y)
+            if item:
+                db_path = item_to_db.get(item)
+                if db_path:
+                    self.primary_db = db_path
+                    self.save_db_config()
+                    refresh_tree()
+                    self._update_db_section()
+                    self._update_button_states()
+                    self.update_queue_status()
+
+        tree.bind('<Double-1>', on_double_click)
+
+        def show_context_menu(event):
+            item = tree.identify_row(event.y)
+            if not item:
+                return
+            tree.selection_set(item)
+            menu = tk.Menu(tree, tearoff=0)
+            menu.add_command(label='Set as Target', command=set_target)
+            menu.add_separator()
+            menu.add_command(label='Remove', command=remove_selected)
+            menu.post(event.x_root, event.y_root)
+
+        tree.bind('<Button-3>', show_context_menu)
+
+        refresh_tree()
+
+        ttk.Button(main_frame, text='Close', command=dlg.destroy).pack(pady=(10, 0))
+        dlg.protocol('WM_DELETE_WINDOW', dlg.destroy)
+
+    def _update_button_states(self):
+        has_search_dbs = len(self.active_databases) > 0
+        has_target = self.primary_db is not None
+        model_loaded = self.model is not None
+        
+        if hasattr(self, 'search_button'):
+            self.search_button.config(state='normal' if (has_search_dbs and model_loaded) else 'disabled')
+        if hasattr(self, 'index_button'):
+            self.index_button.config(state='normal' if has_target else 'disabled')
+        if hasattr(self, 'load_model_button'):
+            self.load_model_button.config(state='normal')
+        if hasattr(self, 'rescore_button'):
+            self.rescore_button.config(state='disabled')
+        if hasattr(self, 'clear_rescore_button'):
+            self.clear_rescore_button.config(state='disabled')
+        if hasattr(self, 'query_text_entry'):
+            self.query_text_entry.config(state='normal' if (has_search_dbs and model_loaded) else 'disabled')
+
     def _on_closing(self):
         """Cleanup resources before destroying the window."""
         self._stop_video_loop()
         self.destroy()
 
     def on_handle_drop(self, event):
-        # tkinterdnd2 returns paths in a specific format (spaces are handled with braces)
         paths = self.tk.splitlist(event.data)
         if not paths:
             return
         
-        # Process .db files and query images first (first such file found)
-        for path in paths:
-            if path.lower().endswith('.db'):
-                self.db_path = path
-                self.db_var.set(os.path.basename(path))
-                init_db(self.db_path)
-                self.config['db_path'] = path
-                config.save_config(self.config)
-                self.update_status(f"Database loaded via drop: {os.path.basename(path)}")
-                self.update_queue_status()
-                break
+        db_paths = [p for p in paths if p.lower().endswith('.db')]
+        if db_paths:
+            self._add_databases(db_paths)
         
         for path in paths:
             if path.lower().endswith(config.IMAGE_EXTENSIONS):
@@ -572,7 +806,6 @@ class SceneScoutApp(TkinterDnD.Tk):
                 self.update_status(f"Query image set via drop: {os.path.basename(path)}")
                 break
         
-        # Add all valid media files and directories to queue
         media_paths = [p for p in paths if not p.lower().endswith('.db') and 
                         (os.path.isdir(p) or p.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS))]
         if media_paths:
@@ -621,32 +854,57 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.update_idletasks()
 
     def load_saved_paths(self):
-        if 'db_path' in self.config and os.path.exists(self.config['db_path']):
-            self.db_path = self.config['db_path']
-            assert self.db_path is not None
-            self.db_var.set(os.path.basename(self.db_path))
-            init_db(self.db_path)
-            self.update_status(f'Loaded saved database: {os.path.basename(self.db_path)}')
-            
-            # Migrate old folder_path to index_queue if present
-            if 'folder_path' in self.config and self.config['folder_path'] and os.path.exists(self.config['folder_path']):
-                from database import add_to_queue, queue_count
-                if queue_count(self.db_path) == 0:
-                    add_to_queue(self.db_path, self.config['folder_path'], is_directory=True, recursive=True)
-                # Remove old folder_path from config
+        from database import add_to_queue, queue_count
+        
+        active_dbs = self.config.get('active_databases', [])
+        saved_primary = self.config.get('primary_database', '')
+        
+        valid_dbs = []
+        missing_count = 0
+        for db_path in active_dbs:
+            if os.path.exists(db_path):
+                abs_path = str(Path(db_path).resolve())
+                if abs_path not in valid_dbs:
+                    valid_dbs.append(abs_path)
+            else:
+                missing_count += 1
+        
+        self.active_databases = valid_dbs
+        
+        if saved_primary and saved_primary in valid_dbs:
+            self.primary_db = saved_primary
+        elif valid_dbs:
+            self.primary_db = valid_dbs[0]
+        else:
+            self.primary_db = None
+        
+        if missing_count > 0:
+            self.update_status(f'{missing_count} database(s) not found and removed from list.')
+        elif valid_dbs:
+            primary_name = os.path.basename(self.primary_db) if self.primary_db else 'None'
+            self.update_status(f'Loaded {len(valid_dbs)} database(s). Target: {primary_name}')
+        
+        for db_path in self.active_databases:
+            init_db(db_path)
+        
+        if 'folder_path' in self.config and self.config['folder_path'] and os.path.exists(self.config['folder_path']):
+            if self.primary_db and queue_count(self.primary_db) == 0:
+                add_to_queue(self.primary_db, self.config['folder_path'], is_directory=True, recursive=True)
+            if 'folder_path' in self.config:
                 del self.config['folder_path']
                 config.save_config(self.config)
         
+        self._update_db_section()
         self.update_queue_status()
+        self._update_button_states()
 
     def update_queue_status(self):
-        """Update the queue status label and process button state."""
-        if not self.db_path:
-            self.queue_status_var.set('[0] items in queue (no database)')
+        if not self.primary_db:
+            self.queue_status_var.set('[0] items in queue (no target database)')
             self.index_button.config(state='disabled')
             return
         from database import queue_count
-        count = queue_count(self.db_path)
+        count = queue_count(self.primary_db)
         self.queue_status_var.set(f'[{count}] items in queue')
         self.index_button.config(state='normal' if count > 0 else 'disabled')
 
@@ -658,9 +916,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         self._add_paths_to_queue(paths)
 
     def _add_paths_to_queue(self, paths):
-        """Validate and add multiple paths to the index queue."""
-        if not self.db_path:
-            messagebox.showerror('Error', 'Please select a database first.')
+        if not self.primary_db:
+            messagebox.showerror('Error', 'Please select a target database first.')
             return
         from database import add_to_queue, queue_count
         added = 0
@@ -669,7 +926,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                 is_dir = os.path.isdir(path)
                 if not is_dir and not path.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS):
                     continue
-                add_to_queue(self.db_path, path, is_directory=is_dir, recursive=is_dir)
+                add_to_queue(self.primary_db, path, is_directory=is_dir, recursive=is_dir)
                 added += 1
         if added > 0:
             self.update_queue_status()
@@ -678,9 +935,8 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status('No valid media files or directories dropped.')
 
     def browse_files_dialog(self):
-        """Open file browser when clicking the drag-and-drop area."""
-        if not self.db_path:
-            messagebox.showerror('Error', 'Please select a database first.')
+        if not self.primary_db:
+            messagebox.showerror('Error', 'Please select a target database first.')
             return
         path = filedialog.askopenfilename(
             title='Select Media Files',
@@ -691,9 +947,8 @@ class SceneScoutApp(TkinterDnD.Tk):
             self._add_paths_to_queue(path)
 
     def add_folder_to_queue(self):
-        """Add a directory to the index queue."""
-        if not self.db_path:
-            messagebox.showerror('Error', 'Please select a database first.')
+        if not self.primary_db:
+            messagebox.showerror('Error', 'Please select a target database first.')
             return
         path = filedialog.askdirectory(title='Select Folder to Add to Queue')
         if path:
@@ -704,9 +959,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.browse_files_dialog()
 
     def open_queue_manager(self):
-        """Open a popup to inspect and manage the index queue."""
-        if not self.db_path:
-            messagebox.showerror('Error', 'Please select a database first.')
+        if not self.primary_db:
+            messagebox.showerror('Error', 'Please select a target database first.')
             return
 
         from database import get_queue, remove_from_queue, clear_queue, update_queue_recursive, queue_count
@@ -718,13 +972,11 @@ class SceneScoutApp(TkinterDnD.Tk):
         dlg.grab_set()
         dlg.minsize(700, 500)
         
-        # Center window
         gui_utils.center_window(dlg, 700, 500)
 
         main_frame = ttk.Frame(dlg, padding=10)
         main_frame.pack(fill='both', expand=True)
 
-        # Treeview with scrollbar
         tree_frame = ttk.Frame(main_frame)
         tree_frame.pack(fill='both', expand=True, pady=(0, 10))
 
@@ -751,14 +1003,13 @@ class SceneScoutApp(TkinterDnD.Tk):
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
-        # Store mapping from tree item id to queue id
         item_to_queue_id = {}
 
         def refresh_tree():
             for item in tree.get_children():
                 tree.delete(item)
             item_to_queue_id.clear()
-            queue_items = get_queue(self.db_path)
+            queue_items = get_queue(self.primary_db)
             missing_count = 0
             for qid, path, is_directory, recursive in queue_items:
                 item_type = 'Folder' if is_directory else 'File'
@@ -778,17 +1029,15 @@ class SceneScoutApp(TkinterDnD.Tk):
             update_status_label(missing_count)
 
         def update_status_label(missing=0):
-            count = queue_count(self.db_path)
+            count = queue_count(self.primary_db)
             text = f'{count} item(s) in queue'
             if missing > 0:
                 text += f' ({missing} missing)'
             status_var.set(text)
 
-        # Status label
         status_var = tk.StringVar(master=self)
         ttk.Label(main_frame, textvariable=status_var, font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0, 5))
 
-        # Buttons frame
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill='x', pady=5)
 
@@ -801,13 +1050,13 @@ class SceneScoutApp(TkinterDnD.Tk):
                 for iid in selected:
                     qid = item_to_queue_id.get(iid)
                     if qid:
-                        remove_from_queue(self.db_path, qid)
+                        remove_from_queue(self.primary_db, qid)
                 refresh_tree()
                 self.update_queue_status()
 
         def clear_all():
             if messagebox.askyesno('Confirm', 'Clear all items from the queue?'):
-                clear_queue(self.db_path)
+                clear_queue(self.primary_db)
                 refresh_tree()
                 self.update_queue_status()
 
@@ -820,7 +1069,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                 if qid:
                     values = tree.item(iid)['values']
                     if values and values[0] == 'Folder':
-                        update_queue_recursive(self.db_path, qid, recursive_val)
+                        update_queue_recursive(self.primary_db, qid, recursive_val)
             refresh_tree()
 
         def clean_missing():
@@ -833,7 +1082,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                 for iid in selected:
                     qid = item_to_queue_id.get(iid)
                     if qid:
-                        remove_from_queue(self.db_path, qid)
+                        remove_from_queue(self.primary_db, qid)
                 refresh_tree()
                 self.update_queue_status()
 
@@ -845,7 +1094,6 @@ class SceneScoutApp(TkinterDnD.Tk):
         ttk.Button(btn_frame, text='Set Recursive OFF',
                    command=lambda: toggle_recursive_for_selected(False)).pack(side='left', padx=5)
 
-        # Right-click context menu
         def show_context_menu(event):
             item = tree.identify_row(event.y)
             if not item:
@@ -870,56 +1118,48 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         tree.bind('<Button-3>', show_context_menu)
 
-        # Keyboard shortcut for delete
         def on_key_press(event):
             if event.keysym in ('Delete', 'BackSpace'):
                 remove_selected()
 
         dlg.bind('<KeyPress>', on_key_press)
 
-        # Inline recursive toggle on click (simplified - just use column detection)
         def on_tree_click(event):
             item = tree.identify_row(event.y)
             column = tree.identify_column(event.x)
-            if item and column == '#4':  # Recursive column
+            if item and column == '#4':
                 qid = item_to_queue_id.get(item)
                 values = tree.item(item)['values']
                 if qid and values and values[0] == 'Folder':
                     new_rec = not (values[3] == 'Yes')
-                    update_queue_recursive(self.db_path, qid, new_rec)
+                    update_queue_recursive(self.primary_db, qid, new_rec)
                     refresh_tree()
 
         tree.bind('<ButtonRelease-1>', on_tree_click)
 
-        # Initial load
         refresh_tree()
 
-        # Close button
         ttk.Button(main_frame, text='Close', command=dlg.destroy).pack(pady=(10, 0))
 
         dlg.protocol('WM_DELETE_WINDOW', dlg.destroy)
 
     def browse_database(self):
-        path = filedialog.asksaveasfilename(title='Create New Database File', initialdir=self.config.get('db_path', ''), filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
+        path = filedialog.asksaveasfilename(title='Create New Database File', initialdir='', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
         if path:
-            self.db_path = path
-            self.db_var.set(os.path.basename(path))
-            init_db(self.db_path)
-            self.config['db_path'] = path
-            config.save_config(self.config)
-            self.update_status(f'Database set to: {os.path.basename(path)}')
+            abs_path = str(Path(path).resolve())
+            init_db(abs_path)
+            self.active_databases.append(abs_path)
+            self.primary_db = abs_path
+            self._update_db_section()
+            self.save_db_config()
+            self._update_button_states()
             self.update_queue_status()
+            self.update_status(f'Database created and set as target: {os.path.basename(path)}')
 
     def browse_existing_database(self):
-        path = filedialog.askopenfilename(title='Select Existing Database File', initialdir=self.config.get('db_path', ''), filetypes=[('SQLite Database', '*.db')])
-        if path:
-            self.db_path = path
-            self.db_var.set(os.path.basename(path))
-            init_db(self.db_path)
-            self.config['db_path'] = path
-            config.save_config(self.config)
-            self.update_status(f'Database set to: {os.path.basename(path)}')
-            self.update_queue_status()
+        paths = filedialog.askopenfilenames(title='Select Existing Database Files', initialdir='', filetypes=[('SQLite Database', '*.db')])
+        if paths:
+            self._add_databases(paths)
 
     def browse_query_image(self):
         path = filedialog.askopenfilename(filetypes=[('Images', ' '.join((f'*{ext}' for ext in config.IMAGE_EXTENSIONS)))])
@@ -1018,17 +1258,16 @@ class SceneScoutApp(TkinterDnD.Tk):
         close_btn.pack(pady=(5, 0))
 
     def cleanup_database(self):
-        if not self.db_path:
-            messagebox.showerror('Error', 'Please select a database first.')
+        if not self.primary_db:
+            messagebox.showerror('Error', 'Please select a target database first.')
             return
-        assert self.db_path is not None
         if messagebox.askyesno('Confirm', 'Remove entries for deleted files from the database?'):
             self.threaded_task(self._cleanup_task)
 
     def _cleanup_task(self):
-        assert self.db_path is not None
+        assert self.primary_db is not None
         self.update_status('Cleaning up database...')
-        count = cleanup_orphaned_entries(self.db_path, self.update_status)
+        count = cleanup_orphaned_entries(self.primary_db, self.update_status)
         self.after(0, lambda: messagebox.showinfo('Complete', f'Removed {count} orphaned embeddings.'))
         self.update_status('Cleanup complete.')
 
@@ -1089,11 +1328,11 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.deiconify()
 
     def threaded_index(self):
-        if not self.db_path:
-            messagebox.showerror('Error', 'Please select a database first.')
+        if not self.primary_db:
+            messagebox.showerror('Error', 'Please select a target database first.')
             return
         from database import queue_count
-        if queue_count(self.db_path) == 0:
+        if queue_count(self.primary_db) == 0:
             messagebox.showerror('Error', 'Please add files or folders to the queue before indexing.')
             return
         self.index_button.config(state='disabled')
@@ -1170,10 +1409,10 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.after(0, lambda: self.index_filename_var.set(str(data)))
 
     def index_task(self):
-        assert self.db_path is not None
+        assert self.primary_db is not None
         try:
             result = index_files(
-                self.device, self.processor, self.model, self.db_path,
+                self.device, self.processor, self.model, self.primary_db,
                 batch_size=self.input_batch_size.get(),
                 generate_thumbnails=self.generate_thumbnails_var.get(),
                 progress_callback=self.update_gui_progress,
@@ -1198,22 +1437,23 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status('Indexing cancelled.')
             messagebox.showinfo('Cancelled', 'Indexing was cancelled.')
         else:
-            if self.db_path:
+            if self.primary_db:
                 from database import clear_queue
-                clear_queue(self.db_path)
+                clear_queue(self.primary_db)
                 self.update_queue_status()
             self.update_status('Indexing complete!')
             messagebox.showinfo('Complete', 'Indexing has finished.')
 
     def threaded_search(self):
-        if not self.db_path:
-            messagebox.showerror('Error', 'Please select a database first.')
+        if not self.active_databases:
+            messagebox.showerror('Error', 'Please add at least one database to search.')
             return
-        assert self.db_path is not None
-        # warn if the database contains no entries
-        if db_is_empty(self.db_path):
-            messagebox.showwarning('Warning', 'The selected database appears to be empty. Please index files before searching.')
-            return
+        assert self.active_databases, "No active databases"
+        if db_is_empty(self.active_databases[0]):
+            all_empty = all(db_is_empty(db) for db in self.active_databases)
+            if all_empty:
+                messagebox.showwarning('Warning', 'All active databases appear to be empty. Please index files before searching.')
+                return
         if not self.query_text_var.get() and (not self.query_image_path):
             messagebox.showwarning('Warning', 'Please enter text or select an image to search.')
             return
@@ -1223,12 +1463,11 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.threaded_task(self.search_task)
 
     def search_task(self):
-        assert self.db_path is not None
         try:
             query_embedding = get_query_embedding(self.query_text_var.get(), self.query_image_path, self.device, self.processor, self.model, self.max_patches_var.get())
             if query_embedding is None:
                 raise ValueError('Could not generate query embedding.')
-            scene_results = search_scenes(query_embedding, self.db_path, top_k=self.top_k_var.get())
+            scene_results = search_scenes(query_embedding, self.active_databases, top_k=self.top_k_var.get())
             self.after(0, self.on_search_finished, scene_results)
         except Exception as e:
             self.after(0, lambda e=e: messagebox.showerror('Search Error', str(e)))
@@ -1236,9 +1475,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         finally:
             self.after(0, lambda: self.search_button.config(state='normal'))
 
-    def on_search_finished(self, results: List[Tuple[str, int, int, int, bytes, float]]):
-        self.search_results = [(path, score, 'video', None, scene_idx, start_time, end_time, thumb_bytes) 
-                              for path, scene_idx, start_time, end_time, thumb_bytes, score in results]
+    def on_search_finished(self, results: List[Tuple[str, int, int, int, bytes, float, str]]):
+        self.search_results = [(path, score, 'video', None, scene_idx, start_time, end_time, thumb_bytes, source_db)
+                              for path, scene_idx, start_time, end_time, thumb_bytes, score, source_db in results]
         self._update_listview()
         self.update_status(f'Found {len(results)} results.')
         self.rescore_button.config(state='normal' if results else 'disabled')
@@ -1277,7 +1516,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         # 2. Populate the Treeview and Thumbnail Strip
         for i, data in enumerate(self.search_results, 1):
-            path, score, ftype, rescore, scene_idx, scene_time, scene_end, thumb_bytes = data
+            path, score, ftype, rescore, scene_idx, scene_time, scene_end, thumb_bytes, source_db = data
             tree_id = str(i-1)
             
             filename = os.path.basename(path)
@@ -1293,7 +1532,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                     time_str = start_str
                 scene_str = str(scene_idx + 1)
             
-            values = [filename, scene_str, time_str, f'{score:.4f}', f'{rescore:.4f}' if rescore is not None else '']
+            values = [filename, scene_str, time_str, source_db, f'{score:.4f}', f'{rescore:.4f}' if rescore is not None else '']
             self.results_tree.insert('', 'end', iid=tree_id, values=values)
 
             if thumb_bytes:
@@ -1315,7 +1554,7 @@ class SceneScoutApp(TkinterDnD.Tk):
                 visible_thumb_count += 1
 
         # 3. Update status and auto-select first result
-        scores = [rescore if has_rescore and rescore is not None else score for _, score, _, rescore, _, _, _, _ in self.search_results]
+        scores = [rescore if has_rescore and rescore is not None else score for _, score, _, rescore, _, _, _, _, _ in self.search_results]
         stats_text = f'Found {len(scores)} results | Max: {max(scores):.3f} | Avg: {np.mean(scores):.3f}'
         self.stats_label.config(text=stats_text)
         
@@ -1336,16 +1575,16 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.threaded_task(self.rescore_task, query_text)
 
     def rescore_task(self, query_text: str):
-        assert self.db_path is not None
+        assert self.primary_db is not None
         self.update_status(f"Rescoring with: '{query_text}'...")
         try:
             rescore_embedding = get_query_embedding(query_text, None, self.device, self.processor, self.model)
             if rescore_embedding is None:
                 raise ValueError('Could not generate rescore embedding.')
                 
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.primary_db) as conn:
                 cursor = conn.cursor()
-                for i, (path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes) in enumerate(self.search_results):
+                for i, (path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes, source_db) in enumerate(self.search_results):
                     
                     if ftype == 'image':
                         cursor.execute('SELECT embedding FROM image_embeddings WHERE filepath=?', (path,))
@@ -1353,10 +1592,9 @@ class SceneScoutApp(TkinterDnD.Tk):
                         if result:
                             embedding = np.frombuffer(result[0], dtype=np.float32)
                             similarity = np.dot(embedding, rescore_embedding.T).squeeze()
-                            self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes)
+                            self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes, source_db)
                             
                     elif ftype == 'video':
-                        # Handle merged scenes (tuples) and single scenes (ints)
                         if isinstance(scene_idx, tuple):
                             start_idx, end_idx = scene_idx
                             cursor.execute(
@@ -1365,21 +1603,20 @@ class SceneScoutApp(TkinterDnD.Tk):
                             )
                             results = cursor.fetchall()
                             if results:
-                                # Find the best matching scene within the merged block
                                 max_sim = -1.0
                                 for res in results:
                                     emb = np.frombuffer(res[0], dtype=np.float32)
                                     sim = float(np.dot(emb, rescore_embedding.T).squeeze())
                                     if sim > max_sim:
                                         max_sim = sim
-                                self.search_results[i] = (path, score, ftype, max_sim, scene_idx, scene_time, scene_end, thumb_bytes)
+                                self.search_results[i] = (path, score, ftype, max_sim, scene_idx, scene_time, scene_end, thumb_bytes, source_db)
                         else:
                             cursor.execute('SELECT embedding FROM scene_embeddings WHERE filepath=? AND scene_index=?', (path, scene_idx))
                             result = cursor.fetchone()
                             if result:
                                 embedding = np.frombuffer(result[0], dtype=np.float32)
                                 similarity = np.dot(embedding, rescore_embedding.T).squeeze()
-                                self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes)
+                                self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes, source_db)
                                 
             self.after(0, self.on_rescore_finished)
         except Exception as e:
@@ -1391,7 +1628,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.clear_rescore_button.config(state='normal')
 
     def clear_rescore(self):
-        self.search_results = [(path, score, ftype, None, scene_idx, scene_time, scene_end) for path, score, ftype, _, scene_idx, scene_time, scene_end in self.search_results]
+        self.search_results = [(path, score, ftype, None, scene_idx, scene_time, scene_end, thumb_bytes, source_db) for path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes, source_db in self.search_results]
         self._update_listview()
         self.update_status('Rescore cleared.')
         self.clear_rescore_button.config(state='disabled')
@@ -1409,9 +1646,9 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.last_selected_entry = current_selected_entry
             index = int(current_selected_entry)
             
-            # Extract metadata from search_results (matches the 8-item tuple structure)
-            # Structure: path, score, ftype, rescore, scene_idx, start_ms, end_ms, thumb_bytes
-            path, _, file_type, _, _, scene_time, scene_end, _ = self.search_results[index]
+            # Extract metadata from search_results (matches the 9-item tuple structure)
+            # Structure: path, score, ftype, rescore, scene_idx, start_ms, end_ms, thumb_bytes, source_db
+            path, _, file_type, _, _, scene_time, scene_end, _, _ = self.search_results[index]
             self.current_display_path = path
             
             # --- THUMBNAIL HIGHLIGHTING LOGIC ---
