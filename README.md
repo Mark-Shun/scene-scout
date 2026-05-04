@@ -2,7 +2,6 @@
 <br>
 <p align="center">
   <img src="assets/logo/scene-scout-text-logo.png" width="90%">
-
 </p>
 <br>
 <br>
@@ -27,6 +26,7 @@ The focus on this fork has shifted from searching for videos/images in a user's 
 ## Features
 - **Multiplatform support**: Through the usage of install scripts and UV, support for: Windows, Linux and Mac platforms.
 - **Natural language search**: Find video scenes using text descriptions
+- **Multi-Database Search**: Query multiple databases simultaneously with merged, deduplicated results and source database labels
 - **Image-to-Scene search**: Search a scene using reference images
 - **Video playback support**: Watch the scene play out in the GUI
 - **Dual interface**: Available both as GUI and CLI
@@ -34,6 +34,9 @@ The focus on this fork has shifted from searching for videos/images in a user's 
 - **GPU acceleration**: Supports for various acceleration platforms (CPU (Apple SMP), CUDA, TensorRT, DML, Intel Arc/Xe, AMD ROCm)
 - **Flexible patch sizes**: From 128 to 1024 patches for resolution control
 - **SQLite database**: Efficient embedding storage with scene data and a small thumbnail in Blob storage format.
+- **Media Queue System**: Index multiple files/folders at once with a persistent queue, drag-and-drop support, and per-item settings
+- **Database Manager**: Popup interface to manage databases, set search targets, and view scene/video/image statistics
+- **Interactive Shell**: REPL mode with command aliases, tab completion, persistent history, and built-in database management commands
 
 ## Installation
 
@@ -118,20 +121,23 @@ Example queries:
 **First Time Setup (Creating a new database):**
 
 1. Click **"Database->Create New..."** → Select where you want to create the database
-2. Add files/folders to the queue using one of these methods:
+2. *(Optional)* Click **"Manage Databases..."** to view statistics and configure multiple databases
+3. Add files/folders to the queue using one of these methods:
    - **Drag & Drop**: Drop files or folders onto the queue area
    - **Add Folder(s)**: Browse and select directories to index recursively
    - **Add File(s)**: Browse and select individual media files
-3. Click **"Inspect Queue..."** to review, remove items, or toggle recursive scanning
-4. Click **"Process Media"** to index all queued files (this may take time depending on dataset size and hardware)
-5. Enter a search query in the "Text" field or click **"Load Query Image..."**
-6. Click **"Search Scene"** to find matching scenes
+4. Click **"Inspect Queue..."** to review, remove items, toggle recursive scanning, or clean missing paths
+5. Click **"Process Media"** to index all queued files (this may take time depending on dataset size and hardware)
+6. Enter a search query in the "Text" field or click **"Load Query Image..."**
+7. Click **"Search Scene"** to find matching scenes
+8. *(Optional)* Search across multiple databases by adding more databases via "Manage Databases..."
 
 **Searching an existing database:**
 
 1. Click **"Database->Open Existing"** → Select your `.db` file
-2. Enter your search query (text, image, or both)
-3. Click **"Search Scene"** to find matching scenes
+2. *(Optional)* Add more databases via **"Manage Databases..."** to search across multiple sources
+3. Enter your search query (text, image, or both)
+4. Click **"Search Scene"** to find matching scenes (results show source database)
 
 **Adding New Files to Existing Database:**
 1. Load your existing database
@@ -143,14 +149,18 @@ Example queries:
 - **Drag & Drop**: Drop files, folders, or even `.db` files directly onto the GUI
 - **Queue Manager**: Click "Inspect Queue..." to view all queued items, remove selected items, toggle recursive scanning, and clean up missing paths
 - **Per-folder recursive toggle**: Control whether each folder scans subdirectories independently
+- **Missing Path Detection**: Queue Manager shows `[MISSING]` tags for deleted paths with "Clean Missing" button
 
 #### GUI Features
 - **Visualized search results**: Get a list overview of the search results with the ability to watch the specific scene as a preview.
+- **Search Source Column**: Results list displays which database each result originated from when searching multiple databases
 - **Model Patches**: Higher values (512-1024) give better quality but are slower during indexing of images.
 - **Video Settings**: Control how many frames are extracted and from where in the video
 - **Threshold Slider**: Filter out low-similarity results (0.0 = show all, higher = more selective)
 - **Cleanup Database**: Remove entries for deleted files to keep the database clean
 - **Result Indicators**: `*` = excellent match (≥0.8), `-` = good match (≥0.6), `.` = lower match
+- **Missing Path Detection**: Queue Manager shows `[MISSING]` tags for deleted paths with a "Clean Missing" button
+- **Enhanced Update Popup**: Richly formatted GitHub release notes displayed in GUI popup when updates are available
 
 
 <summary><h3>CLI Mode</h3></summary>
@@ -193,14 +203,15 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 
 #### CLI Options
 
-- `--interactive`: Enter interactive REPL mode
+- `--interactive` / `-i`: Enter interactive REPL mode
 - `--json`: Output search results in JSON format
 - `--include-thumbs`: Include base64 thumbnails in JSON output
 - `--index PATH`: Path to folder or file to index (can be specified multiple times)
 - `--search-text TEXT`: Text query (use `-` to read from stdin for piping)
 - `--search-image PATH`: Image query path
 - `--top-k N`: Number of results to return (default: 10)
-- `--db PATH`: Database file path (default: siglip2_embeddings.db)
+- `--db PATH`: Database file path(s) - can specify multiple times for multi-database search (default: siglip2_embeddings.db)
+- `--target-db PATH`: Target database for indexing operations when using multiple databases
 - `--device {cuda,cpu,dml,xpu,mps}`: Force specific device
 - `--max-patches N`: Max patches for model (default: 256)
 - `--batch-size N`: Inference batch size (default: 16)
@@ -208,6 +219,29 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 - `--cleanup`: Remove orphaned embeddings
 - `--silent`: Suppress all non-essential output including progress bars (ideal for automation)
 - `--output FILE`: Write JSON output to file instead of stdout
+
+#### CLI Exit Codes
+- `0`: Success
+- `1`: Model error
+- `2`: Database error
+- `3`: Invalid input
+
+#### Interactive Shell Commands
+When in REPL mode (`--interactive`), use these commands:
+- `s <query>`: Search scenes
+- `i <paths>`: Index files/folders
+- `cl`: Cleanup database
+- `ls`: Show status
+- `db ls`: List active databases
+- `db add <path>`: Add a database
+- `db rm <path>`: Remove a database
+- `db target <path>`: Set target database for indexing
+- `db clear`: Clear all databases
+- `update` / `u`: View full patch notes from latest release
+- `vars`: List all editable shell variables
+- `set <var> <value>`: Set a variable (with tab completion)
+- `h` / `help`: Show help
+- `q` / `exit`: Quit
 
 
 ## Video Support
@@ -233,6 +267,11 @@ Embeddings are stored in SQLite with automatic management:
 - Only modified or new files are re-indexed
 - Deleted files can be cleaned up with `--cleanup` flag
 - Each entry stores filepath, timestamp, embedding, and file type
+- **Multi-database support**: Search across multiple databases simultaneously with merged, deduplicated results
+- **Database Manager**: Popup interface showing database name, path, scene/video/image counts, and total statistics
+- **Active databases**: Configure multiple active databases with a primary target for indexing operations
+- **Queue persistence**: Index queue is stored per-database in SQLite and persists across sessions
+- **Automatic migration**: Old `folder_path` and `db_path` config values are automatically migrated to the new queue and multi-database format
 
 
 <summary><h2>Performance tips</h2></summary>
@@ -248,6 +287,7 @@ Embeddings are stored in SQLite with automatic management:
 - **Embedding size**: 1152
 - **Similarity metric**: Cosine similarity (dot product of normalized vectors)
 - **Database**: SQLite with BLOB storage for embeddings and thumbnails
+- **Database Schema**: Automatically migrate older database files to newer formats
 - **Image processing**: PIL with decompression bomb protection disabled
 - **Video processing**: For accurate detection, PySceneDetect is used to detect new scenes, for the fast detection method AV is utilised to quickly extract I-frames.
 - **Video playback**: VLC is utilized for the video playback, when showing just the first frame AV is used.
