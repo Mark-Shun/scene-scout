@@ -16,6 +16,49 @@ from pathlib import Path
 import av
 import numpy as np
 import torch
+
+class ToolTip:
+    def __init__(self, widget, text, delay=500):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._after_id = None
+        self._tipwindow = None
+        self.widget.bind('<Enter>', self._schedule)
+        self.widget.bind('<Leave>', self._hide)
+        self.widget.bind('<Motion>', self._move)
+
+    def _schedule(self, event=None):
+        self._unschedule()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _unschedule(self):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def _show(self):
+        if self._tipwindow or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        self._tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f'+{x}+{y}')
+        label = ttk.Label(tw, text=self.text, background='#ffffe0', relief='solid', borderwidth=1, wraplength=240)
+        label.pack(ipadx=6, ipady=3)
+
+    def _move(self, event=None):
+        if self._tipwindow:
+            x = self.widget.winfo_rootx() + 20
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+            self._tipwindow.wm_geometry(f'+{x}+{y}')
+
+    def _hide(self, event=None):
+        self._unschedule()
+        if self._tipwindow:
+            self._tipwindow.destroy()
+            self._tipwindow = None
 try:
     import torch_directml
 except ImportError:
@@ -201,8 +244,12 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         db_btn_frame = ttk.Frame(db_frame)
         db_btn_frame.pack(fill='x', pady=2)
-        ttk.Button(db_btn_frame, text='Open Existing...', command=self.browse_existing_database).pack(side='left', expand=True, fill='x', padx=(0, 2))
-        ttk.Button(db_btn_frame, text='Create New...', command=self.browse_database).pack(side='left', expand=True, fill='x', padx=(2, 0))
+        open_db_button = ttk.Button(db_btn_frame, text='Open Existing...', command=self.browse_existing_database)
+        open_db_button.pack(side='left', expand=True, fill='x', padx=(0, 2))
+        ToolTip(open_db_button, 'Open an existing Scene Scout database (.db) file.')
+        create_db_button = ttk.Button(db_btn_frame, text='Create New...', command=self.browse_database)
+        create_db_button.pack(side='left', expand=True, fill='x', padx=(2, 0))
+        ToolTip(create_db_button, 'Create a new database for indexing media files.')
 
         # Folder Section
         folder_frame = ttk.LabelFrame(self.scrollable_controls, text='Folder to process', padding=5)
@@ -210,9 +257,12 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.folder_var = tk.StringVar(master=self)
         self.folder_entry = ttk.Entry(folder_frame, textvariable=self.folder_var)
         self.folder_entry.pack(fill='x', pady=2)
-        ttk.Button(folder_frame, text='Select Folder', command=self.browse_folder).pack(fill='x')
+        folder_button = ttk.Button(folder_frame, text='Select Folder', command=self.browse_folder)
+        folder_button.pack(fill='x')
+        ToolTip(folder_button, 'Choose a folder containing video and image files to index.')
         self.index_button = ttk.Button(folder_frame, text='Process Media In Folder', command=self.threaded_index, state='disabled')
         self.index_button.pack(fill='x', pady=3)
+        ToolTip(self.index_button, 'Process the selected folder and update the scene database.')
 
         # Search Query Section
         query_frame = ttk.LabelFrame(self.scrollable_controls, text='Search Query', padding=5)
@@ -228,10 +278,15 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         btn_frame = ttk.Frame(query_frame)
         btn_frame.pack(fill='x', pady=2)
-        ttk.Button(btn_frame, text='Load...', command=self.browse_query_image).pack(side='left', expand=True, fill='x')
-        ttk.Button(btn_frame, text='Clear', command=self.clear_query_image).pack(side='left', expand=True, fill='x')
+        load_query_button = ttk.Button(btn_frame, text='Load...', command=self.browse_query_image)
+        load_query_button.pack(side='left', expand=True, fill='x')
+        ToolTip(load_query_button, 'Load an image to use as the search query.')
+        clear_query_button = ttk.Button(btn_frame, text='Clear', command=self.clear_query_image)
+        clear_query_button.pack(side='left', expand=True, fill='x')
+        ToolTip(clear_query_button, 'Clear the current query image from the search form.')
         self.search_button = ttk.Button(query_frame, text='Search Scene', command=self.threaded_search, state='disabled')
         self.search_button.pack(fill='x', pady=3)
+        ToolTip(self.search_button, 'Run the search using the current text and/or image query.')
 
         # Options Section
         options_frame = ttk.LabelFrame(self.scrollable_controls, text='Options', padding=5)
@@ -334,7 +389,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         theme_frame.pack(fill='x', pady=5)
         self.theme_combobox = ttk.Combobox(theme_frame, textvariable=self.theme_var, values=sorted(self.style.theme_names()), state='readonly')
         self.theme_combobox.pack(side='left', fill='x', expand=True)
-        ttk.Button(theme_frame, text='Apply', command=self.apply_theme).pack(side='left', padx=(5, 0))
+        apply_theme_button = ttk.Button(theme_frame, text='Apply', command=self.apply_theme)
+        apply_theme_button.pack(side='left', padx=(5, 0))
+        ToolTip(apply_theme_button, 'Apply the selected GUI theme immediately.')
 
         # Additional actions Section
         actions_frame = ttk.LabelFrame(self.scrollable_controls, text='Additional Actions', padding=5)
@@ -342,13 +399,18 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         self.load_model_button = ttk.Button(actions_frame, text='Load Model', command=self.threaded_load_model)
         self.load_model_button.pack(fill='x', pady=3)
+        ToolTip(self.load_model_button, 'Load or reload the model used for scene search.')
         
-        ttk.Button(actions_frame, text='Cleanup Database', command=self.cleanup_database).pack(fill='x', pady=3)
+        cleanup_button = ttk.Button(actions_frame, text='Cleanup Database', command=self.cleanup_database)
+        cleanup_button.pack(fill='x', pady=3)
+        ToolTip(cleanup_button, 'Remove orphaned or invalid database entries.')
 
         # Info Section
         info_frame = ttk.LabelFrame(self.scrollable_controls, text='Info', padding=5)
         info_frame.pack(fill='x', pady=(0,10))
-        ttk.Button(info_frame, text='About', command=self.open_about_dialog).pack(fill='x')
+        about_button = ttk.Button(info_frame, text='About', command=self.open_about_dialog)
+        about_button.pack(fill='x')
+        ToolTip(about_button, 'Open the about dialog with project and version information.')
 
         # Status Label
         ttk.Label(self.scrollable_controls, textvariable=self.status_var, wraplength=280).pack(side='bottom', fill='x', pady=10)       
@@ -368,8 +430,10 @@ class SceneScoutApp(TkinterDnD.Tk):
         rescore_frame.pack(fill='x', pady=5)
         self.rescore_button = ttk.Button(rescore_frame, text='Rescore...', command=self.open_rescore_dialog, state='disabled')
         self.rescore_button.pack(side='left')
+        ToolTip(self.rescore_button, 'Open rescore dialog to adjust scene result rankings.')
         self.clear_rescore_button = ttk.Button(rescore_frame, text='Clear Rescore', command=self.clear_rescore, state='disabled')
         self.clear_rescore_button.pack(side='left', padx=5)
+        ToolTip(self.clear_rescore_button, 'Clear any custom rescore adjustments from results.')
         
         self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','score','rescore'), show='headings', selectmode='browse')
         for col, width in zip(['filename', 'scene', 'time', 'score', 'rescore'], [300, 80, 150, 80, 80]):
@@ -390,6 +454,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         playback_state = 'On' if config.SCENE_PLAYBACK else 'Off'
         self._playback_toggle_btn = ttk.Button(preview_frame, text=f'Toggle preview playback ({playback_state})', command=self.toggle_preview_playback)
         self._playback_toggle_btn.pack(fill='x', pady=(0,5))
+        ToolTip(self._playback_toggle_btn, 'Toggle video preview playback on or off for selected results.')
         
         self.preview_image_canvas = tk.Canvas(preview_frame, bg='gray')
         self.preview_image_canvas.pack(fill='both', expand=True)
