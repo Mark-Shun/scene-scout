@@ -273,10 +273,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.drop_area = ttk.Frame(queue_frame, height=60, relief='solid', borderwidth=2)
         self.drop_area.pack(fill='x', pady=(0, 5))
         self.drop_area.pack_propagate(False)
-        drop_label = ttk.Label(self.drop_area, text='Drag & Drop files/folders here\nor click to browse', 
+        drop_label = ttk.Label(self.drop_area, text='Drag & Drop files/folders onto the GUI\nor click the buttons below to add to queue', 
                                anchor='center', justify='center')
         drop_label.pack(expand=True, fill='both')
-        ToolTip(self.drop_area, 'Drag and drop files or folders here to add to the queue. Click to browse for files.')
         
         # Bind click and drop events to the drag-and-drop area
         self.drop_area.bind('<Button-1>', lambda e: self.browse_files_dialog())
@@ -974,9 +973,10 @@ class SceneScoutApp(TkinterDnD.Tk):
         dlg.title('Queue Manager')
         dlg.transient(self)
         dlg.grab_set()
-        dlg.minsize(700, 500)
-        
-        gui_utils.center_window(dlg, 700, 500)
+        dlg.minsize(900, 500)
+
+        # Center window
+        gui_utils.center_window(dlg, 900, 500)
 
         main_frame = ttk.Frame(dlg, padding=10)
         main_frame.pack(fill='both', expand=True)
@@ -1090,13 +1090,27 @@ class SceneScoutApp(TkinterDnD.Tk):
                 refresh_tree()
                 self.update_queue_status()
 
-        ttk.Button(btn_frame, text='Remove Selected', command=remove_selected).pack(side='left', padx=(0, 5))
-        ttk.Button(btn_frame, text='Clear Queue', command=clear_all).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text='Clean Missing', command=clean_missing).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text='Set Recursive ON',
-                   command=lambda: toggle_recursive_for_selected(True)).pack(side='left', padx=5)
-        ttk.Button(btn_frame, text='Set Recursive OFF',
-                   command=lambda: toggle_recursive_for_selected(False)).pack(side='left', padx=5)
+        remove_btn = ttk.Button(btn_frame, text='Remove Selected', command=remove_selected)
+        remove_btn.pack(side='left', padx=(0, 5))
+        ToolTip(remove_btn, 'Remove selected items from the queue')
+
+        clear_btn = ttk.Button(btn_frame, text='Clear Queue', command=clear_all)
+        clear_btn.pack(side='left', padx=5)
+        ToolTip(clear_btn, 'Remove all items from the queue')
+
+        clean_btn = ttk.Button(btn_frame, text='Clean Missing', command=clean_missing)
+        clean_btn.pack(side='left', padx=5)
+        ToolTip(clean_btn, 'Remove all items marked as [MISSING] from the queue')
+
+        rec_on_btn = ttk.Button(btn_frame, text='Set Recursive ON',
+                                command=lambda: toggle_recursive_for_selected(True))
+        rec_on_btn.pack(side='left', padx=5)
+        ToolTip(rec_on_btn, 'Enable recursive scanning for selected folders')
+
+        rec_off_btn = ttk.Button(btn_frame, text='Set Recursive OFF',
+                                 command=lambda: toggle_recursive_for_selected(False))
+        rec_off_btn.pack(side='left', padx=5)
+        ToolTip(rec_off_btn, 'Disable recursive scanning for selected folders')
 
         def show_context_menu(event):
             item = tree.identify_row(event.y)
