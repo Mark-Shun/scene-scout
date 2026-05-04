@@ -38,7 +38,8 @@ DEFAULT_CONFIG = {
     "max_patches": 256,
     "active_databases": [],
     "primary_database": "",
-    "github_token": ""
+    "github_token": "",
+    "show_update_details": False
 }
 
 def load_config() -> Dict[str, Any]:
