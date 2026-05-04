@@ -39,6 +39,7 @@
                 <li><a href="#hero" class="active"><i class="fa-solid fa-house"></i> Home</a></li>
                 <li><a href="#features"><i class="fa-regular fa-star"></i> Features</a></li>
                 <li><a href="#screenshots"><i class="fa-solid fa-images"></i> Screenshots</a></li>
+                <li><a href="#usage"><i class="fa-solid fa-circle-question"></i> How to Use</a></li>
                 <li><a href="#install"><i class="fa-solid fa-download"></i> Installation</a></li>
                 <li><a href="#author"><i class="fa-solid fa-circle-info"></i> About</a></li>
             </ul>
@@ -79,7 +80,7 @@
 
         <section id="features" class="section">
             <h2 class="section-title"><span class="glass-pill">Features</span></h2>
-            <p class="section-subtitle">Everything you need to search and discover scenes in your video collection</p>
+            <p class="section-subtitle">Various functions to find the scenes you are looking for...</p>
             <div class="features-grid">
                 <div class="feature-card">
                     <div class="feature-icon"><i class="fa-solid fa-magnifying-glass"></i></div>
@@ -108,8 +109,13 @@
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i class="fa-solid fa-database"></i></div>
-                    <h3 class="feature-title">SQLite Database</h3>
-                    <p class="feature-description">Efficient embedding storage with scene data and thumbnails. Incremental indexing for new files only.</p>
+                    <h3 class="feature-title">Local SQLite Database</h3>
+                    <p class="feature-description">Efficient embedding storage with scene data and thumbnails. Incremental indexing in the database for new files only.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-terminal"></i></div>
+                    <h3 class="feature-title">CLI &amp; Interactive Mode</h3>
+                    <p class="feature-description">Interact with Scene Scout through the terminal. Run searches, index media, and export results as JSON. Includes an interactive REPL with tab completion, command history, and scripting support for automation.</p>
                 </div>
             </div>
         </section>
@@ -129,6 +135,55 @@
                 <div class="screenshot-card" data-full="https://mark-shun.github.io/scene-scout/assets/screenshots/glowing-eye-search.png">
                     <img src="https://mark-shun.github.io/scene-scout/assets/screenshots/glowing-eye-search.png" alt="Glowing Eye Search">
                     <div class="screenshot-caption">Text query: yellow glowing eye</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="usage" class="section">
+            <h2 class="section-title"><span class="glass-pill">How to Use</span></h2>
+            <p class="section-subtitle">When opening the GUI, you can follow the next few steps to start searching for scenes</p>
+            <div class="timeline">
+                <div class="timeline-item">
+                    <div class="timeline-marker">1</div>
+                    <div class="timeline-content">
+                        <h3 class="timeline-title">Launch</h3>
+                        <p class="timeline-description">Start Scene Scout using the GUI or CLI run script. On first launch the vision model downloads automatically.</p>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">2</div>
+                    <div class="timeline-content">
+                        <h3 class="timeline-title">Database</h3>
+                        <p class="timeline-description">Create a new database via <strong>Database &rarr; Create New</strong> or open an existing one with <strong>Database &rarr; Open Existing</strong>.</p>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">3</div>
+                    <div class="timeline-content">
+                        <h3 class="timeline-title">Select Folder</h3>
+                        <p class="timeline-description">Click <strong>Browse</strong> to select the directory containing your videos and images. You can also drag and drop folders directly into the GUI.</p>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">4</div>
+                    <div class="timeline-content">
+                        <h3 class="timeline-title">Index Media</h3>
+                        <p class="timeline-description">Click <strong>Process Media Folder</strong> to extract scenes and build embeddings. This may take a while depending on your collection size, hardware and selected option during installation. Only new or modified files are processed on subsequent runs.</p>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">5</div>
+                    <div class="timeline-content">
+                        <h3 class="timeline-title">Search</h3>
+                        <p class="timeline-description">Enter a text description in the search field, load a reference image, or combine both for a multimodal query. Press Enter or click <strong>Search Scene</strong>.</p>
+                    </div>
+                </div>
+                <div class="timeline-item">
+                    <div class="timeline-marker">6</div>
+                    <div class="timeline-content">
+                        <h3 class="timeline-title">Browse &amp; Play</h3>
+                        <p class="timeline-description">Scroll through ranked results with similarity scores. Click on any result to play the scene directly in the built-in video viewer.</p>
+                    </div>
                 </div>
             </div>
         </section>
@@ -154,6 +209,62 @@
                     <h3 class="step-title">Launch</h3>
                     <p class="step-description">Start Scene Scout GUI and begin searching your video collection</p>
                     <div class="code-block">Windows: run_gui.bat<br>Mac/Linux: ./run_gui.sh</div>
+                </div>
+            </div>
+            <div class="gpu-subsection">
+                <h3 class="gpu-subsection-title">GPU Acceleration</h3>
+                <p class="gpu-subtitle">During installation you can choose the acceleration method that matches your hardware. Select the option below that applies to your system.</p>
+                <div class="gpu-grid">
+                    <div class="gpu-card">
+                        <div class="gpu-name">CUDA</div>
+                        <div class="gpu-badge">NVIDIA GPU</div>
+                        <p class="gpu-description">Recommended for all NVIDIA graphics cards. Best overall performance and compatibility.</p>
+                    </div>
+                    <div class="gpu-card">
+                        <div class="gpu-name">TensorRT</div>
+                        <div class="gpu-badge">NVIDIA GPU</div>
+                        <p class="gpu-description">Maximum inference speed with additional NVIDIA-only optimization.</p>
+                    </div>
+                    <div class="gpu-card">
+                        <div class="gpu-name">DirectML</div>
+                        <div class="gpu-badge">AMD / Intel (Windows)</div>
+                        <p class="gpu-description">GPU acceleration for AMD Radeon and Intel integrated graphics on Windows systems.</p>
+                    </div>
+                    <div class="gpu-card">
+                        <div class="gpu-name">Intel XPU</div>
+                        <div class="gpu-badge">Intel Arc / Xe</div>
+                        <p class="gpu-description">Dedicated acceleration option for Intel Arc and Xe graphics cards.</p>
+                    </div>
+                    <div class="gpu-card">
+                        <div class="gpu-name">AMD ROCm</div>
+                        <div class="gpu-badge">AMD GPU (Linux)</div>
+                        <p class="gpu-description">GPU acceleration for AMD graphics cards on Linux systems. Not available on Windows.</p>
+                    </div>
+                    <div class="gpu-card">
+                        <div class="gpu-name">Apple MPS</div>
+                        <div class="gpu-badge">Apple Silicon</div>
+                        <p class="gpu-description">Accelerated processing on M1/M2/M3 Macs. Select the CPU option during install for MPS support.</p>
+                    </div>
+                    <div class="gpu-card">
+                        <div class="gpu-name">CPU</div>
+                        <div class="gpu-badge">All Systems</div>
+                        <p class="gpu-description">Universal fallback that works on any hardware. Slower than GPU options but requires no special setup.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="help" class="section">
+            <h2 class="section-title"><span class="glass-pill">Need Help?</span></h2>
+            <p class="section-subtitle">Running into issues or have a question?</p>
+            <div class="help-card">
+                <div class="help-content">
+                    <i class="fa-solid fa-circle-question help-icon"></i>
+                    <p class="help-text">If you run into problems, encounter bugs, or want to request a feature (pull requests welcome), please create an issue on the GitHub repository. Check existing issues first to avoid duplicates.</p>
+                    <a href="https://github.com/Mark-Shun/scene-scout/issues" class="help-link" target="_blank">
+                        <i class="fa-brands fa-github"></i>
+                        Open an Issue on GitHub
+                    </a>
                 </div>
             </div>
         </section>
