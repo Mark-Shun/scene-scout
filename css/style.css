@@ -368,7 +368,11 @@ body::before {
 /* Section Styles */
 .section {
   padding: 4.5rem 3rem;
+}
+
+.section-content {
   max-width: 1050px;
+  margin: 0 auto;
 }
 
 .section-title {
@@ -468,6 +472,8 @@ body::before {
 .feature-card:nth-child(4)::after { background: var(--gradient-sunset); }
 .feature-card:nth-child(5)::after { background: var(--gradient-aurora); }
 .feature-card:nth-child(6)::after { background: var(--gradient-dusk); }
+.feature-card:nth-child(7)::after { background: var(--gradient-warm); }
+.feature-card:nth-child(8)::after { background: var(--gradient-cool); }
 
 .feature-card:hover {
   transform: translateY(-3px);
@@ -512,6 +518,8 @@ body::before {
 .feature-card:nth-child(4) .feature-icon { background: var(--gradient-sunset); color: white; }
 .feature-card:nth-child(5) .feature-icon { background: var(--gradient-aurora); color: white; }
 .feature-card:nth-child(6) .feature-icon { background: var(--gradient-dusk); color: white; }
+.feature-card:nth-child(7) .feature-icon { background: var(--gradient-warm); color: white; }
+.feature-card:nth-child(8) .feature-icon { background: var(--gradient-cool); color: white; }
 
 .feature-title {
   font-size: 1.05rem;
@@ -526,12 +534,7 @@ body::before {
   line-height: 1.6;
 }
 
-/* Screenshots Section */
-.screenshots {
-  padding: 4.5rem 3rem;
-  max-width: 1050px;
-}
-
+/* Screenshots Grid */
 .screenshot-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -1007,12 +1010,7 @@ body::before {
   transform: translateY(-1px);
 }
 
-/* Author Section */
-.author-section {
-  padding: 4.5rem 3rem;
-  max-width: 1050px;
-}
-
+/* Author Info */
 .author-info {
   background: var(--bg-card);
   backdrop-filter: var(--glass-blur);
@@ -1141,9 +1139,7 @@ body::before {
     font-size: 1rem;
   }
 
-  .section,
-  .screenshots,
-  .author-section {
+  .section {
     padding: 3rem 1.5rem;
   }
 
