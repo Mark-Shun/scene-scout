@@ -4,6 +4,7 @@ import sys
 import cmd
 import shlex
 import json
+import base64
 
 import config
 from database import init_db, cleanup_orphaned_entries, search_scenes, db_is_empty
@@ -18,7 +19,7 @@ def format_time(ms):
         return f"{hours}:{mins:02d}:{secs:02d}.{msr:03d}"
     return f'{mins}:{secs:02d}.{msr:03d}'
 
-def display_results(results, as_json=False):
+def display_results(results, as_json=False, include_thumbs=False):
     """Prints search results to the terminal in text or JSON format."""
     if not results:
         if as_json:
@@ -28,21 +29,27 @@ def display_results(results, as_json=False):
         return
 
     if as_json:
-        # Build a structured dictionary for JSON serialization
         json_data = []
         for path, scene_idx, start_time, end_time, thumb, score in results:
-            json_data.append({
+            entry = {
                 "filepath": path,
                 "filename": os.path.basename(path),
                 "scene_index": scene_idx + 1 if scene_idx is not None else None,
                 "start_time_ms": start_time,
                 "end_time_ms": end_time,
                 "score": round(score, 4)
-            })
-        # Print valid JSON to standard output
+            }
+            
+            # Encode thumbnail to Base64 if requested and data exists
+            if include_thumbs and thumb:
+                entry["thumbnail_b64"] = base64.b64encode(thumb).decode('utf-8')
+            
+            json_data.append(entry)
+            
         print(json.dumps(json_data, indent=2))
         return
 
+    # Fallback to standard text output
     print(f'\n--- Top {len(results)} Scene Results ---')
     for i, (path, scene_idx, start_time, end_time, thumb, score) in enumerate(results, 1):
         time_str = format_time(start_time)
@@ -61,9 +68,11 @@ def run_search(text, image, device, proc, model, args):
     if query_embedding is not None:
         results = search_scenes(query_embedding, args.db, top_k=args.top_k)
         
-        # Check if json flag exists and is True
+        # Pull flags from args
         use_json = getattr(args, 'json', False)
-        display_results(results, as_json=use_json)
+        include_thumbs = getattr(args, 'include_thumbs', False)
+        
+        display_results(results, as_json=use_json, include_thumbs=include_thumbs)
     else:
         print("Error: Could not generate query embedding.")
 
@@ -192,10 +201,11 @@ class SceneScoutShell(cmd.Cmd):
 def cli_mode():
     parser = argparse.ArgumentParser(description='Scene Scout CLI')
     parser.add_argument('--interactive', action='store_true', help='Enter interactive REPL mode')
+    parser.add_argument('--json', action='store_true', help='Output search results in JSON format')
+    parser.add_argument('--include-thumbs', action='store_true', help='Include base64 thumbnails in JSON output')
     parser.add_argument('--index', type=str, help='Path to folder to index')
     parser.add_argument('--search-text', type=str, help='Text to search for')
     parser.add_argument('--search-image', type=str, help='Image path to search with')
-    parser.add_argument('--json', action='store_true', help='Output search results in JSON format')
     parser.add_argument('--top-k', type=int, default=10, help='Results to return')
     parser.add_argument('--db', type=str, default='siglip2_embeddings.db', help='DB path')
     parser.add_argument('--device', type=str, choices=['cuda', 'cpu', 'dml', 'xpu', 'mps'], help='Force device')
