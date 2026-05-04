@@ -177,15 +177,18 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 
 #### CLI Options
 
-- `--interactive`: Use interactive REPL mode
-- `--json`: Output search results as JSON
+- `--interactive`: Enter interactive REPL mode
+- `--json`: Output search results in JSON format
+- `--include-thumbs`: Include base64 thumbnails in JSON output
 - `--index PATH`: Folder to index
 - `--search-text TEXT`: Text query
 - `--search-image PATH`: Image query path
-- `--top-k N`: Number of results (default: 10)
+- `--top-k N`: Number of results to return (default: 10)
 - `--db PATH`: Database file path (default: siglip2_embeddings.db)
-- `--device {cuda,cpu,dml}`: Force specific device
+- `--device {cuda,cpu,dml,xpu,mps}`: Force specific device
 - `--max-patches N`: Max patches for model (default: 256)
+- `--batch-size N`: Inference batch size (default: 16)
+- `--accurate`: Use accurate scene detection instead of fast detection
 - `--cleanup`: Remove orphaned embeddings
 
 
