@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-5-04
+
+### Fixed
+- **CLI** - CLI mode was not using the new database format with newly added thumbnails
+
+### Added
+- **Silent Mode (`--silent`)**: Suppresses all non-essential output including progress bars, making CLI output clean for automation and scripting
+- **Byte64 thumbnail**: Added ability for to return thumbnail data in Byte64 format
+- **JSON File Output (`--output FILE`)**: Write JSON results directly to a file instead of stdout, preventing log/output mixing
+- **Stdin Piping**: Use `--search-text -` to pipe queries from stdin (e.g., `echo "query" | python scenescout.py --search-text - --json`)
+- **Interactive Shell Aliases**: Shortcut commands (`s` for search, `i` for index, `cl` for cleanup, `ls` for status, `h` for help, `q` for exit)
+- **Tab Completion**: Press Tab in interactive mode to autocomplete variable names when using `set`
+- **Command History**: Persistent Up Arrow command history across sessions (stored in `~/.scene_scout_history`)
+- **Variables Command (`vars`)**: Lists all editable interactive shell variables with their current values
+- **Standardized Exit Codes**: Return codes for pipeline integration (`0` success, `1` model error, `2` database error, `3` invalid input)
+- **Path Expansion**: Tilde (`~`) and home directory paths are automatically expanded in index and load_db commands
+- **Added tooltips**: Explenations for different buttons and fields in the GUI when hovering over them
+
+### Changed
+- **Silent Mode in Processing**: All tqdm progress bars and PySceneDetect output are now suppressible via `--silent` flag
+
 ## Post-fork [1.0.0] - 2026-5-04
 
 ### Added

@@ -181,7 +181,7 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 - `--json`: Output search results in JSON format
 - `--include-thumbs`: Include base64 thumbnails in JSON output
 - `--index PATH`: Folder to index
-- `--search-text TEXT`: Text query
+- `--search-text TEXT`: Text query (use `-` to read from stdin for piping)
 - `--search-image PATH`: Image query path
 - `--top-k N`: Number of results to return (default: 10)
 - `--db PATH`: Database file path (default: siglip2_embeddings.db)
@@ -190,6 +190,8 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 - `--batch-size N`: Inference batch size (default: 16)
 - `--accurate`: Use accurate scene detection instead of fast detection
 - `--cleanup`: Remove orphaned embeddings
+- `--silent`: Suppress all non-essential output including progress bars (ideal for automation)
+- `--output FILE`: Write JSON output to file instead of stdout
 
 
 ## Video Support
