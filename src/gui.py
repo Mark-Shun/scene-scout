@@ -257,6 +257,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.folder_var = tk.StringVar(master=self)
         self.folder_entry = ttk.Entry(folder_frame, textvariable=self.folder_var)
         self.folder_entry.pack(fill='x', pady=2)
+        ToolTip(self.folder_entry, 'Enter or paste the folder path to index media from.')
         folder_button = ttk.Button(folder_frame, text='Select Folder', command=self.browse_folder)
         folder_button.pack(fill='x')
         ToolTip(folder_button, 'Choose a folder containing video and image files to index.')
@@ -271,6 +272,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.query_text_var = tk.StringVar(master=self)
         self.query_text_entry = ttk.Entry(query_frame, textvariable=self.query_text_var)
         self.query_text_entry.pack(fill='x', pady=(0, 5))
+        ToolTip(self.query_text_entry, 'Enter natural language text to search for matching scenes.')
         self.query_text_entry.bind('<Return>', lambda e: self.threaded_search())
         
         self.query_image_var = tk.StringVar(master=self, value='No query image')
@@ -340,31 +342,41 @@ class SceneScoutApp(TkinterDnD.Tk):
         ttk.Label(options_frame, text='Detection method:').pack(anchor='w', pady=(5, 0))
         detect_method_frame = ttk.Frame(options_frame)
         detect_method_frame.pack(fill='x', pady=5)
-        ttk.Radiobutton(detect_method_frame, text='Fast', variable=self.fast_detect_var, 
+        self.fast_radio = ttk.Radiobutton(detect_method_frame, text='Fast', variable=self.fast_detect_var, 
                 value=True, style='Toolbutton',
-                command=lambda: self.save_config_key('fast_detect', True)).pack(side='left', expand=True, fill='x', padx=(0, 2))
+                command=lambda: self.save_config_key('fast_detect', True))
+        self.fast_radio.pack(side='left', expand=True, fill='x', padx=(0, 2))
+        ToolTip(self.fast_radio, 'Fast: Use video metadata to extract scenes.')
 
-        ttk.Radiobutton(detect_method_frame, text='Accurate', variable=self.fast_detect_var, 
+        self.accurate_radio = ttk.Radiobutton(detect_method_frame, text='Accurate', variable=self.fast_detect_var, 
                         value=False, style='Toolbutton',
-                        command=lambda: self.save_config_key('fast_detect', False)).pack(side='left', expand=True, fill='x', padx=(2, 0))
+                        command=lambda: self.save_config_key('fast_detect', False))
+        self.accurate_radio.pack(side='left', expand=True, fill='x', padx=(2, 0))
+        ToolTip(self.accurate_radio, 'Accurate: Process video to detect scenes.')
 
         # Max Patches
         ttk.Label(options_frame, text='Max patches:').pack(anchor='w', pady=(5, 0))
-        ttk.Spinbox(options_frame, from_=128, to=1024, increment=128, 
+        max_patches_spinbox = ttk.Spinbox(options_frame, from_=128, to=1024, increment=128, 
                     textvariable=self.max_patches_var,
-                    command=lambda: self.save_config_key('max_patches', self.max_patches_var.get())).pack(fill='x')
+                    command=lambda: self.save_config_key('max_patches', self.max_patches_var.get()))
+        max_patches_spinbox.pack(fill='x')
+        ToolTip(max_patches_spinbox, 'Number of patches to evaluate per scene; higher values may improve accuracy but increase runtime.')
 
         # Results (top_k)
         ttk.Label(options_frame, text='Results:').pack(anchor='w', pady=(5, 0))
-        ttk.Spinbox(options_frame, from_=1, to=100, 
+        top_k_spinbox = ttk.Spinbox(options_frame, from_=1, to=100, 
                     textvariable=self.top_k_var,
-                    command=lambda: self.save_config_key('top_k', self.top_k_var.get())).pack(fill='x')
+                    command=lambda: self.save_config_key('top_k', self.top_k_var.get()))
+        top_k_spinbox.pack(fill='x')
+        ToolTip(top_k_spinbox, 'How many matching scenes to return for each search.')
 
         # Batch Size
         ttk.Label(options_frame, text='Scene embed batch size:').pack(anchor='w', pady=(5, 0))
-        ttk.Spinbox(options_frame, from_=8, to=160, 
+        batch_size_spinbox = ttk.Spinbox(options_frame, from_=8, to=160, 
                     textvariable=self.input_batch_size,
-                    command=lambda: self.save_config_key('batch_size', self.input_batch_size.get())).pack(fill='x')
+                    command=lambda: self.save_config_key('batch_size', self.input_batch_size.get()))
+        batch_size_spinbox.pack(fill='x')
+        ToolTip(batch_size_spinbox, 'Number of images processed at once when computing scene embeddings.')
 
         # VLC Open Preference
         self.vlc_open_check = ttk.Checkbutton(
