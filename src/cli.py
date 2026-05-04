@@ -30,7 +30,7 @@ def display_results(results, as_json=False):
     if as_json:
         # Build a structured dictionary for JSON serialization
         json_data = []
-        for path, scene_idx, start_time, end_time, score in results:
+        for path, scene_idx, start_time, end_time, thumb, score in results:
             json_data.append({
                 "filepath": path,
                 "filename": os.path.basename(path),
@@ -43,9 +43,8 @@ def display_results(results, as_json=False):
         print(json.dumps(json_data, indent=2))
         return
 
-    # Fallback to standard text output
     print(f'\n--- Top {len(results)} Scene Results ---')
-    for i, (path, scene_idx, start_time, end_time, score) in enumerate(results, 1):
+    for i, (path, scene_idx, start_time, end_time, thumb, score) in enumerate(results, 1):
         time_str = format_time(start_time)
         if end_time is not None:
             time_str = f'{time_str}-{format_time(end_time)}'
