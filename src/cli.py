@@ -30,6 +30,7 @@ COMMAND_ALIASES = {
     'ls': 'status',
     'h': 'help',
     'q': 'exit',
+    'qu': 'queue'
 }
 
 # --- Helper Functions ---
@@ -294,6 +295,44 @@ class SceneScoutShell(cmd.Cmd):
         s_text = None if s_image else arg
         run_search(s_text, s_image, self.device, self.processor, self.model, self.state)
 
+    def do_queue(self, arg):
+            """Manage the index queue. Usage: queue [ls | rm <id> | clear]"""
+            args = shlex.split(arg)
+            init_db(self.state.db)
+            from database import get_queue, remove_from_queue, clear_queue
+            
+            cmd_action = args[0] if args else 'ls'
+            
+            if cmd_action == 'ls':
+                items = get_queue(self.state.db)
+                if not items:
+                    print("Queue is empty.")
+                    return
+                print("\n--- Current Queue ---")
+                for qid, path, is_dir, rec in items:
+                    item_type = "Folder" if is_dir else "File"
+                    rec_text = " (Recursive)" if is_dir and rec else ""
+                    print(f"[{qid}] {item_type}: {path}{rec_text}")
+                print("---------------------")
+                
+            elif cmd_action == 'rm':
+                if len(args) < 2:
+                    print("Please specify an ID to remove. (e.g., queue rm 3)")
+                    return
+                try:
+                    qid = int(args[1])
+                    remove_from_queue(self.state.db, qid)
+                    print(f"Removed item [{qid}] from the queue.")
+                except ValueError:
+                    print("Invalid ID. Please provide a numeric ID.")
+                    
+            elif cmd_action == 'clear':
+                clear_queue(self.state.db)
+                print("Queue cleared.")
+                
+            else:
+                print("Unknown queue command. Use 'ls', 'rm <id>', or 'clear'.")
+
     def do_index(self, arg):
         """Index paths. Usage: index <path1> [path2] [path3]..."""
         if not arg:
@@ -360,6 +399,9 @@ def cli_mode():
     parser.add_argument('--json', action='store_true', help='Output search results in JSON format')
     parser.add_argument('--include-thumbs', action='store_true', help='Include base64 thumbnails in JSON output')
     parser.add_argument('--output', type=str, help='Write JSON output to file instead of stdout')
+    parser.add_argument('--show-queue', action='store_true', help='Show the current index queue')
+    parser.add_argument('--remove-queue', type=int, action='append', help='Remove an item from the queue by ID (can be used multiple times)')
+    parser.add_argument('--clear-queue', action='store_true', help='Clear the entire index queue')
     parser.add_argument('--index', type=str, action='append', help='Path to folder or file to index (can be specified multiple times)')
     parser.add_argument('--search-text', type=str, help='Text to search for (use "-" for stdin)')
     parser.add_argument('--search-image', type=str, help='Image path to search with')
@@ -387,7 +429,6 @@ def cli_mode():
         sys.exit(EXIT_SUCCESS)
         return
 
-    # One-shot operations remain identical for backward compatibility
     try:
         init_db(args.db)
     except Exception as e:
@@ -404,10 +445,10 @@ def cli_mode():
             if not args.silent:
                 print(f'Database cleanup error: {e}', file=sys.stderr)
             sys.exit(EXIT_DB_ERROR)
-        if not (args.index or args.search_text or args.search_image):
+        if not (args.index or args.search_text or args.search_image or args.show_queue or args.remove_queue or args.clear_queue):
             sys.exit(EXIT_SUCCESS)
 
-    if not (args.index or args.search_text or args.search_image):
+    if not (args.index or args.search_text or args.search_image or args.show_queue or args.remove_queue or args.clear_queue):
         if not args.silent:
             print('No action specified. Use --help for options.')
         sys.exit(EXIT_INVALID_INPUT)
@@ -424,6 +465,33 @@ def cli_mode():
         if not args.silent:
             print(f'Model error: {e}', file=sys.stderr)
         sys.exit(EXIT_MODEL_ERROR)
+        
+    if args.clear_queue:
+        from database import clear_queue
+        clear_queue(args.db)
+        if not args.silent:
+            print("Queue cleared.")
+            
+    if args.remove_queue:
+        from database import remove_from_queue
+        for qid in args.remove_queue:
+            remove_from_queue(args.db, qid)
+            if not args.silent:
+                print(f"Removed ID [{qid}] from queue.")
+
+    if args.show_queue:
+        from database import get_queue
+        items = get_queue(args.db)
+        if not args.silent:
+            if not items:
+                print("Queue is empty.")
+            else:
+                print("\n--- Current Queue ---")
+                for qid, path, is_dir, rec in items:
+                    item_type = "Folder" if is_dir else "File"
+                    rec_text = " (Recursive)" if is_dir and rec else ""
+                    print(f"[{qid}] {item_type}: {path}{rec_text}")
+                print("---------------------")
 
     if args.index:
         from processing import index_files
