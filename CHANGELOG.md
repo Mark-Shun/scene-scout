@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [1.1.0] - 2026-05-05
 
+### Main highlights
+- **File handling and queue system**: It is now possible to parse multiple files, folders and index them all at once. There is also a GUI list component in which details about these files can be found and options changed.
+- **Enhanced update checker**: More data is now being retrieved from Github when there is a new release. And the update details are now shown on the GUI.
+
 ### Added
 - **Media Queue System**: Replace single-folder indexing with a queue-based system supporting multiple files and folders
 - **Queue Manager Popup**: Inspect, modify, and manage queued items with a Treeview list view
@@ -14,12 +18,20 @@ All notable changes to this project will be documented in this file.
 - **REPL Multi-path Indexing**: Interactive shell `index` command now supports multiple space-separated paths
 - **Queue Persistence**: Index queue is stored per-database in SQLite and persists across sessions
 - **Automatic Migration**: Old `folder_path` config values are automatically migrated to the queue on first load
+- **Rich Update Notifications**: GUI now displays a formatted popup window with release notes when a new version is detected.
+- **Markdown Release Notes**: Integrated a custom parser to render GitHub release notes with headers, bold text, and bullet points.
+- **CLI Update Command**: Added a dedicated `update` (alias `u`) command to the interactive shell to view full patch notes on demand.
 
 ### Changed
 - **Database Schema v2**: Added `index_queue` table for tracking files/directories to process
 - **Processing Logic**: Refactored `index_files()` to use queue-based file flattening with deduplication
 - **GUI Layout**: Replaced "Folder to process" section with "Media Queue" section
 - **Config**: Removed `folder_path` from default configuration (queue is now stored in SQLite)
+- **Automatic Payload Cleaning**: Release notes are now pre-processed to strip raw HTML image tags and markdown graphics for a cleaner interface.
+- **Improved GUI Modality**: Isolated scrolling behavior so the main application background remains stationary while the update dialog is active.
+
+### Fixed
+- **Markdown Link Parsing**: URLs are now hidden in the GUI, displaying only the relevant text labels for better readability.
 
 ## [1.0.1] - 2026-5-04
 

@@ -30,7 +30,8 @@ COMMAND_ALIASES = {
     'ls': 'status',
     'h': 'help',
     'q': 'exit',
-    'qu': 'queue'
+    'qu': 'queue',
+    'u': 'update'
 }
 
 # --- Helper Functions ---
@@ -130,11 +131,14 @@ class SceneScoutShell(cmd.Cmd):
     prompt = 'Scene Scout> '
 
     # Known variables for tab completion
-    _settable_vars = ['db', 'json', 'include_thumbs', 'top_k', 'device', 'max_patches', 'batch_size', 'accurate', 'silent', 'output']
+    _settable_vars = ['json', 'include_thumbs', 'top_k', 'device', 'max_patches', 'batch_size', 'accurate', 'silent', 'output']
 
-    def __init__(self, initial_args):
+    def __init__(self, initial_args, update_info=None):
         super().__init__()
         self.state = initial_args
+        self.active_databases = list(getattr(initial_args, 'active_databases', []))
+        self.target_db = getattr(initial_args, 'target_db', None)
+        self.update_info = update_info # Store the update info
         self.model = None
         self.processor = None
         self.device = None
@@ -376,6 +380,19 @@ class SceneScoutShell(cmd.Cmd):
         count = cleanup_orphaned_entries(self.state.db)
         if not getattr(self.state, 'silent', False):
             print(f'Removed {count} orphaned embeddings.')
+    
+    def do_update(self, arg):
+        """View details about the latest available software update."""
+        if not self.update_info or not self.update_info.get("update_available"):
+            print("No updates available. You are on the latest version.")
+            return
+        
+        print(f"\n--- Update Available: v{self.update_info['latest_version']} ---")
+        print(f"Current version: v{self.update_info['current_version']}")
+        print(f"Download link: {self.update_info['url']}\n")
+        print("Release Notes:")
+        print(self.update_info['notes'])
+        print("-----------------------------------\n")
 
     def do_exit(self, arg):
         """Exit the shell."""
@@ -393,7 +410,7 @@ EXIT_MODEL_ERROR = 1
 EXIT_DB_ERROR = 2
 EXIT_INVALID_INPUT = 3
 
-def cli_mode():
+def cli_mode(update_info=None):
     parser = argparse.ArgumentParser(description='Scene Scout CLI')
     parser.add_argument('--interactive', action='store_true', help='Enter interactive REPL mode')
     parser.add_argument('--json', action='store_true', help='Output search results in JSON format')
@@ -425,7 +442,7 @@ def cli_mode():
             sys.exit(EXIT_INVALID_INPUT)
 
     if args.interactive:
-        SceneScoutShell(args).cmdloop()
+        SceneScoutShell(args, update_info).cmdloop()
         sys.exit(EXIT_SUCCESS)
         return
 

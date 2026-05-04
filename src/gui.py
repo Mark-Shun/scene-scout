@@ -227,7 +227,9 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.canvas.itemconfig(window_id, width=event.width)
 
         def _on_mousewheel(event):
-            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+            # Prevent scrolling if the event originates from a popup window
+            if hasattr(event.widget, 'winfo_toplevel') and event.widget.winfo_toplevel() == self:
+                self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         # Use Enter/Leave to prevent this from highjacking the whole app
         self.canvas.bind('<Enter>', lambda e: self.canvas.bind_all("<MouseWheel>", _on_mousewheel))
@@ -531,7 +533,9 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         def _on_thumb_mousewheel(event):
             # Scrolls horizontally since the thumbnail bar is horizontal
-            self.thumb_canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+            # Prevent scrolling if the event originates from a popup window
+            if hasattr(event.widget, 'winfo_toplevel') and event.widget.winfo_toplevel() == self:
+                self.thumb_canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
 
         self.thumb_canvas.bind('<Enter>', lambda e: self.thumb_canvas.bind_all("<MouseWheel>", _on_thumb_mousewheel))
         self.thumb_canvas.bind('<Leave>', lambda e: self.thumb_canvas.unbind_all("<MouseWheel>"))

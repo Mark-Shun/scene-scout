@@ -35,8 +35,10 @@ DEFAULT_CONFIG = {
     "batch_size": 16,
     "fast_detect": True,
     "max_patches": 256,
-    "db_path": "",
-    "github_token": ""
+    "active_databases": [],
+    "primary_database": "",
+    "github_token": "",
+    "show_update_details": False
 }
 
 def load_config() -> Dict[str, Any]:
