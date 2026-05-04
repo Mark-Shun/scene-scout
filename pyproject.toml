@@ -1,6 +1,6 @@
 [project]
 name = "scenescout"
-version = "1.0.1"
+version = "1.0.2"
 description = "A tool to search for specific scenes through keywords."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,14 +21,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cpu   = ["torch==2.11.0"]
-cu126 = ["torch==2.11.0"]
-cu126-trt = ["torch==2.11.0", "torch-tensorrt ; sys_platform != 'darwin'"]
-cu130 = ["torch==2.11.0"]
-cu130-trt = ["torch==2.11.0", "torch-tensorrt ; sys_platform != 'darwin'"]
-dml   = ["torch==2.4.1", "torch-directml ; sys_platform == 'win32'"]
-rocm  = ["torch==2.11.0", "triton-rocm==3.6.0 ; sys_platform == 'linux'"]
-xpu   = ["torch==2.11.0", "triton-xpu==3.7.0 ; sys_platform != 'darwin'"]
+cpu       = ["torch==2.11.0"]
+cu126     = ["torch==2.11.0 ; sys_platform != 'darwin'"]
+cu126-trt = ["torch==2.11.0 ; sys_platform != 'darwin'", "torch-tensorrt ; sys_platform != 'darwin'"]
+cu130     = ["torch==2.11.0 ; sys_platform != 'darwin'"]
+cu130-trt = ["torch==2.11.0 ; sys_platform != 'darwin'", "torch-tensorrt ; sys_platform != 'darwin'"]
+rocm      = ["torch==2.11.0 ; sys_platform != 'darwin'", "triton-rocm==3.6.0 ; sys_platform == 'linux'"]
+xpu       = ["torch==2.11.0 ; sys_platform != 'darwin'", "triton-xpu==3.7.0 ; sys_platform != 'darwin'"]
+dml       = ["torch==2.4.1", "torch-directml ; sys_platform == 'win32'"]
 
 [tool.uv]
 environments = [
@@ -52,10 +52,10 @@ conflicts = [
 
 [tool.uv.sources]
 torch = [
-  { index = "pytorch-cu126", extra = "cu126" },
-  { index = "pytorch-cu126", extra = "cu126-trt" },
-  { index = "pytorch-cu130", extra = "cu130" },
-  { index = "pytorch-cu130", extra = "cu130-trt" },
+  { index = "pytorch-cu126", extra = "cu126", marker = "sys_platform != 'darwin'" },
+  { index = "pytorch-cu126", extra = "cu126-trt", marker = "sys_platform != 'darwin'" },
+  { index = "pytorch-cu130", extra = "cu130", marker = "sys_platform != 'darwin'" },
+  { index = "pytorch-cu130", extra = "cu130-trt", marker = "sys_platform != 'darwin'" },
   { index = "pytorch-rocm",  extra = "rocm", marker = "sys_platform == 'linux'" },
   { index = "pytorch-xpu",   extra = "xpu", marker = "sys_platform != 'darwin'" },
   { index = "pytorch-cpu",   extra = "cpu" },
