@@ -53,10 +53,12 @@ def _run_batch_inference(frames, info, model, processor, device, cursor, path, g
         if pbar:
             pbar.update(len(info))
     except Exception as e:
-        tqdm.write(f"Inference Error: {e}")
+        if pbar is None or not getattr(pbar, 'disable', False):
+            tqdm.write(f"Inference Error: {e}")
 
-def fast_process_and_embed(video_path, model, processor, device, cursor, generate_thumbnails, batch_size=16, cancel_event=None):
-    tqdm.write(f"Fast processing: {os.path.basename(video_path)}")
+def fast_process_and_embed(video_path, model, processor, device, cursor, generate_thumbnails, batch_size=16, cancel_event=None, silent=False):
+    if not silent:
+        tqdm.write(f"Fast processing: {os.path.basename(video_path)}")
     
     try:
         # Use options to ignore errors in the container header
@@ -76,7 +78,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, generat
         safe_margin_ms = int((1000 / fps) * 2)
 
         pbar = tqdm(total=total_duration_ms / 60000, position=1, unit='min', unit_scale=True, 
-                    desc=f'Progress video')
+                    desc=f'Progress video', disable=silent)
         
         batch_frames = []
         batch_info = []
@@ -132,21 +134,23 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, generat
         return True
 
     except Exception as e:
-        tqdm.write(f"Fatal error: {e}")
+        if not silent:
+            tqdm.write(f"Fatal error: {e}")
         return False
 
-def accurate_process_and_embed(video_path, model, processor, device, cursor, generate_thumbnails, batch_size=16, cancel_event=None,):
+def accurate_process_and_embed(video_path, model, processor, device, cursor, generate_thumbnails, batch_size=16, cancel_event=None, silent=False):
     """
     Two-pass accurate detection:
     1. PySceneDetect finds precise cut points (slower, looks at every frame).
     2. PyAV streams and extracts those specific frames for embedding.
     """
-    tqdm.write(f"Accurate processing: {os.path.basename(video_path)}")
+    if not silent:
+        tqdm.write(f"Accurate processing: {os.path.basename(video_path)}")
     
     # --- STAGE 1: Accurate Scene Detection ---
     # Threshold 27.0 is usually standard for 'ContentDetector'
     detector = AdaptiveDetector(adaptive_threshold=3.0)
-    scene_list = detect(video_path, detector, show_progress=True)
+    scene_list = detect(video_path, detector, show_progress=not silent)
     
     if not scene_list:
         return False
@@ -164,7 +168,7 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, gen
         scene_map[s_ms] = (i, e_ms)    
     target_start_times = sorted(scene_map.keys())
 
-    pbar = tqdm(total=len(scene_list), position=1, desc=f'Scenes processed:')
+    pbar = tqdm(total=len(scene_list), position=1, desc=f'Scenes processed:', disable=silent)
 
     # --- STAGE 2: Efficient Extraction & Embedding ---
     container = av.open(video_path)
@@ -214,7 +218,7 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, gen
 
     return True
 
-def index_files(folder_path: str, device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, toggle_preview_callback: Optional[Callable]=None, cancel_event: Optional[threading.Event] = None) -> str:
+def index_files(folder_path: str, device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, toggle_preview_callback: Optional[Callable]=None, cancel_event: Optional[threading.Event] = None, silent: bool=False) -> str:
     """
     Index files in the given folder. Returns 'completed', 'cancelled', or 'error'.
     """
@@ -234,7 +238,7 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
     paths_to_process = []
     if progress_callback:
         progress_callback(f'Checking {len(all_files)} files...')
-    for path_obj in tqdm(all_files, desc='Checking file modification times'):
+    for path_obj in tqdm(all_files, desc='Checking file modification times', disable=silent):
         path = str(path_obj)
         try:
             last_modified = os.path.getmtime(path)
@@ -266,7 +270,7 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
         if config.SCENE_PLAYBACK and progress_callback is not None and toggle_preview_callback is not None:
             toggle_preview_callback()
     if images_to_process:
-        for i in tqdm(range(0, len(images_to_process), batch_size), desc='Processing image batches'):
+        for i in tqdm(range(0, len(images_to_process), batch_size), desc='Processing image batches', disable=silent):
             batch_paths = images_to_process[i:i + batch_size]
             batch_images, valid_paths, mtimes = ([], [], [])
             for path in batch_paths:
@@ -283,7 +287,8 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
                     valid_paths.append(path)
                     mtimes.append(os.path.getmtime(path))
                 except Exception as e:
-                    print(f'Error loading image {path}: {e}')
+                    if not silent:
+                        print(f'Error loading image {path}: {e}')
             if not batch_images:
                 continue
             try:
@@ -299,15 +304,17 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
                 if progress_callback:
                     progress_callback(f'Indexing: {processed_count}/{total_to_process}')
             except Exception as e:
-                print(f'Error processing image batch: {e}')
+                if not silent:
+                    print(f'Error processing image batch: {e}')
             conn.commit()
             if is_cancelled():
                 conn.close()
                 return 'cancelled'
     if videos_to_process:
-        print("Starting to index videos, this can take a little while...")
+        if not silent:
+            print("Starting to index videos, this can take a little while...")
         # outer progress bar for videos
-        for path in tqdm(videos_to_process, desc='Total videos', position=0):
+        for path in tqdm(videos_to_process, desc='Total videos', position=0, disable=silent):
             if is_cancelled():
                 conn.close()
                 return 'cancelled'
@@ -321,9 +328,9 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
                 cursor.execute('DELETE FROM scene_embeddings WHERE filepath = ?', (path,))
                 video_processed = False
                 if fast_scene_detect:
-                    video_processed = fast_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails)
+                    video_processed = fast_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails, silent=silent)
                 else:
-                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails)
+                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails, silent=silent)
 
                 if not video_processed:
                     # Video processing was cancelled or failed
@@ -341,7 +348,8 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
                     pass
                 processed_count += 1
             except Exception as e:
-                print(f'Error processing video {path}: {e}')
+                if not silent:
+                    print(f'Error processing video {path}: {e}')
             conn.commit()
         conn.close()
     if progress_callback:
