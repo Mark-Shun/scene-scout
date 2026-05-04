@@ -35,7 +35,6 @@ DEFAULT_CONFIG = {
     "batch_size": 16,
     "fast_detect": True,
     "max_patches": 256,
-    "folder_path": "",
     "db_path": "",
     "github_token": ""
 }

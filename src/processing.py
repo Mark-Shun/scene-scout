@@ -17,7 +17,7 @@ from scenedetect.detectors import AdaptiveDetector
 from tqdm import tqdm
 
 import config
-from database import cleanup_orphaned_entries
+from database import cleanup_orphaned_entries, get_queue
 from utils import normalize_embedding
 
 
@@ -218,9 +218,36 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, gen
 
     return True
 
-def index_files(folder_path: str, device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, toggle_preview_callback: Optional[Callable]=None, cancel_event: Optional[threading.Event] = None, silent: bool=False) -> str:
+def _get_files_from_queue(db_path: str, image_exts: tuple, video_exts: tuple) -> list:
+    """Flatten index_queue into a 1D list of absolute file paths, respecting recursive flags.
+    Uses a set for deduplication. Returns list of path strings.
     """
-    Index files in the given folder. Returns 'completed', 'cancelled', or 'error'.
+    from database import get_queue
+    queue_items = get_queue(db_path)
+    all_files = set()
+    for item_id, path, is_directory, recursive in queue_items:
+        p = Path(path).resolve()
+        if not p.exists():
+            continue
+        if not is_directory and p.suffix.lower() in image_exts + video_exts:
+            all_files.add(p)
+        elif is_directory:
+            try:
+                for ext in image_exts + video_exts:
+                    if recursive:
+                        all_files.update(p.rglob(f'*{ext}'))
+                    else:
+                        all_files.update(f for f in p.iterdir()
+                                        if f.is_file() and f.suffix.lower() in (image_exts + video_exts))
+            except PermissionError:
+                continue
+    return [str(f) for f in all_files]
+
+
+def index_files(device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, toggle_preview_callback: Optional[Callable]=None, cancel_event: Optional[threading.Event] = None, silent: bool=False) -> str:
+    """
+    Index files from the index_queue stored in db_path.
+    Returns 'completed', 'cancelled', or 'error'.
     """
     def is_cancelled():
         return cancel_event is not None and cancel_event.is_set()
@@ -230,15 +257,19 @@ def index_files(folder_path: str, device: torch.device, processor, model, db_pat
     cleanup_orphaned_entries(db_path, progress_callback)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    all_files = []
-    for ext in config.IMAGE_EXTENSIONS:
-        all_files.extend(Path(folder_path).rglob(f'*{ext}'))
-    for ext in config.VIDEO_EXTENSIONS:
-        all_files.extend(Path(folder_path).rglob(f'*{ext}'))
+    
+    # Flatten the queue into a list of files to process
+    if progress_callback:
+        progress_callback('Reading queue...')
+    all_files = _get_files_from_queue(db_path, config.IMAGE_EXTENSIONS, config.VIDEO_EXTENSIONS)
+    
     paths_to_process = []
     if progress_callback:
         progress_callback(f'Checking {len(all_files)} files...')
     for path_obj in tqdm(all_files, desc='Checking file modification times', disable=silent):
+        if is_cancelled():
+            conn.close()
+            return 'cancelled'
         path = str(path_obj)
         try:
             last_modified = os.path.getmtime(path)

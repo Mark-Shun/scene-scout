@@ -87,7 +87,8 @@ When launching the tool through run script file (or a python environment with ap
 It will automatically download the vision model and launch the graphical user interface.
 
 The GUI provides:
-- Database and folder selection
+- Database selection and management
+- Media queue for indexing multiple files and folders
 - Model configuration (patches, video settings)
 - A video playback viewer to watch the scene
 - Result visualization with similarity scores
@@ -116,22 +117,32 @@ Example queries:
 
 **First Time Setup (Creating a new database):**
 
-1. Click **"Database->Create New..."** → Select the folder where you want to create the database
-2. Click **"Browse"** and select the directory with the files you want to index
-3. Click **"Process Media folder"** to process all files in the selected folder (this may take several time depending on dataset size, files size, selected resolution and hardware)
-4. Enter a search query in the "Text" field or click **"Load Query Image..."**
-5. Click  **"Enter or the Search Scene button"** to find matching scenes
+1. Click **"Database->Create New..."** → Select where you want to create the database
+2. Add files/folders to the queue using one of these methods:
+   - **Drag & Drop**: Drop files or folders onto the queue area
+   - **Add Folder(s)**: Browse and select directories to index recursively
+   - **Add File(s)**: Browse and select individual media files
+3. Click **"Inspect Queue..."** to review, remove items, or toggle recursive scanning
+4. Click **"Process Media"** to index all queued files (this may take time depending on dataset size and hardware)
+5. Enter a search query in the "Text" field or click **"Load Query Image..."**
+6. Click **"Search Scene"** to find matching scenes
 
 **Searching an existing database:**
 
-1. Click **"Database->Open existing"** → Select your `.db` file
+1. Click **"Database->Open Existing"** → Select your `.db` file
 2. Enter your search query (text, image, or both)
-3. Click  **"Enter or the Search Scene button"** to find matching scenes
+3. Click **"Search Scene"** to find matching scenes
 
-**Adding New Scenes to Existing Database:**
+**Adding New Files to Existing Database:**
 1. Load your existing database
-2. Browse to select the folder (can be the same or a different one)
-4. Click **"Process Media folder"** → only new/modified files will be processed
+2. Add new files/folders to the queue (drag-drop, buttons, or inspect queue)
+3. Click **"Process Media"** → only new/modified files will be processed
+
+**Media Queue Features:**
+- **Persistent queue**: Your queued items are saved with the database and persist between sessions
+- **Drag & Drop**: Drop files, folders, or even `.db` files directly onto the GUI
+- **Queue Manager**: Click "Inspect Queue..." to view all queued items, remove selected items, toggle recursive scanning, and clean up missing paths
+- **Per-folder recursive toggle**: Control whether each folder scans subdirectories independently
 
 #### GUI Features
 - **Visualized search results**: Get a list overview of the search results with the ability to watch the specific scene as a preview.
@@ -160,6 +171,11 @@ Index a folder:
 python src/scenescout.py --index /path/to/images --db my_database.db
 ```
 
+Index multiple paths:
+```bash
+python src/scenescout.py --index /path/to/videos --index /path/to/image_folder --index /path/to/single.mp4 --db my_database.db
+```
+
 Search by text:
 ```bash
 python src/scenescout.py --search-text "sunset over mountains" --db my_database.db --top-k 20
@@ -180,7 +196,7 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 - `--interactive`: Enter interactive REPL mode
 - `--json`: Output search results in JSON format
 - `--include-thumbs`: Include base64 thumbnails in JSON output
-- `--index PATH`: Folder to index
+- `--index PATH`: Path to folder or file to index (can be specified multiple times)
 - `--search-text TEXT`: Text query (use `-` to read from stdin for piping)
 - `--search-image PATH`: Image query path
 - `--top-k N`: Number of results to return (default: 10)

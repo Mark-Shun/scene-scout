@@ -1,6 +1,6 @@
 [project]
 name = "scenescout"
-version = "1.0.2"
+version = "1.1.0"
 description = "A tool to search for specific scenes through keywords."
 readme = "README.md"
 requires-python = ">=3.12"

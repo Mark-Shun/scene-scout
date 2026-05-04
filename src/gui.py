@@ -171,8 +171,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.input_batch_size = tk.IntVar(master=self, value=self.config['batch_size'])
         self.fast_detect_var = tk.BooleanVar(master=self, value=self.config['fast_detect'])
         self.max_patches_var = tk.IntVar(master=self, value=self.config['max_patches'])
+        self.queue_status_var = tk.StringVar(master=self, value='[0] items in queue')
 
-        # 6. Internal state setup
+        # 7. Internal state setup
         self.model = None
         self.processor = None
         self.db_path = None
@@ -184,7 +185,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.vlc_instance = vlc.Instance(*vlc_args)
         self.player = self.vlc_instance.media_player_new()
 
-        # 7. Run UI construction
+        # 8. Run UI construction
         self.setup_widgets()
 
         self.drop_target_register(DND_FILES)
@@ -251,19 +252,48 @@ class SceneScoutApp(TkinterDnD.Tk):
         create_db_button.pack(side='left', expand=True, fill='x', padx=(2, 0))
         ToolTip(create_db_button, 'Create a new database for indexing media files.')
 
-        # Folder Section
-        folder_frame = ttk.LabelFrame(self.scrollable_controls, text='Folder to process', padding=5)
-        folder_frame.pack(fill='x', pady=5)
-        self.folder_var = tk.StringVar(master=self)
-        self.folder_entry = ttk.Entry(folder_frame, textvariable=self.folder_var)
-        self.folder_entry.pack(fill='x', pady=2)
-        ToolTip(self.folder_entry, 'Enter or paste the folder path to index media from.')
-        folder_button = ttk.Button(folder_frame, text='Select Folder', command=self.browse_folder)
-        folder_button.pack(fill='x')
-        ToolTip(folder_button, 'Choose a folder containing video and image files to index.')
-        self.index_button = ttk.Button(folder_frame, text='Process Media In Folder', command=self.threaded_index, state='disabled')
+        # Media Queue Section
+        queue_frame = ttk.LabelFrame(self.scrollable_controls, text='Media Queue', padding=5)
+        queue_frame.pack(fill='x', pady=5)
+        
+        # Drag-and-Drop Area
+        self.drop_area = ttk.Frame(queue_frame, height=60, relief='solid', borderwidth=2)
+        self.drop_area.pack(fill='x', pady=(0, 5))
+        self.drop_area.pack_propagate(False)
+        drop_label = ttk.Label(self.drop_area, text='Drag & Drop files/folders here\nor click to browse', 
+                               anchor='center', justify='center')
+        drop_label.pack(expand=True, fill='both')
+        ToolTip(self.drop_area, 'Drag and drop files or folders here to add to the queue. Click to browse for files.')
+        
+        # Bind click and drop events to the drag-and-drop area
+        self.drop_area.bind('<Button-1>', lambda e: self.browse_files_dialog())
+        self.drop_area.drop_target_register(DND_FILES)
+        self.drop_area.dnd_bind('<<Drop>>', self.on_queue_drop)
+        
+        # Queue Status Label
+        ttk.Label(queue_frame, textvariable=self.queue_status_var, font=('', 9, 'bold')).pack(fill='x', pady=(0, 5))
+        
+        # Buttons Frame
+        btn_frame = ttk.Frame(queue_frame)
+        btn_frame.pack(fill='x', pady=2)
+        
+        add_folder_btn = ttk.Button(btn_frame, text='Add Folder(s)', command=self.add_folder_to_queue)
+        add_folder_btn.pack(side='left', expand=True, fill='x', padx=(0, 2))
+        ToolTip(add_folder_btn, 'Add a directory to the index queue. Recursive by default.')
+        
+        add_file_btn = ttk.Button(btn_frame, text='Add File(s)', command=self.add_files_to_queue)
+        add_file_btn.pack(side='left', expand=True, fill='x', padx=(2, 0))
+        ToolTip(add_file_btn, 'Add individual media files to the index queue.')
+        
+        # Inspect Queue Button
+        inspect_btn = ttk.Button(queue_frame, text='Inspect Queue...', command=self.open_queue_manager)
+        inspect_btn.pack(fill='x', pady=(5, 3))
+        ToolTip(inspect_btn, 'Open the queue manager to view, modify, or remove queued items.')
+        
+        # Process Button
+        self.index_button = ttk.Button(queue_frame, text='Process Media', command=self.threaded_index, state='disabled')
         self.index_button.pack(fill='x', pady=3)
-        ToolTip(self.index_button, 'Process the selected folder and update the scene database.')
+        ToolTip(self.index_button, 'Process all files in the queue and update the scene database.')
 
         # Search Query Section
         query_frame = ttk.LabelFrame(self.scrollable_controls, text='Search Query', padding=5)
@@ -522,35 +552,31 @@ class SceneScoutApp(TkinterDnD.Tk):
         paths = self.tk.splitlist(event.data)
         if not paths:
             return
-
-        path = paths[0] # Handle the first item dropped
         
-        # 1. Check if it is a Folder
-        if os.path.isdir(path):
-            self.folder_var.set(path)
-            self.config['folder_path'] = path
-            config.save_config(self.config)
-            self.update_status(f"Folder set via drop: {os.path.basename(path)}")
-            return
-
-        # 2. Check if it is a Database file
-        if path.lower().endswith('.db'):
-            self.db_path = path
-            self.db_var.set(os.path.basename(path))
-            init_db(self.db_path)
-            self.config['db_path'] = path
-            config.save_config(self.config)
-            self.update_status(f"Database loaded via drop: {os.path.basename(path)}")
-            return
-
-        # 3. Check if it is an Image file for query
-        if path.lower().endswith(config.IMAGE_EXTENSIONS):
-            self.query_image_path = path
-            self.query_image_var.set(os.path.basename(path))
-            self.update_status(f"Query image set via drop: {os.path.basename(path)}")
-            return
-            
-        self.update_status("Unsupported file type dropped.")
+        # Process .db files and query images first (first such file found)
+        for path in paths:
+            if path.lower().endswith('.db'):
+                self.db_path = path
+                self.db_var.set(os.path.basename(path))
+                init_db(self.db_path)
+                self.config['db_path'] = path
+                config.save_config(self.config)
+                self.update_status(f"Database loaded via drop: {os.path.basename(path)}")
+                self.update_queue_status()
+                break
+        
+        for path in paths:
+            if path.lower().endswith(config.IMAGE_EXTENSIONS):
+                self.query_image_path = path
+                self.query_image_var.set(os.path.basename(path))
+                self.update_status(f"Query image set via drop: {os.path.basename(path)}")
+                break
+        
+        # Add all valid media files and directories to queue
+        media_paths = [p for p in paths if not p.lower().endswith('.db') and 
+                        (os.path.isdir(p) or p.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS))]
+        if media_paths:
+            self._add_paths_to_queue(media_paths)
 
     def threaded_task(self, target_func: Callable, *args):
         # Only spawn a thread if GUI is actively running
@@ -560,7 +586,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def set_controls_enabled(self, enabled: bool):
         state = 'normal' if enabled else 'disabled'
-        for name in ['load_model_button', 'index_button', 'search_button', 'rescore_button', 'clear_rescore_button', 'query_text_entry', 'folder_entry']:
+        for name in ['load_model_button', 'index_button', 'search_button', 'rescore_button', 'clear_rescore_button', 'query_text_entry']:
             widget = getattr(self, name, None)
             if widget:
                 try:
@@ -601,8 +627,277 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.db_var.set(os.path.basename(self.db_path))
             init_db(self.db_path)
             self.update_status(f'Loaded saved database: {os.path.basename(self.db_path)}')
-        if 'folder_path' in self.config and os.path.exists(self.config['folder_path']):
-            self.folder_var.set(self.config['folder_path'])
+            
+            # Migrate old folder_path to index_queue if present
+            if 'folder_path' in self.config and self.config['folder_path'] and os.path.exists(self.config['folder_path']):
+                from database import add_to_queue, queue_count
+                if queue_count(self.db_path) == 0:
+                    add_to_queue(self.db_path, self.config['folder_path'], is_directory=True, recursive=True)
+                # Remove old folder_path from config
+                del self.config['folder_path']
+                config.save_config(self.config)
+        
+        self.update_queue_status()
+
+    def update_queue_status(self):
+        """Update the queue status label and process button state."""
+        if not self.db_path:
+            self.queue_status_var.set('[0] items in queue (no database)')
+            self.index_button.config(state='disabled')
+            return
+        from database import queue_count
+        count = queue_count(self.db_path)
+        self.queue_status_var.set(f'[{count}] items in queue')
+        self.index_button.config(state='normal' if count > 0 else 'disabled')
+
+    def on_queue_drop(self, event):
+        """Handle drops on the dedicated drag-and-drop area."""
+        paths = self.tk.splitlist(event.data)
+        if not paths:
+            return
+        self._add_paths_to_queue(paths)
+
+    def _add_paths_to_queue(self, paths):
+        """Validate and add multiple paths to the index queue."""
+        if not self.db_path:
+            messagebox.showerror('Error', 'Please select a database first.')
+            return
+        from database import add_to_queue, queue_count
+        added = 0
+        for path in paths:
+            if os.path.exists(path) and not path.lower().endswith('.db'):
+                is_dir = os.path.isdir(path)
+                if not is_dir and not path.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS):
+                    continue
+                add_to_queue(self.db_path, path, is_directory=is_dir, recursive=is_dir)
+                added += 1
+        if added > 0:
+            self.update_queue_status()
+            self.update_status(f'Added {added} item(s) to queue.')
+        elif paths:
+            self.update_status('No valid media files or directories dropped.')
+
+    def browse_files_dialog(self):
+        """Open file browser when clicking the drag-and-drop area."""
+        if not self.db_path:
+            messagebox.showerror('Error', 'Please select a database first.')
+            return
+        path = filedialog.askopenfilename(
+            title='Select Media Files',
+            filetypes=[('Media Files', ' '.join(f'*{ext}' for ext in config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS))],
+            multiple=True
+        )
+        if path:
+            self._add_paths_to_queue(path)
+
+    def add_folder_to_queue(self):
+        """Add a directory to the index queue."""
+        if not self.db_path:
+            messagebox.showerror('Error', 'Please select a database first.')
+            return
+        path = filedialog.askdirectory(title='Select Folder to Add to Queue')
+        if path:
+            self._add_paths_to_queue([path])
+
+    def add_files_to_queue(self):
+        """Add individual files to the index queue."""
+        self.browse_files_dialog()
+
+    def open_queue_manager(self):
+        """Open a popup to inspect and manage the index queue."""
+        if not self.db_path:
+            messagebox.showerror('Error', 'Please select a database first.')
+            return
+
+        from database import get_queue, remove_from_queue, clear_queue, update_queue_recursive, queue_count
+
+        dlg = tk.Toplevel(self)
+        gui_utils.apply_window_icon(dlg, self.app_icon)
+        dlg.title('Queue Manager')
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.minsize(700, 500)
+        
+        # Center window
+        gui_utils.center_window(dlg, 700, 500)
+
+        main_frame = ttk.Frame(dlg, padding=10)
+        main_frame.pack(fill='both', expand=True)
+
+        # Treeview with scrollbar
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill='both', expand=True, pady=(0, 10))
+
+        columns = ('type', 'name', 'path', 'recursive')
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', 
+                           selectmode='extended', height=15)
+        tree.heading('type', text='Type')
+        tree.heading('name', text='Name')
+        tree.heading('path', text='Full Path')
+        tree.heading('recursive', text='Recursive')
+    
+        tree.column('type', width=60, anchor='center')
+        tree.column('name', width=150, anchor='w')
+        tree.column('path', width=350, anchor='w')
+        tree.column('recursive', width=70, anchor='center')
+
+        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Store mapping from tree item id to queue id
+        item_to_queue_id = {}
+
+        def refresh_tree():
+            for item in tree.get_children():
+                tree.delete(item)
+            item_to_queue_id.clear()
+            queue_items = get_queue(self.db_path)
+            missing_count = 0
+            for qid, path, is_directory, recursive in queue_items:
+                item_type = 'Folder' if is_directory else 'File'
+                name = os.path.basename(path) or path
+                if is_directory:
+                    rec_text = 'Yes' if recursive else 'No'
+                else:
+                    rec_text = '-'
+                exists = os.path.exists(path)
+                if not exists:
+                    name = f'[MISSING] {name}'
+                    missing_count += 1
+                iid = tree.insert('', 'end', values=(item_type, name, path, rec_text),
+                                  tags=('missing' if not exists else ''))
+                item_to_queue_id[iid] = qid
+            tree.tag_configure('missing', foreground='gray')
+            update_status_label(missing_count)
+
+        def update_status_label(missing=0):
+            count = queue_count(self.db_path)
+            text = f'{count} item(s) in queue'
+            if missing > 0:
+                text += f' ({missing} missing)'
+            status_var.set(text)
+
+        # Status label
+        status_var = tk.StringVar(master=self)
+        ttk.Label(main_frame, textvariable=status_var, font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0, 5))
+
+        # Buttons frame
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x', pady=5)
+
+        def remove_selected():
+            selected = tree.selection()
+            if not selected:
+                messagebox.showwarning('Warning', 'No items selected.')
+                return
+            if messagebox.askyesno('Confirm', 'Remove %d selected item(s)?' % len(selected)):
+                for iid in selected:
+                    qid = item_to_queue_id.get(iid)
+                    if qid:
+                        remove_from_queue(self.db_path, qid)
+                refresh_tree()
+                self.update_queue_status()
+
+        def clear_all():
+            if messagebox.askyesno('Confirm', 'Clear all items from the queue?'):
+                clear_queue(self.db_path)
+                refresh_tree()
+                self.update_queue_status()
+
+        def toggle_recursive_for_selected(recursive_val):
+            selected = tree.selection()
+            if not selected:
+                return
+            for iid in selected:
+                qid = item_to_queue_id.get(iid)
+                if qid:
+                    values = tree.item(iid)['values']
+                    if values and values[0] == 'Folder':
+                        update_queue_recursive(self.db_path, qid, recursive_val)
+            refresh_tree()
+
+        def clean_missing():
+            selected = [iid for iid in tree.get_children()
+                        if '[MISSING]' in str(tree.item(iid)['values'][1])]
+            if not selected:
+                messagebox.showinfo('Info', 'No missing items in queue.')
+                return
+            if messagebox.askyesno('Confirm', 'Remove %d missing item(s)?' % len(selected)):
+                for iid in selected:
+                    qid = item_to_queue_id.get(iid)
+                    if qid:
+                        remove_from_queue(self.db_path, qid)
+                refresh_tree()
+                self.update_queue_status()
+
+        ttk.Button(btn_frame, text='Remove Selected', command=remove_selected).pack(side='left', padx=(0, 5))
+        ttk.Button(btn_frame, text='Clear Queue', command=clear_all).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text='Clean Missing', command=clean_missing).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text='Set Recursive ON',
+                   command=lambda: toggle_recursive_for_selected(True)).pack(side='left', padx=5)
+        ttk.Button(btn_frame, text='Set Recursive OFF',
+                   command=lambda: toggle_recursive_for_selected(False)).pack(side='left', padx=5)
+
+        # Right-click context menu
+        def show_context_menu(event):
+            item = tree.identify_row(event.y)
+            if not item:
+                return
+            menu = tk.Menu(tree, tearoff=0)
+            selected = tree.selection()
+            if item not in selected:
+                tree.selection_set(item)
+                selected = [item]
+        
+            menu.add_command(label='Remove Selected', command=remove_selected)
+        
+            has_folder = any(tree.item(i)['values'][0] == 'Folder' for i in selected)
+            if has_folder:
+                menu.add_separator()
+                menu.add_command(label='Set Recursive ON', 
+                             command=lambda: toggle_recursive_for_selected(True))
+                menu.add_command(label='Set Recursive OFF', 
+                             command=lambda: toggle_recursive_for_selected(False))
+        
+            menu.post(event.x_root, event.y_root)
+
+        tree.bind('<Button-3>', show_context_menu)
+
+        # Keyboard shortcut for delete
+        def on_key_press(event):
+            if event.keysym in ('Delete', 'BackSpace'):
+                remove_selected()
+
+        dlg.bind('<KeyPress>', on_key_press)
+
+        # Inline recursive toggle on click (simplified - just use column detection)
+        def on_tree_click(event):
+            item = tree.identify_row(event.y)
+            column = tree.identify_column(event.x)
+            if item and column == '#4':  # Recursive column
+                qid = item_to_queue_id.get(item)
+                values = tree.item(item)['values']
+                if qid and values and values[0] == 'Folder':
+                    new_rec = not (values[3] == 'Yes')
+                    update_queue_recursive(self.db_path, qid, new_rec)
+                    refresh_tree()
+
+        tree.bind('<ButtonRelease-1>', on_tree_click)
+
+        # Initial load
+        refresh_tree()
+
+        # Close button
+        ttk.Button(main_frame, text='Close', command=dlg.destroy).pack(pady=(10, 0))
+
+        dlg.protocol('WM_DELETE_WINDOW', dlg.destroy)
 
     def browse_database(self):
         path = filedialog.asksaveasfilename(title='Create New Database File', initialdir=self.config.get('db_path', ''), filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
@@ -613,11 +908,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.config['db_path'] = path
             config.save_config(self.config)
             self.update_status(f'Database set to: {os.path.basename(path)}')
-            if not Path(path).parent.is_dir():
-                return
-            self.folder_var.set(str(Path(path).parent))
-            self.config['folder_path'] = str(Path(path).parent)
-            config.save_config(self.config)
+            self.update_queue_status()
 
     def browse_existing_database(self):
         path = filedialog.askopenfilename(title='Select Existing Database File', initialdir=self.config.get('db_path', ''), filetypes=[('SQLite Database', '*.db')])
@@ -628,13 +919,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.config['db_path'] = path
             config.save_config(self.config)
             self.update_status(f'Database set to: {os.path.basename(path)}')
-
-    def browse_folder(self):
-        path = filedialog.askdirectory(title='Select Folder to Index', initialdir=self.config.get('folder_path', ''))
-        if path:
-            self.folder_var.set(path)
-            self.config['folder_path'] = path
-            config.save_config(self.config)
+            self.update_queue_status()
 
     def browse_query_image(self):
         path = filedialog.askopenfilename(filetypes=[('Images', ' '.join((f'*{ext}' for ext in config.IMAGE_EXTENSIONS)))])
@@ -804,8 +1089,12 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.deiconify()
 
     def threaded_index(self):
-        if not self.db_path or not self.folder_var.get():
-            messagebox.showerror('Error', 'Please select a database and a folder to index.')
+        if not self.db_path:
+            messagebox.showerror('Error', 'Please select a database first.')
+            return
+        from database import queue_count
+        if queue_count(self.db_path) == 0:
+            messagebox.showerror('Error', 'Please add files or folders to the queue before indexing.')
             return
         self.index_button.config(state='disabled')
         self.search_button.config(state='disabled')
@@ -813,7 +1102,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self._stop_video_loop()
         self.show_indexing_popup()
         self.update_status('Indexing in progress...')
-        self.threaded_task(self.index_task, self.folder_var.get())
+        self.threaded_task(self.index_task)
 
     def show_indexing_popup(self):
         self.index_popup = tk.Toplevel(self)
@@ -880,11 +1169,11 @@ class SceneScoutApp(TkinterDnD.Tk):
             # Fallback for old-style string messages (e.g. "Checking files...")
             self.after(0, lambda: self.index_filename_var.set(str(data)))
 
-    def index_task(self, folder_path: str):
+    def index_task(self):
         assert self.db_path is not None
         try:
             result = index_files(
-                folder_path, self.device, self.processor, self.model, self.db_path,
+                self.device, self.processor, self.model, self.db_path,
                 batch_size=self.input_batch_size.get(),
                 generate_thumbnails=self.generate_thumbnails_var.get(),
                 progress_callback=self.update_gui_progress,
@@ -909,6 +1198,10 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status('Indexing cancelled.')
             messagebox.showinfo('Cancelled', 'Indexing was cancelled.')
         else:
+            if self.db_path:
+                from database import clear_queue
+                clear_queue(self.db_path)
+                self.update_queue_status()
             self.update_status('Indexing complete!')
             messagebox.showinfo('Complete', 'Indexing has finished.')
 
@@ -1405,7 +1698,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
         menu.add_separator()
         menu.add_command(label='Search for Similar', command=self.search_for_similar_preview_frame)
-        menu.tk_popup(event.x_root, event.y_root)
+        menu.post(event.x_root, event.y_root)
 
     def on_results_right_click(self, event: tk.Event):
         # right-click on a treeview row
@@ -1421,7 +1714,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         menu.add_command(label='Copy Path', command=lambda p=path: self.clipboard_append(p))
         menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
         menu.add_command(label='Open File', command=self.open_current_file)
-        menu.tk_popup(event.x_root, event.y_root)
+        menu.post(event.x_root, event.y_root)
 
     def open_current_file(self):
             """Opens the selected file, using VLC with a timestamp if enabled."""

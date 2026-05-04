@@ -295,20 +295,41 @@ class SceneScoutShell(cmd.Cmd):
         run_search(s_text, s_image, self.device, self.processor, self.model, self.state)
 
     def do_index(self, arg):
-        """Index a folder. Usage: index <path/to/folder>"""
+        """Index paths. Usage: index <path1> [path2] [path3]..."""
         if not arg:
-            print("Please provide a folder path.")
+            print("Please provide at least one path.")
             return
             
-        folder_path = os.path.expanduser(arg)
+        paths = shlex.split(arg)
         init_db(self.state.db)
+        
+        from database import add_to_queue
+        added = 0
+        for folder_path in paths:
+            folder_path = os.path.expanduser(folder_path)
+            is_dir = os.path.isdir(folder_path)
+            if not is_dir and not folder_path.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS):
+                print(f"Warning: Skipping invalid path: {folder_path}")
+                continue
+            add_to_queue(self.state.db, folder_path, is_directory=is_dir, recursive=is_dir)
+            added += 1
+        
+        if added == 0:
+            print("Error: No valid paths provided.")
+            return
+        
         self._load_model()
         
         from processing import index_files
         is_silent = getattr(self.state, 'silent', False)
-        index_files(folder_path, self.device, self.processor, self.model, self.state.db, 
+        result = index_files(self.device, self.processor, self.model, self.state.db, 
                     batch_size=self.state.batch_size, max_num_patches=self.state.max_patches, 
                     fast_scene_detect=not self.state.accurate, silent=is_silent)
+        if result == 'completed':
+            from database import clear_queue
+            clear_queue(self.state.db)
+            if not is_silent:
+                print("Queue successfully processed and cleared.")
 
     def do_cleanup(self, arg):
         """Clean up orphaned database entries."""
@@ -339,7 +360,7 @@ def cli_mode():
     parser.add_argument('--json', action='store_true', help='Output search results in JSON format')
     parser.add_argument('--include-thumbs', action='store_true', help='Include base64 thumbnails in JSON output')
     parser.add_argument('--output', type=str, help='Write JSON output to file instead of stdout')
-    parser.add_argument('--index', type=str, help='Path to folder to index')
+    parser.add_argument('--index', type=str, action='append', help='Path to folder or file to index (can be specified multiple times)')
     parser.add_argument('--search-text', type=str, help='Text to search for (use "-" for stdin)')
     parser.add_argument('--search-image', type=str, help='Image path to search with')
     parser.add_argument('--top-k', type=int, default=10, help='Results to return')
@@ -406,9 +427,23 @@ def cli_mode():
 
     if args.index:
         from processing import index_files
+        from database import add_to_queue
         try:
-            folder_path = os.path.expanduser(args.index)
-            index_files(folder_path, device, processor, model, args.db, 
+            added = 0
+            for path in args.index:
+                expanded = os.path.expanduser(path)
+                is_dir = os.path.isdir(expanded)
+                if not is_dir and not expanded.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS):
+                    if not args.silent:
+                        print(f'Warning: Skipping invalid path: {path}', file=sys.stderr)
+                    continue
+                add_to_queue(args.db, expanded, is_directory=is_dir, recursive=is_dir)
+                added += 1
+            if added == 0:
+                if not args.silent:
+                    print('Error: No valid paths provided.', file=sys.stderr)
+                sys.exit(EXIT_INVALID_INPUT)
+            index_files(device, processor, model, args.db, 
                         batch_size=args.batch_size, max_num_patches=args.max_patches, 
                         fast_scene_detect=not args.accurate, silent=args.silent)
         except Exception as e:

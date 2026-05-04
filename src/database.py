@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS scene_embeddings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scene_filepath ON scene_embeddings(filepath);
+
+-- index queue for tracking files/directories to process
+CREATE TABLE IF NOT EXISTS index_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    path TEXT UNIQUE NOT NULL,
+    is_directory BOOLEAN NOT NULL DEFAULT 0,
+    recursive BOOLEAN NOT NULL DEFAULT 1,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 def init_db(db_path: str) -> None:
@@ -173,3 +182,86 @@ def migrate_database(db_path: str):
             
             conn.execute("PRAGMA user_version = 1")
             conn.commit()
+
+        # VERSION 2: Added index_queue table
+        if current_version < 2:
+            try:
+                conn.execute("""CREATE TABLE IF NOT EXISTS index_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    path TEXT UNIQUE NOT NULL,
+                    is_directory BOOLEAN NOT NULL DEFAULT 0,
+                    recursive BOOLEAN NOT NULL DEFAULT 1,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )""")
+            except sqlite3.OperationalError:
+                pass
+            
+            conn.execute("PRAGMA user_version = 2")
+            conn.commit()
+
+
+def add_to_queue(db_path: str, path: str, is_directory: bool, recursive: bool = True) -> bool:
+    """Add a path to the index queue. Returns True if added, False if already exists."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute('INSERT OR IGNORE INTO index_queue (path, is_directory, recursive) VALUES (?, ?, ?)',
+                        (str(path), is_directory, recursive))
+            conn.commit()
+            return True
+    except sqlite3.Error:
+        return False
+
+
+def remove_from_queue(db_path: str, item_id: int) -> bool:
+    """Remove an item from the index queue by its ID."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute('DELETE FROM index_queue WHERE id = ?', (item_id,))
+            conn.commit()
+            return True
+    except sqlite3.Error:
+        return False
+
+
+def clear_queue(db_path: str) -> bool:
+    """Clear all items from the index queue."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute('DELETE FROM index_queue')
+            conn.commit()
+            return True
+    except sqlite3.Error:
+        return False
+
+
+def get_queue(db_path: str) -> list:
+    """Get all items from the index queue, ordered by addition order (id).
+    Returns list of tuples: (id, path, is_directory, recursive)
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute('SELECT id, path, is_directory, recursive FROM index_queue ORDER BY id')
+            return cursor.fetchall()
+    except sqlite3.Error:
+        return []
+
+
+def update_queue_recursive(db_path: str, item_id: int, recursive: bool) -> bool:
+    """Update the recursive flag for an item in the index queue."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute('UPDATE index_queue SET recursive = ? WHERE id = ?', (recursive, item_id))
+            conn.commit()
+            return True
+    except sqlite3.Error:
+        return False
+
+
+def queue_count(db_path: str) -> int:
+    """Return the number of items in the index queue."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute('SELECT COUNT(*) FROM index_queue')
+            return cursor.fetchone()[0]
+    except sqlite3.Error:
+        return 0

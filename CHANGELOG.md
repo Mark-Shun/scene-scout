@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-05-05
+
+### Added
+- **Media Queue System**: Replace single-folder indexing with a queue-based system supporting multiple files and folders
+- **Queue Manager Popup**: Inspect, modify, and manage queued items with a Treeview list view
+- **Drag & Drop to Queue**: Drop files/folders directly onto the queue area in the GUI
+- **Per-folder Recursive Toggle**: Control whether each folder scans subdirectories independently (via Queue Manager)
+- **Missing Path Detection**: Queue Manager shows `[MISSING]` tags and a "Clean Missing" button for deleted paths
+- **CLI Multi-path Indexing**: `--index` now accepts multiple paths (e.g., `--index /path1 --index /path2`)
+- **REPL Multi-path Indexing**: Interactive shell `index` command now supports multiple space-separated paths
+- **Queue Persistence**: Index queue is stored per-database in SQLite and persists across sessions
+- **Automatic Migration**: Old `folder_path` config values are automatically migrated to the queue on first load
+
+### Changed
+- **Database Schema v2**: Added `index_queue` table for tracking files/directories to process
+- **Processing Logic**: Refactored `index_files()` to use queue-based file flattening with deduplication
+- **GUI Layout**: Replaced "Folder to process" section with "Media Queue" section
+- **Config**: Removed `folder_path` from default configuration (queue is now stored in SQLite)
+
 ## [1.0.1] - 2026-5-04
 
 ### Fixed
