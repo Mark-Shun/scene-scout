@@ -181,7 +181,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.query_image_path = None
         self.search_results = []
         self.last_selected_entry = None
-        
+        self.current_sort_col = 'score'
+        self.current_sort_reverse = True
+
         vlc_args = config.get_vlc_args()
         self.vlc_instance = vlc.Instance(*vlc_args)
         self.player = self.vlc_instance.media_player_new()
@@ -491,7 +493,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','source','score','rescore'), show='headings', selectmode='browse')
         for col, width in zip(['filename', 'scene', 'time', 'source', 'score', 'rescore'], [300, 80, 150, 140, 80, 80]):
-            self.results_tree.heading(col, text=col.capitalize())
+            self.results_tree.heading(col, text=col.capitalize(), command=lambda c=col: self.sort_treeview(c))
             self.results_tree.column(col, width=width, anchor='center' if col not in ('filename', 'source') else 'w')
         
         self.results_tree.pack(side='left', fill='both', expand=True)
@@ -1511,7 +1513,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             return f"{hours}:{mins:02d}:{secs:02d}.{milli:03d}"
         return f"{mins}:{secs:02d}.{milli:03d}"
     
-    def _update_listview(self):
+    def _update_listview(self, preserve_sort=False):
         # 1. Clear existing rows and thumbnails
         for item in self.results_tree.get_children():
             self.results_tree.delete(item)
@@ -1529,8 +1531,18 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         self.last_selected_entry = None
         has_rescore = self.search_results and self.search_results[0][3] is not None
-        sort_key = lambda x: x[3] if has_rescore else x[1]
-        self.search_results.sort(key=sort_key, reverse=True)
+        
+        if not preserve_sort:
+            self.current_sort_col = 'rescore' if has_rescore else 'score'
+            self.current_sort_reverse = True
+            sort_key = lambda x: x[3] if has_rescore else x[1]
+            self.search_results.sort(key=sort_key, reverse=True)
+            for c in self.results_tree['columns']:
+                base_text = c.capitalize()
+                if c == self.current_sort_col:
+                    self.results_tree.heading(c, text=base_text + " \u25bc")
+                else:
+                    self.results_tree.heading(c, text=base_text)
 
         # 2. Populate the Treeview and Thumbnail Strip
         for i, data in enumerate(self.search_results, 1):
@@ -1580,6 +1592,41 @@ class SceneScoutApp(TkinterDnD.Tk):
         if first:
             self.results_tree.selection_set(first[0])
             self.on_result_select(None)
+
+    def sort_treeview(self, col):
+        if not self.search_results:
+            return
+
+        if self.current_sort_col == col:
+            self.current_sort_reverse = not self.current_sort_reverse
+        else:
+            self.current_sort_col = col
+            self.current_sort_reverse = col in ('score', 'rescore')
+
+        def get_sort_key(item):
+            if col == 'filename':
+                return os.path.basename(item[0]).lower()
+            elif col == 'scene':
+                return item[4] if item[4] is not None else -1
+            elif col == 'time':
+                return item[5] if item[5] is not None else -1
+            elif col == 'source':
+                return item[8].lower() if item[8] else ""
+            elif col == 'rescore':
+                return item[3] if item[3] is not None else item[1]
+            else:
+                return item[1]
+
+        self.search_results.sort(key=get_sort_key, reverse=self.current_sort_reverse)
+        self._update_listview(preserve_sort=True)
+
+        for c in self.results_tree['columns']:
+            base_text = c.capitalize()
+            if c == self.current_sort_col:
+                arrow = " \u25bc" if self.current_sort_reverse else " \u25b2"
+                self.results_tree.heading(c, text=base_text + arrow)
+            else:
+                self.results_tree.heading(c, text=base_text)
 
     def on_thumbnail_click(self, tree_iid: str):
         """Triggered when a thumbnail is clicked. Selects the corresponding row in the treeview."""

@@ -38,6 +38,7 @@ A pretty big update, focused on bringing more functionality to the tool and enha
 - **CLI Multi-Database Support**: `--db` flag now accepts multiple databases (`--db a.db --db b.db`), with new `--target-db` flag for indexing operations
 - **Interactive Shell `db` Commands**: `db ls`, `db add`, `db rm`, `db target`, `db clear` for managing databases in REPL mode
 - **Database Statistics**: `get_db_stats()` function returns scene count, video count, image count, and file size per database
+- **Search results sorting**: Simple in memory sorting of the search results from the database. Sorting them according to the available columns.
 
 ### Changed
 - **Database Schema v2**: Added `index_queue` table for tracking files/directories to process
