@@ -10,7 +10,7 @@
 <p align="center">
   <a href="https://github.com/Mark-Shun/scene-scout/releases/latest"><img src="https://img.shields.io/github/v/release/Mark-Shun/scene-scout?style=for-the-badge&label=release" alt="Latest Release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-red?style=for-the-badge" alt="License GPL-3.0" /></a>
-  <a href="https://github.com/Mark-Shun/scene-scout/stargazers"><img src="https://img.shields.io/github/stars/Mark-Shun/scene-scout?style=for-the-badge&color=yellow" alt="Stars" /></a>
+  <a href="https://github.com/Mark-Shun/scene-scout/stargazers"><img src="https://img.shields.io/github/stars/Mark-Shun/scene-scout?style=for-the-badge" alt="Stars" /></a>
   <a href="https://github.com/Mark-Shun/scene-scout/releases"><img src="https://img.shields.io/github/downloads/Mark-Shun/scene-scout/total?style=for-the-badge&label=downloads" alt="Downloads" /></a>
   <a href="https://mark-shun.github.io/scene-scout/"><img src="https://img.shields.io/badge/Website-GitHub%20Pages-green?style=for-the-badge&logo=github" alt="Website" /></a>
 </p>
