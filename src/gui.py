@@ -580,7 +580,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def threaded_task(self, target_func: Callable, *args):
         # Only spawn a thread if GUI is actively running
-        if getattr(self, 'is_running', True):
+        if getattr(self, 'is_active', True):
             thread = threading.Thread(target=target_func, args=args, daemon=True)
             thread.start()
 
@@ -1146,7 +1146,7 @@ class SceneScoutApp(TkinterDnD.Tk):
     def cancel_indexing(self):
         if hasattr(self, '_cancel_event') and self._cancel_event is not None:
             self._cancel_event.set()
-        if hasattr(self, 'index_status_var'):
+        if hasattr(self, 'index_filename_var'):
             self.index_status_var.set('Cancelling...')
         if hasattr(self, 'index_popup') and self.index_popup:
             self.index_popup.grab_release()
@@ -1459,7 +1459,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         # Open the file using the system's default application
         self.open_current_file()
 
-    def _render_preview_image_on_canvas(self, use_fast_quality: bool=False):
+    def _render_preview_image_on_canvas(self):
         if not self.original_image:
             self.preview_image_canvas.delete('all')
             return
@@ -1490,7 +1490,7 @@ class SceneScoutApp(TkinterDnD.Tk):
     def _show_static_pil_image(self, path):
         # Use your existing high-quality PIL rendering here
         self.original_image = Image.open(path).convert('RGB')
-        self._render_preview_image_on_canvas(use_fast_quality=False) # Use LANCZOS for static
+        self._render_preview_image_on_canvas() # Use LANCZOS for static
 
     def _vlc_loop_restart(self):
         """Restarts the currently assigned media to create a loop effect."""
@@ -1660,20 +1660,12 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.drag_start_x, self.drag_start_y = (event.x, event.y)
 
     def on_canvas_drag(self, event: tk.Event):
-        # Ignore dragging while video is looping
-        if (getattr(self, 'video_cap', None) is not None or getattr(self, 'loop_display_frames', None)) and self.video_loop_id:
-            return
-        
         self.canvas_offset_x += event.x - self.drag_start_x
         self.canvas_offset_y += event.y - self.drag_start_y
         self.drag_start_x, self.drag_start_y = (event.x, event.y)
         self._render_preview_image_on_canvas()
 
     def on_canvas_zoom(self, event: tk.Event):
-        # Disable zoom while looping video
-        if (getattr(self, 'video_cap', None) is not None or getattr(self, 'loop_display_frames', None)) and self.video_loop_id:
-            return
-            
         factor = 1.1 if event.delta > 0 else 1 / 1.1
         self.canvas_scale = max(0.1, min(10.0, self.canvas_scale * factor))
         self._render_preview_image_on_canvas()

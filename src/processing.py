@@ -17,7 +17,7 @@ from scenedetect.detectors import AdaptiveDetector
 from tqdm import tqdm
 
 import config
-from database import cleanup_orphaned_entries, get_queue
+from database import cleanup_orphaned_entries
 from utils import normalize_embedding
 
 
@@ -243,7 +243,6 @@ def _get_files_from_queue(db_path: str, image_exts: tuple, video_exts: tuple) ->
                 continue
     return [str(f) for f in all_files]
 
-
 def index_files(device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, toggle_preview_callback: Optional[Callable]=None, cancel_event: Optional[threading.Event] = None, silent: bool=False) -> str:
     """
     Index files from the index_queue stored in db_path.
@@ -371,7 +370,7 @@ def index_files(device: torch.device, processor, model, db_path: str, batch_size
                         return 'cancelled'
                     continue
 
-                # mark video as processed
+                # Mark video as processed
                 try:
                     mtime = os.path.getmtime(path)
                     cursor.execute('REPLACE INTO processed_videos (filepath, modified_at, model_version) VALUES (?, ?, ?)', (path, mtime, config.DEFAULT_MODEL))
