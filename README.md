@@ -97,7 +97,11 @@ The GUI provides:
 - A video playback viewer to watch the scene
 - Result visualization with similarity scores
 
-Example queries:
+<img src="assets/screenshots/export-car-scene.png" width="50%">
+
+*Export video scene window*
+
+
 <table align="center" width="100%">
   <tr>
     <td width="20%"><img src="assets/screenshots/computer-monitor-search.png" style="width: 100%; height: auto;" alt="Immagine 1"></td>
@@ -106,6 +110,7 @@ Example queries:
   </tr>
 </table>
 
+*Example queries*
 
 <summary><h4>GUI quick start guide</h4></summary>
   
