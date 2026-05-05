@@ -55,6 +55,7 @@ def get_compute_device(device_choice=None):
     return 'cpu', 'No compatible GPU found. Using CPU.', torch.device('cpu'), torch.float32
 
 def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
+    token = config.get_hf_token()
     """Initializes the processor and model."""
     device_str, msg, device, dtype = get_compute_device(device_choice)
 
@@ -64,15 +65,11 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
 
     update(f"Hardware Status: {msg}")
     update("Loading processor config...")
-    processor = AutoProcessor.from_pretrained(config.DEFAULT_MODEL)
+    processor = AutoProcessor.from_pretrained(config.DEFAULT_MODEL, token=token)
 
     update("Loading model weights (this can take a while)...")
     attn_implementation = 'sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager'
-    model = Siglip2Model.from_pretrained(
-        config.DEFAULT_MODEL, 
-        torch_dtype=dtype, 
-        attn_implementation=attn_implementation
-    ).to(device)
+    model = Siglip2Model.from_pretrained(config.DEFAULT_MODEL, token=token, torch_dtype=dtype, attn_implementation=attn_implementation).to(device)
 
     if use_trt and device_str == 'cuda' and TRT_AVAILABLE:
         import logging

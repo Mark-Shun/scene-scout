@@ -37,6 +37,7 @@ DEFAULT_CONFIG = {
     "active_databases": [],
     "primary_database": "",
     "github_token": "",
+    "hf_token": "",
     "show_update_details": False,
     "export_mode": "encode",
     "export_audio_mode": "Copy Audio",
@@ -107,3 +108,25 @@ def get_vlc_args():
         args.append('--no-xlib')
         
     return args
+
+def get_hf_token() -> Optional[str]:
+    """Retrieves the HF token, returning None if not found or empty."""
+    # 1. Check system environment variable
+    token = os.environ.get("HF_TOKEN")
+    
+    # 2. Fallback to config file
+    if not token:
+        current_config = load_config()
+        token = current_config.get("hf_token", "")
+    
+    # 3. If empty, return None to skip authentication headers
+    if not token or not str(token).strip():
+        return None
+        
+    token = token.strip()
+    
+    # 4. Strip "Bearer " if accidentally included
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+        
+    return token
