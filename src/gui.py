@@ -1128,7 +1128,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         dlg.protocol('WM_DELETE_WINDOW', dlg.destroy)
 
     def browse_database(self):
-        path = filedialog.asksaveasfilename(title='Create New Database File', initialdir='', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
+        path = filedialog.asksaveasfilename(parent=self, title='Create New Database File', initialdir='', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
         if path:
             abs_path = str(Path(path).resolve())
             init_db(abs_path)
@@ -1141,12 +1141,12 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status(f'Database created and set as target: {os.path.basename(path)}')
 
     def browse_existing_database(self):
-        paths = filedialog.askopenfilenames(title='Select Existing Database Files', initialdir='', filetypes=[('SQLite Database', '*.db')])
+        paths = filedialog.askopenfilenames(parent=self, title='Select Existing Database Files', initialdir='', filetypes=[('SQLite Database', '*.db')])
         if paths:
             self._add_databases(paths)
 
     def browse_query_image(self):
-        path = filedialog.askopenfilename(filetypes=[('Images', ' '.join((f'*{ext}' for ext in config.IMAGE_EXTENSIONS)))])
+        path = filedialog.askopenfilename(parent=self, filetypes=[('Images', ' '.join((f'*{ext}' for ext in config.IMAGE_EXTENSIONS)))])
         if path:
             self.query_image_path = path
             self.query_image_var.set(os.path.basename(path))
