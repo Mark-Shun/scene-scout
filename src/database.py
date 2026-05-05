@@ -408,3 +408,19 @@ def get_db_stats(db_path: str) -> dict:
     except sqlite3.Error:
         pass
     return stats
+
+def get_embedding_for_result(db_path: str, filepath: str, scene_idx: Optional[int] = None) -> Optional[np.ndarray]:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            if scene_idx is not None:
+                cursor.execute('SELECT embedding FROM scene_embeddings WHERE filepath=? AND scene_index=?', (filepath, scene_idx))
+            else:
+                cursor.execute('SELECT embedding FROM image_embeddings WHERE filepath=?', (filepath,))
+
+            result = cursor.fetchone()
+            if result:
+                return np.frombuffer(result[0], dtype=np.float32)
+    except Exception as e:
+        print(f"Database error fetching embedding: {e}")
+    return None

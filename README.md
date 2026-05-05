@@ -228,6 +228,10 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 - `--cleanup`: Remove orphaned embeddings
 - `--silent`: Suppress all non-essential output including progress bars (ideal for automation)
 - `--output FILE`: Write JSON output to file instead of stdout
+- `--export-scene PATH`: Path of the video to export a scene from
+- `--start MS`: Start time of the scene in milliseconds
+- `--end MS`: End time of the scene in milliseconds
+- `--out PATH`: Output file path for the exported video
 
 #### CLI Exit Codes
 - `0`: Success
@@ -246,6 +250,8 @@ When in REPL mode (`--interactive`), use these commands:
 - `db rm <path>`: Remove a database
 - `db target <path>`: Set target database for indexing
 - `db clear`: Clear all databases
+- `ex <index> <output>`: Export a scene from last search results
+- `rs <query>`: Rescore last search results with a new text query
 - `update` / `u`: View full patch notes from latest release
 - `vars`: List all editable shell variables
 - `set <var> <value>`: Set a variable (with tab completion)

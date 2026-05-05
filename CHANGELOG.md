@@ -4,19 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [1.1.0] - 2026-05-05
 
+A pretty big update, focused on bringing more functionality to the tool and enhancing existing features.
+
 ### Main highlights
 - **File handling and queue system**: It is now possible to parse multiple files, folders and index them all at once. There is also a GUI list component in which details about these files can be found and options changed.
 - **Database manager system**: Through the database manager system, it is possible to import multiple database files and dynamically search through them. Besides that there is info shown about the database and it's possible to merge database files into a new file.
 - **Enhanced update checker**: More data is now being retrieved from Github when there is a new release. And the update details are now shown on the GUI.
 - **Scene Export**: Export specific video scenes with customizable FFmpeg settings. Supports Stream Copy (fast) and Re-encode (exact frame accuracy) modes with progress tracking.
-
-A pretty big update, focused on bringing more functionality to the tool and enhancing existing features.
-
-### Main highlights
-- **File handling and queue system**: It is now possible to parse multiple files, folders and index them all at once. There is also a GUI list component in which details about these files can be found and options changed.
 - **Enhanced update checker**: More data is now being retrieved from Github when there is a new release. And the update details are now shown on the GUI.
-- **Multi-Database Search**: Search across multiple databases simultaneously with merged and deduplicated results.
-- **Database Manager**: New popup interface for managing database files, setting targets, merging db files and viewing statistics.
 
 ### Added
 - **Scene Export**: Export video scenes with FFmpeg integration via a dedicated dialog
@@ -42,6 +37,7 @@ A pretty big update, focused on bringing more functionality to the tool and enha
 - **Interactive Shell `db` Commands**: `db ls`, `db add`, `db rm`, `db target`, `db clear` for managing databases in REPL mode
 - **Database Statistics**: `get_db_stats()` function returns scene count, video count, image count, and file size per database
 - **Search results sorting**: Simple in memory sorting of the search results from the database. Sorting them according to the available columns.
+- **Standalone Export Function**: `export_video_scene()` in exporter.py for headless FFmpeg-based scene extraction
 
 ### Changed
 - **Database Schema v2**: Added `index_queue` table for tracking files/directories to process

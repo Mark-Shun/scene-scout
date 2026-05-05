@@ -626,3 +626,63 @@ def get_video_info_and_keyframe(video_path: str, target_ms: int) -> Dict[str, An
         return info
     finally:
         if container: container.close()
+
+_FFMPEG_PATH_CACHE = None
+
+def _get_ffmpeg_path() -> str:
+    global _FFMPEG_PATH_CACHE
+    if _FFMPEG_PATH_CACHE:
+        return _FFMPEG_PATH_CACHE
+
+    try:
+        import imageio_ffmpeg
+        path = imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        import shutil
+        path = shutil.which('ffmpeg') or 'ffmpeg'
+
+    _FFMPEG_PATH_CACHE = path
+    return path
+
+def export_video_scene(video_path: str, start_ms: int, end_ms: int, output_path: str) -> None:
+    duration_ms = end_ms - start_ms
+    start_sec = start_ms / 1000.0
+    duration_sec = duration_ms / 1000.0
+
+    buffer_sec = 10.0
+    if start_sec > buffer_sec:
+        fast_seek = start_sec - buffer_sec
+        exact_seek = buffer_sec
+    else:
+        fast_seek = 0.0
+        exact_seek = start_sec
+
+    cmd = [
+        _get_ffmpeg_path(),
+        '-ss', str(fast_seek),
+        '-i', video_path,
+        '-ss', str(exact_seek),
+        '-c:v', 'libx264',
+        '-c:a', 'copy',
+        '-map', '0:v:0',
+        '-map', '0:a?',
+        '-t', str(duration_sec),
+        '-avoid_negative_ts', 'make_zero',
+        '-y',
+        output_path
+    ]
+
+    creation_flags = 0
+    if sys.platform == 'win32':
+        creation_flags = subprocess.CREATE_NO_WINDOW
+
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creation_flags
+    )
+    stdout, stderr = process.communicate()
+
+    if process.returncode != 0:
+        raise RuntimeError(f'FFmpeg failed with code {process.returncode}: {stderr.decode()}')

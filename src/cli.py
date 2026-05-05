@@ -31,7 +31,9 @@ COMMAND_ALIASES = {
     'h': 'help',
     'q': 'exit',
     'qu': 'queue',
-    'u': 'update'
+    'u': 'update',
+    'ex': 'export',
+    'rs': 'rescore'
 }
 
 # --- Helper Functions ---
@@ -138,19 +140,21 @@ class SceneScoutShell(cmd.Cmd):
     prompt = 'Scene Scout> '
 
     # Known variables for tab completion
-    _settable_vars = ['json', 'include_thumbs', 'top_k', 'device', 'max_patches', 'batch_size', 'accurate', 'silent', 'output']
+    _settable_vars = ['json', 'include_thumbs', 'top_k', 'device', 'max_patches', 'batch_size', 'accurate', 'silent', 'output', 'generate_thumbnails']
 
     def __init__(self, initial_args, update_info=None):
         super().__init__()
         self.state = initial_args
         self.active_databases = list(getattr(initial_args, 'active_databases', []))
         self.target_db = getattr(initial_args, 'target_db', None)
-        self.update_info = update_info # Store the update info
+        self.update_info = update_info
         self.active_databases = list(getattr(initial_args, 'active_databases', []))
         self.target_db = getattr(initial_args, 'target_db', None)
         self.model = None
         self.processor = None
         self.device = None
+        self.last_results = None
+        self.cached_embeddings = None
         self._load_history()
 
     def _get_effective_target(self):
@@ -312,6 +316,7 @@ class SceneScoutShell(cmd.Cmd):
             print("Usage: db [ls | add <path> | rm <index> | target <index> | clear]")
 
     def do_load_db(self, arg):
+        """Load an existing database file and add it to active databases."""
         if not arg:
             print("Please provide a path to the database file.")
             return
@@ -337,6 +342,7 @@ class SceneScoutShell(cmd.Cmd):
             return 2
 
     def do_set(self, arg):
+        """Set an editable variable. Usage: set <variable> <value>"""
         args = shlex.split(arg)
         if len(args) != 2:
             print("Usage: set <variable> <value>")
@@ -358,6 +364,7 @@ class SceneScoutShell(cmd.Cmd):
             print(f"{key} updated to {getattr(self.state, key)}")
 
     def do_vars(self, arg):
+        """List all editable shell variables and their current values."""
         print("\n--- Editable Variables ---")
         for v in self._settable_vars:
             val = getattr(self.state, v, '<not set>')
@@ -368,6 +375,7 @@ class SceneScoutShell(cmd.Cmd):
         print()
 
     def do_status(self, arg):
+        """Show current shell state, active databases, and model load status."""
         if getattr(self.state, 'silent', False):
             return
         print("\n--- Current State ---")
@@ -378,6 +386,7 @@ class SceneScoutShell(cmd.Cmd):
         print(f"Model Loaded: {self.model is not None}\n")
 
     def do_search(self, arg):
+        """Search scenes using a text query or image path."""
         if not arg:
             print("Please provide a search query.")
             return
@@ -388,15 +397,121 @@ class SceneScoutShell(cmd.Cmd):
         
         self._load_model()
         
+        # Identify if query is an image path or text
         s_image = arg if (os.path.exists(arg) and arg.lower().endswith(config.IMAGE_EXTENSIONS)) else None
         s_text = None if s_image else arg
         
         saved_db = getattr(self.state, 'db', None)
         self.state.active_databases = self.active_databases
-        run_search(s_text, s_image, self.device, self.processor, self.model, self.state)
+        
+        from processing import get_query_embedding
+        query_embedding = get_query_embedding(s_text, s_image, self.device, self.processor, self.model, self.state.max_patches)
+        
+        if query_embedding is None:
+            print("Error: Could not generate query embedding.")
+            self.state.db = saved_db
+            return
+        
+        from database import search_scenes, db_is_empty
+        all_empty = all(db_is_empty(db) for db in self.active_databases)
+        if all_empty:
+            print('Warning: All databases appear to be empty. Please index files first.')
+            self.state.db = saved_db
+            return
+        
+        # 1. Execute the primary search
+        self.last_results = search_scenes(query_embedding, self.active_databases, top_k=self.state.top_k)
         self.state.db = saved_db
+        
+        if self.last_results:
+            self.cached_embeddings = []
+            from database import get_embedding_for_result
+            
+            # 2. FIX: Create a lookup map (Basename -> Absolute Path)
+            db_path_map = {os.path.basename(p): p for p in self.active_databases}
+            
+            for res in self.last_results:
+                path, scene_idx, start_time, end_time, thumb, score, source_db_name = res
+                
+                # 3. FIX: Resolve the full path before fetching the embedding
+                full_db_path = db_path_map.get(source_db_name, source_db_name)
+                emb = get_embedding_for_result(full_db_path, path, scene_idx)
+                self.cached_embeddings.append(emb)
+        
+        # Display results to user
+        use_json = getattr(self.state, 'json', False)
+        include_thumbs = getattr(self.state, 'include_thumbs', False)
+        output_file = getattr(self.state, 'output', None)
+        is_silent = getattr(self.state, 'silent', False)
+        
+        display_results(self.last_results, as_json=use_json, include_thumbs=include_thumbs, output_file=output_file, silent=is_silent)
+
+    def do_export(self, arg):
+        """Export a scene from the last search results. Usage: export <result_index> <output_path>"""
+        args = shlex.split(arg)
+        if len(args) < 2:
+            print("Usage: export <result_index> <output_path>")
+            return
+
+        if not self.last_results:
+            print("No recent search results to export. Run a search first.")
+            return
+
+        try:
+            idx = int(args[0]) - 1
+            out_path = args[1]
+            path, scene_idx, start_time, end_time, _, _, source_db = self.last_results[idx]
+
+            from exporter import export_video_scene
+            print(f"Exporting scene {scene_idx + 1} to {out_path}...")
+            export_video_scene(path, start_time, end_time, out_path)
+            print("Export completed successfully.")
+        except (ValueError, IndexError):
+            print("Invalid index provided. Please check your search results.")
+        except Exception as e:
+            print(f"Export failed: {e}", file=sys.stderr)
+
+    def do_rescore(self, arg):
+        """Rescore the last search results with a new text query. Usage: rescore <query>"""
+        if not arg:
+            print("Please provide a text query for rescoring.")
+            return
+        if not self.last_results:
+            print("No previous search results found to rescore.")
+            return
+
+        self._load_model()
+        from processing import get_query_embedding
+        import numpy as np
+
+        rescore_emb = get_query_embedding(arg, None, self.device, self.processor, self.model, self.state.max_patches)
+        if rescore_emb is None:
+            print("Error: Could not generate rescore embedding.")
+            return
+
+        print(f"Rescoring with: '{arg}'...")
+
+        rescored_results = []
+        rescored_embeddings = []
+
+        for i, res in enumerate(self.last_results):
+            emb = self.cached_embeddings[i] if self.cached_embeddings and i < len(self.cached_embeddings) else None
+            if emb is not None:
+                new_score = float(np.dot(emb, rescore_emb.T).squeeze())
+                updated_res = (res[0], res[1], res[2], res[3], res[4], new_score, res[6])
+                rescored_results.append((updated_res, emb))
+
+        rescored_results.sort(key=lambda x: x[0][5], reverse=True)
+
+        self.last_results = [r[0] for r in rescored_results]
+        self.cached_embeddings = [r[1] for r in rescored_results]
+
+        use_json = getattr(self.state, 'json', False)
+        is_silent = getattr(self.state, 'silent', False)
+        display_results(self.last_results, as_json=use_json, silent=is_silent)
 
     def do_queue(self, arg):
+            """View and manage the index queue. Usage: queue [ls | rm <id> | clear]"""
             args = shlex.split(arg)
             target = self._get_effective_target()
             if not target:
@@ -438,6 +553,7 @@ class SceneScoutShell(cmd.Cmd):
                 print("Unknown queue command. Use 'ls', 'rm <id>', or 'clear'.")
 
     def do_index(self, arg):
+        """Add paths to the queue and process them for indexing."""
         if not arg:
             print("Please provide at least one path.")
             return
@@ -469,9 +585,10 @@ class SceneScoutShell(cmd.Cmd):
         
         from processing import index_files
         is_silent = getattr(self.state, 'silent', False)
-        result = index_files(self.device, self.processor, self.model, target, 
-                    batch_size=self.state.batch_size, max_num_patches=self.state.max_patches, 
-                    fast_scene_detect=not self.state.accurate, silent=is_silent)
+        result = index_files(self.device, self.processor, self.model, target,
+                    batch_size=self.state.batch_size, max_num_patches=self.state.max_patches,
+                    fast_scene_detect=not self.state.accurate, silent=is_silent,
+                    generate_thumbnails=getattr(self.state, 'generate_thumbnails', True))
         if result == 'completed':
             from database import clear_queue
             clear_queue(target)
@@ -479,6 +596,7 @@ class SceneScoutShell(cmd.Cmd):
                 print("Queue successfully processed and cleared.")
 
     def do_cleanup(self, arg):
+        """Remove orphaned database entries for deleted files."""
         target = self._get_effective_target()
         if not target:
             print("Error: No target database set. Use 'db target <index>' to set one.")
@@ -502,11 +620,13 @@ class SceneScoutShell(cmd.Cmd):
         print("-----------------------------------\n")
 
     def do_exit(self, arg):
+        """Exit the interactive shell."""
         if not getattr(self.state, 'silent', False):
             print("Exiting...")
         return True
         
     def do_quit(self, arg):
+        """Exit the interactive shell (alias for exit)."""
         return self.do_exit(arg)
 
 
@@ -537,6 +657,10 @@ def cli_mode(update_info=None):
     parser.add_argument('--accurate', action='store_true', help='Use accurate detection')
     parser.add_argument('--cleanup', action='store_true', help='Clean orphaned entries')
     parser.add_argument('--silent', action='store_true', help='Suppress all non-essential output')
+    parser.add_argument('--export-scene', type=str, help='Path of the video to export a scene from')
+    parser.add_argument('--start', type=int, help='Start time of the scene in milliseconds')
+    parser.add_argument('--end', type=int, help='End time of the scene in milliseconds')
+    parser.add_argument('--out', type=str, help='Output file path for the exported video')
     args = parser.parse_args()
 
     saved_config = config.load_config()
@@ -573,6 +697,33 @@ def cli_mode(update_info=None):
         SceneScoutShell(args, update_info).cmdloop()
         sys.exit(EXIT_SUCCESS)
         return
+
+    if args.export_scene:
+        if args.start is None or args.out is None:
+            if not args.silent:
+                print('Error: --start and --out are required for exporting scenes.', file=sys.stderr)
+            sys.exit(EXIT_INVALID_INPUT)
+
+        try:
+            from exporter import export_video_scene
+
+            if not args.silent:
+                print(f'Exporting scene to {args.out}...')
+
+            export_video_scene(args.export_scene, args.start, args.end, args.out)
+
+            if not args.silent:
+                print('Export completed successfully.')
+            sys.exit(EXIT_SUCCESS)
+
+        except ImportError:
+            if not args.silent:
+                print('Error: Exporter module not found.', file=sys.stderr)
+            sys.exit(EXIT_MODEL_ERROR)
+        except Exception as e:
+            if not args.silent:
+                print(f'Export failed: {e}', file=sys.stderr)
+            sys.exit(EXIT_MODEL_ERROR)
 
     for db_path in active_dbs:
         try:
@@ -675,9 +826,10 @@ def cli_mode(update_info=None):
                 if not args.silent:
                     print('Error: No valid paths provided.', file=sys.stderr)
                 sys.exit(EXIT_INVALID_INPUT)
-            index_files(device, processor, model, target_db, 
-                        batch_size=args.batch_size, max_num_patches=args.max_patches, 
-                        fast_scene_detect=not args.accurate, silent=args.silent)
+            index_files(device, processor, model, target_db,
+                        batch_size=args.batch_size, max_num_patches=args.max_patches,
+                        fast_scene_detect=not args.accurate, silent=args.silent,
+                        generate_thumbnails=True)
         except Exception as e:
             if not args.silent:
                 print(f'Indexing error: {e}', file=sys.stderr)
