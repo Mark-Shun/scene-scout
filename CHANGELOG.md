@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Main highlights
 - **File handling and queue system**: It is now possible to parse multiple files, folders and index them all at once. There is also a GUI list component in which details about these files can be found and options changed.
+- **Database manager system**: Through the database manager system, it is possible to import multiple database files and dynamically search through them. Besides that there is info shown about the database and it's possible to merge database files into a new file.
 - **Enhanced update checker**: More data is now being retrieved from Github when there is a new release. And the update details are now shown on the GUI.
 - **Scene Export**: Export specific video scenes with customizable FFmpeg settings. Supports Stream Copy (fast) and Re-encode (exact frame accuracy) modes with progress tracking.
 
@@ -15,7 +16,7 @@ A pretty big update, focused on bringing more functionality to the tool and enha
 - **File handling and queue system**: It is now possible to parse multiple files, folders and index them all at once. There is also a GUI list component in which details about these files can be found and options changed.
 - **Enhanced update checker**: More data is now being retrieved from Github when there is a new release. And the update details are now shown on the GUI.
 - **Multi-Database Search**: Search across multiple databases simultaneously with merged and deduplicated results.
-- **Database Manager**: New popup interface for managing database files, setting targets, and viewing statistics.
+- **Database Manager**: New popup interface for managing database files, setting targets, merging db files and viewing statistics.
 
 ### Added
 - **Scene Export**: Export video scenes with FFmpeg integration via a dedicated dialog
@@ -60,8 +61,9 @@ A pretty big update, focused on bringing more functionality to the tool and enha
 - **CLI Search Logic**: `run_search()` now queries all active databases and merges results
 - **Interactive Shell State Tracking**: Shell now maintains its own `active_databases` list and `target_db` pointer, independent of argparse defaults
 
-### Fixed
-- **Markdown Link Parsing**: URLs are now hidden in the GUI, displaying only the relevant text labels for better readability.
+### Installation note
+Due to the usage of a new package (imageio-ffmpeg for ffmpeg functions), you might have to run the install script again.
+
 
 ## [1.0.1] - 2026-5-04
 
