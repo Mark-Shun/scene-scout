@@ -43,7 +43,7 @@ The focus on this fork has shifted from searching for videos/images in a user's 
 
 ### Setup
 
-- 1: Get the latest release of Scene Scout: 
+- *1: Get the latest release of Scene Scout:*
 
 https://github.com/Mark-Shun/scene-scout/releases/latest
 
@@ -53,7 +53,7 @@ Or clone it on your computer:
 git clone https://github.com/Mark-Shun/scene-scout
 ```
 
-- 2: Install the environment and dependencies with the install script in your preffered terminal:
+- *2: Install the environment and dependencies with the install script in your preffered terminal:*
 ```
 Windows run: install.bat
 ```
@@ -63,7 +63,7 @@ Mac/Linux run: install.sh
 During this step the install script will automatically install UV, Python, VLC, tkinter and all the required dependencies, depending on which options the user selected.
 
 
-- 2.5: Choose GPU or CPU option:
+- *2.5: Choose GPU or CPU option:*
 
 During installation you can choose the appropriate option for your system. If you don't have a graphics card or your setup is not supported, then it's also possible to run the tool with the CPU. However general performance is way slower.
 
@@ -74,7 +74,7 @@ During installation you can choose the appropriate option for your system. If yo
   <img src="assets/screenshots/install-options-linux-mac.png" width="50%">
 </div>
 
-- 3: Launch Scene Scout
+- *3: Launch Scene Scout*
 ```
 Windows run: scene-scout.bat
 ```
@@ -182,7 +182,7 @@ It's also possible to interact with the tool through the terminal alone.
 In this case you need a python environment with the appropriate packages.
 (You can also activate the uv environment in .venv)
 
-Enter interactive mode
+**Enter interactive mode**
 ```
 Windows run: scene-scout-cli.bat
 ```
@@ -190,27 +190,27 @@ Windows run: scene-scout-cli.bat
 Mac/Linux run: scene-scout-cli.sh
 ```
 
-Index a folder:
+**Index a folder:**
 ```bash
 python src/scenescout.py --index /path/to/images --db my_database.db
 ```
 
-Index multiple paths:
+**Index multiple paths:**
 ```bash
 python src/scenescout.py --index /path/to/videos --index /path/to/image_folder --index /path/to/single.mp4 --db my_database.db
 ```
 
-Search by text:
+**Search by text:**
 ```bash
 python src/scenescout.py --search-text "sunset over mountains" --db my_database.db --top-k 20
 ```
 
-Search by image:
+**Search by image:**
 ```bash
 python src/scenescout.py --search-image /path/to/query.jpg --db my_database.db
 ```
 
-Combined search (multimodal):
+**Combined search (multimodal):**
 ```bash
 python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_database.db
 ```
@@ -284,9 +284,6 @@ The tool uses Google's `siglip2-so400m-patch16-naflex` model with configurable p
 <summary><h2>Database management</h2></summary>
 
 Embeddings are stored in SQLite with automatic management:
-- Only modified or new files are re-indexed
-- Deleted files can be cleaned up with `--cleanup` flag
-- Each entry stores filepath, timestamp, embedding, and file type
 - **Multi-database support**: Search across multiple databases simultaneously with merged, deduplicated results
 - **Database Manager**: Popup interface showing database name, path, scene/video/image counts, and total statistics
 - **Active databases**: Configure multiple active databases with a primary target for indexing operations
