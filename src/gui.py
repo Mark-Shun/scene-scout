@@ -91,6 +91,12 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.config = config.load_config()
         config.SCENE_PLAYBACK = self.config['scene_playback']
 
+        # GPU offload
+        self._is_in_standby = False
+        self.gpu_standby_var = tk.BooleanVar(master=self, value=self.config.get('gpu_standby', True))
+        self._idle_counter = 0
+        self._idle_after_id = None
+
         # 2. INITIALIZE TRACKING VARIABLES IMMEDIATELY
         # This prevents the AttributeError if update_status is called early
         self.status_var = tk.StringVar(master=self, value='Initializing...')
@@ -138,6 +144,9 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.last_selected_entry = None
         self.current_sort_col = 'score'
         self.current_sort_reverse = True
+        self.canvas_scale = 1.0
+        self.canvas_offset_x = 0
+        self.canvas_offset_y = 0
 
         vlc_args = config.get_vlc_args()
         self.vlc_instance = vlc.Instance(*vlc_args)
@@ -145,13 +154,20 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         # 8. Run UI construction
         self.setup_widgets()
-
+        
         self.drop_target_register(DND_FILES)
         self.dnd_bind('<<Drop>>', self.on_handle_drop)
 
         self.load_saved_paths()
         self.set_controls_enabled(False)
         
+        # Periodic check of inactivity
+        self.bind_all("<Any-KeyPress>", self.reset_idle_timer)
+        self.bind_all("<Any-Button>", self.reset_idle_timer)
+        self.bind("<Unmap>", self._on_minimized)
+        self.bind("<Map>", self._on_restored)
+        self.check_idle_and_state()
+
         # When closing the app, run the on_closing logic
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
@@ -325,6 +341,9 @@ class SceneScoutApp(TkinterDnD.Tk):
             lambda e: self.save_config_key('device', self.device_var.get()))
         self.device_combobox.pack(fill='x')
 
+        self.device_var.trace_add('write', lambda *args: self._update_standby_ui_state())
+        self._update_standby_ui_state()
+
         ttk.Label(options_frame, text=f'Auto-detected: {self.device_msg}', font=('', 8, 'italic')).pack(anchor='w')
 
         # Add TRT Toggle if hardware supports it
@@ -393,6 +412,19 @@ class SceneScoutApp(TkinterDnD.Tk):
             command=lambda: self.save_config_key('generate_thumbnails', self.generate_thumbnails_var.get())
         )
         self.thumb_check.pack(anchor='w', pady=(5, 0))
+
+        # GPU Standby Toggle
+        self.standby_check = ttk.Checkbutton(options_frame, text='GPU Standby when minimized', variable=self.gpu_standby_var, command=self._on_standby_toggle_changed)
+        self.standby_check.pack(anchor='w', pady=(5, 0))
+        ToolTip(self.standby_check, 'Offload model to CPU when minimized or idle to free VRAM.')
+
+        self.device_var.trace_add('write', lambda *args: self._update_standby_ui_state())
+
+        self._update_standby_ui_state()
+
+        # Disable if current device is CPU
+        if self.device_var.get() == 'cpu':
+            self.standby_check.config(state='disabled')
         
         # Theme frame
         theme_frame = ttk.Frame(options_frame)
@@ -797,6 +829,9 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def _on_closing(self):
         """Cleanup resources before destroying the window."""
+        self.is_active = False
+        if self._idle_after_id:
+            self.after_cancel(self._idle_after_id)
         self._stop_video_loop()
         self.destroy()
 
@@ -1445,6 +1480,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if queue_count(self.primary_db) == 0:
             messagebox.showerror('Error', 'Please add files or folders to the queue before indexing.')
             return
+        self.ensure_model_active()
         self.index_button.config(state='disabled')
         self.search_button.config(state='disabled')
         self._cancel_event = threading.Event()
@@ -1567,6 +1603,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if not self.query_text_var.get() and (not self.query_image_path):
             messagebox.showwarning('Warning', 'Please enter text or select an image to search.')
             return
+        self.ensure_model_active()
         self.search_button.config(state='disabled')
         self._stop_video_loop()
         self.update_status('Searching...')
@@ -2292,3 +2329,80 @@ class SceneScoutApp(TkinterDnD.Tk):
                 self.query_image_var.set(os.path.basename(self.current_display_path))
                 self.query_text_var.set('')
                 self.threaded_search()
+    
+    def toggle_model_standby(self, to_cpu: bool):
+        """Moves the model between GPU and CPU to manage resources."""
+        if self.model is None or self.device.type != 'cuda':
+            return
+
+        if to_cpu and not self._is_in_standby:
+            self.update_status("Entering Standby: Moving model to CPU...")
+            self.model.to('cpu')
+            torch.cuda.empty_cache()
+            self._is_in_standby = True
+            self.update_status("Standby VRAM Freed")
+        
+        elif not to_cpu and self._is_in_standby:
+            self.update_status("Waking Up: Moving model to GPU...")
+            self.model.to(self.device)
+            self._is_in_standby = False
+            self.update_status("Model Active (GPU)")
+
+    def reset_idle_timer(self, event=None):
+        """Resets the idle counter on user input."""
+        self._idle_counter = 0
+        if self._is_in_standby:
+            self.toggle_model_standby(to_cpu=False)
+
+    def check_idle_and_state(self):
+        """Periodic background loop for time-based offloading."""
+        if not self.is_active:
+            return
+
+        # Increment counter
+        self._idle_counter += 1
+        
+        # Retrieve idle limit from config (default to 300s / 5 mins)
+        idle_limit = self.config.get('idle_offload_seconds', 300)
+
+        # Trigger standby if the feature is enabled and threshold is reached
+        if self.gpu_standby_var.get() and self._idle_counter >= idle_limit:
+            if not self._is_in_standby:
+                self.toggle_model_standby(to_cpu=True)
+
+        # Reschedule for 1 second from now
+        self._idle_after_id = self.after(1000, self.check_idle_and_state)
+    
+    def _update_standby_ui_state(self):
+        """Updates the toggle availability based on selected hardware."""
+        if not hasattr(self, 'standby_check'):
+            return
+        if self.device_var.get() == 'cpu':
+            self.standby_check.config(state='disabled')
+        else:
+            self.standby_check.config(state='normal')
+
+    def _on_minimized(self, event=None):
+        # Only trigger if the event is for the main window itself and feature is enabled
+        if event.widget == self and self.gpu_standby_var.get():
+            self.toggle_model_standby(to_cpu=True)
+
+    def _on_restored(self, event=None):
+        if event.widget == self:
+            self._idle_counter = 0  # Reset idle on return
+            self.toggle_model_standby(to_cpu=False)
+
+    def _on_standby_toggle_changed(self):
+        """Handles logic when user clicks the GUI toggle."""
+        val = self.gpu_standby_var.get()
+        self.save_config_key('gpu_standby', val)
+        
+        # If turned OFF while in standby, wake up immediately
+        if not val and self._is_in_standby:
+            self.toggle_model_standby(to_cpu=False)
+
+    def ensure_model_active(self):
+        """Guarantees the model is on the GPU before a heavy task begins."""
+        if self._is_in_standby:
+            self.toggle_model_standby(to_cpu=False)
+        self._idle_counter = 0 # Reset idle counter so it doesn't sleep mid-task

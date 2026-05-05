@@ -45,7 +45,9 @@ DEFAULT_CONFIG = {
     "export_audio_codec": "AAC (aac)",
     "export_crf": 23,
     "export_audio_bitrate": "192k",
-    "export_open_folder": True
+    "export_open_folder": True,
+    "gpu_standby": True,
+    "idle_offload_seconds": 300
 }
 
 def load_config() -> Dict[str, Any]:
