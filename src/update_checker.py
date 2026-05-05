@@ -75,13 +75,13 @@ def check_for_update():
             return {"update_available": False}
 
         if latest_parsed > current_parsed:
-            raw_body = data.get("body", "No release notes available.") #[cite: 12]
+            raw_body = data.get("body", "No release notes available.")
             
             return {
                 "update_available": True,
                 "current_version": current_version,
                 "latest_version": latest_version,
-                "url": "https://github.com/Mark-Shun/scene-scout/releases/latest", #[cite: 12]
+                "url": "https://github.com/Mark-Shun/scene-scout/releases/latest",
                 "notes": clean_release_notes(raw_body)
             }
             

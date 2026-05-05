@@ -427,13 +427,13 @@ class SceneScoutShell(cmd.Cmd):
             self.cached_embeddings = []
             from database import get_embedding_for_result
             
-            # 2. FIX: Create a lookup map (Basename -> Absolute Path)
+            # 2. Create a lookup map (Basename -> Absolute Path)
             db_path_map = {os.path.basename(p): p for p in self.active_databases}
             
             for res in self.last_results:
                 path, scene_idx, start_time, end_time, thumb, score, source_db_name = res
                 
-                # 3. FIX: Resolve the full path before fetching the embedding
+                # 3. Resolve the full path before fetching the embedding
                 full_db_path = db_path_map.get(source_db_name, source_db_name)
                 emb = get_embedding_for_result(full_db_path, path, scene_idx)
                 self.cached_embeddings.append(emb)
