@@ -13,6 +13,8 @@ import gui_utils
 from gui_utils import ToolTip
 import config
 
+_FFMPEG_CACHE = None
+
 class SceneExportDialog(tk.Toplevel):
     """Dialog for exporting a video scene with customizable options."""
 
@@ -414,18 +416,19 @@ class SceneExportDialog(tk.Toplevel):
 
     def _get_ffmpeg_path(self) -> str:
         """Get path to FFmpeg binary."""
+        global _FFMPEG_CACHE
+        if _FFMPEG_CACHE:
+            return _FFMPEG_CACHE
+
         try:
             import imageio_ffmpeg
-            return imageio_ffmpeg.get_ffmpeg_exe()
+            path = imageio_ffmpeg.get_ffmpeg_exe()
         except ImportError:
-            pass
+            import shutil
+            path = shutil.which('ffmpeg') or 'ffmpeg'
 
-        import shutil
-        ffmpeg_path = shutil.which('ffmpeg')
-        if ffmpeg_path:
-            return ffmpeg_path
-
-        return 'ffmpeg'  # Fallback, may fail but provides clear error
+        _FFMPEG_CACHE = path
+        return path
     
     def _get_video_encode_args(self) -> list:
         args = []
