@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS index_queue (
 
 def init_db(db_path: str) -> None:
     with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(DB_SCHEMA)
 
     # Migration/healing check
