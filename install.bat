@@ -101,7 +101,7 @@ if "%EXTRA%"=="" (
 )
 
 echo Running installer with extra: %EXTRA%...
-uv sync --extra %EXTRA% %FLAGS% %PY_VER%
+"%UV_EXE%" sync --extra %EXTRA% %FLAGS% %PY_VER%
 
 :: Check if the previous command failed (errorlevel >= 1)
 if errorlevel 1 (

@@ -3,7 +3,7 @@ setlocal
 set "UV_DIR=%~dp0.uv"
 set "UV_EXE=%UV_DIR%\uv.exe"
 
-uv run --no-sync src\scenescout.py
+"%UV_EXE%" run --no-sync src\scenescout.py
 
 if errorlevel 1 (
     pause

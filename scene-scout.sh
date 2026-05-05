@@ -7,9 +7,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UV_DIR="$SCRIPT_DIR/.uv" 
 UV_EXE="$UV_DIR/uv" 
 
-# Add the local uv directory to the PATH for this session
-export PATH="$UV_DIR:$PATH"
-
 # --- macOS Library Linking ---
 if [[ "$OSTYPE" == "darwin"* ]]; then
     # Standard path for Homebrew on Apple Silicon
@@ -31,6 +28,5 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     fi
 fi
 
-
 # Run the application using uv 
-uv run --no-sync src/scenescout.py
+"$UV_EXE" run --no-sync src/scenescout.py
