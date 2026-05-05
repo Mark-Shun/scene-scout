@@ -6,6 +6,52 @@ from PIL import Image, ImageTk
 import webbrowser
 import re
 
+
+class ToolTip:
+    """Creates a tooltip for a given widget."""
+    def __init__(self, widget, text, delay=500):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self._after_id = None
+        self._tipwindow = None
+        self.widget.bind('<Enter>', self._schedule)
+        self.widget.bind('<Leave>', self._hide)
+        self.widget.bind('<Motion>', self._move)
+
+    def _schedule(self, event=None):
+        self._unschedule()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _unschedule(self):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def _show(self):
+        if self._tipwindow or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+        self._tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f'+{x}+{y}')
+        label = ttk.Label(tw, text=self.text, background='#ffffe0', relief='solid', borderwidth=1, wraplength=240)
+        label.pack(ipadx=6, ipady=3)
+
+    def _move(self, event=None):
+        if self._tipwindow:
+            x = self.widget.winfo_rootx() + 20
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+            self._tipwindow.wm_geometry(f'+{x}+{y}')
+
+    def _hide(self, event=None):
+        self._unschedule()
+        if self._tipwindow:
+            self._tipwindow.destroy()
+            self._tipwindow = None
+
+
 def load_app_icon(master_window, icon_path):
     """Loads and resizes the application icon, returning the ImageTk object."""
     try:
@@ -63,7 +109,6 @@ def insert_markdown(text_widget, text):
     text_widget.tag_configure('bold', font=(base_font, 9, 'bold'))
     text_widget.tag_configure('code', font=(mono_font, 9)) 
     
-    # Indentation tags
     # lmargin1 is the first line, lmargin2 is where wrapped text aligns
     text_widget.tag_configure('bullet', lmargin1=15, lmargin2=30, spacing1=2, spacing3=2)
     text_widget.tag_configure('normal', lmargin1=5, lmargin2=5, spacing1=2, spacing3=2)

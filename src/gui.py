@@ -17,48 +17,8 @@ import av
 import numpy as np
 import torch
 
-class ToolTip:
-    def __init__(self, widget, text, delay=500):
-        self.widget = widget
-        self.text = text
-        self.delay = delay
-        self._after_id = None
-        self._tipwindow = None
-        self.widget.bind('<Enter>', self._schedule)
-        self.widget.bind('<Leave>', self._hide)
-        self.widget.bind('<Motion>', self._move)
+from gui_utils import ToolTip
 
-    def _schedule(self, event=None):
-        self._unschedule()
-        self._after_id = self.widget.after(self.delay, self._show)
-
-    def _unschedule(self):
-        if self._after_id:
-            self.widget.after_cancel(self._after_id)
-            self._after_id = None
-
-    def _show(self):
-        if self._tipwindow or not self.text:
-            return
-        x = self.widget.winfo_rootx() + 20
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
-        self._tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f'+{x}+{y}')
-        label = ttk.Label(tw, text=self.text, background='#ffffe0', relief='solid', borderwidth=1, wraplength=240)
-        label.pack(ipadx=6, ipady=3)
-
-    def _move(self, event=None):
-        if self._tipwindow:
-            x = self.widget.winfo_rootx() + 20
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
-            self._tipwindow.wm_geometry(f'+{x}+{y}')
-
-    def _hide(self, event=None):
-        self._unschedule()
-        if self._tipwindow:
-            self._tipwindow.destroy()
-            self._tipwindow = None
 try:
     import torch_directml
 except ImportError:
@@ -488,7 +448,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         list_scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.results_tree.yview)
         list_scrollbar.pack(side='right', fill='y')
         self.results_tree.config(yscrollcommand=list_scrollbar.set)
-        self.results_tree.bind('<<TreeviewSelect>>', self.on_result_select)
+        self.results_tree.bind('<<TreeviewSelect>>', self.on_selection_change)
         self.results_tree.bind('<Double-1>', self.on_result_double_click)
         self.results_tree.bind('<Button-3>', self.on_results_right_click)
         
@@ -508,9 +468,13 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.preview_image_canvas.bind('<MouseWheel>', self.on_canvas_zoom)
         self.preview_image_canvas.bind('<Double-1>', self.on_canvas_double_click)
         self.preview_image_canvas.bind('<Button-3>', self.on_canvas_right_click)
-        
+
         self.video_container = ttk.Frame(self.preview_image_canvas)
         self.video_container.pack(fill='both', expand=True)
+
+        self.export_btn = ttk.Button(preview_frame, text='Export Scene...', state='disabled', command=self.open_export_dialog)
+        self.export_btn.pack(fill='x', padx=5, pady=(5, 0))
+        ToolTip(self.export_btn, 'Export the selected scene as a video file.')
 
         self.thumb_outer_frame = ttk.Frame(preview_frame, height=330) 
         self.thumb_outer_frame.pack(fill='x', side='bottom', pady=(5,0))
@@ -1689,7 +1653,21 @@ class SceneScoutApp(TkinterDnD.Tk):
     def on_canvas_right_click(self, event: tk.Event):
         if not self.current_display_path:
             return
+
+        sel = self.results_tree.selection()
         menu = tk.Menu(self, tearoff=0)
+
+        if sel:
+            index = int(sel[0])
+            file_type = self.search_results[index][2]
+            start_ms = self.search_results[index][5]
+            end_ms = self.search_results[index][6]
+
+            if file_type == 'video' and start_ms is not None and end_ms is not None:
+                menu.add_command(label='Export Scene...',
+                               command=lambda: self.open_export_dialog_for_index(index))
+                menu.add_separator()
+
         menu.add_command(label='Copy Path', command=lambda path=self.current_display_path: self.clipboard_append(path))
         menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
         menu.add_separator()
@@ -1705,12 +1683,86 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.results_tree.selection_set(iid)
         index = int(iid)
         path = self.search_results[index][0]
+        file_type = self.search_results[index][2]
+        start_ms = self.search_results[index][5]
+        end_ms = self.search_results[index][6]
         self.current_display_path = path
         menu = tk.Menu(self, tearoff=0)
+
+        if file_type == 'video' and start_ms is not None and end_ms is not None:
+            menu.add_command(label='Export Scene...',
+                           command=lambda: self.open_export_dialog_for_index(index))
+            menu.add_separator()
+
         menu.add_command(label='Copy Path', command=lambda p=path: self.clipboard_append(p))
         menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
         menu.add_command(label='Open File', command=self.open_current_file)
         menu.post(event.x_root, event.y_root)
+
+    def on_selection_change(self, event: tk.Event):
+        """Handle treeview selection change to update export button state."""
+        sel = self.results_tree.selection()
+        if not sel:
+            self.export_btn.config(state='disabled')
+            return
+
+        index = int(sel[0])
+        if index < len(self.search_results):
+            file_type = self.search_results[index][2]
+            start_ms = self.search_results[index][5]
+            end_ms = self.search_results[index][6]
+
+            if file_type == 'video' and start_ms is not None and end_ms is not None:
+                self.export_btn.config(state='normal')
+            else:
+                self.export_btn.config(state='disabled')
+        else:
+            self.export_btn.config(state='disabled')
+
+        # Call the original on_result_select to display media
+        self.on_result_select(event)
+
+    def open_export_dialog(self):
+        """Open export dialog for the currently selected scene."""
+        sel = self.results_tree.selection()
+        if not sel:
+            return
+        # sel[0] is the tree iid, which we use as the index
+        self.open_export_dialog_for_index(int(sel[0]))
+
+    def open_export_dialog_for_index(self, index: int):
+        """Open export dialog for a specific search result index."""
+        if index >= len(self.search_results):
+            return
+
+        path = self.search_results[index][0]
+        start_ms = self.search_results[index][5]
+        end_ms = self.search_results[index][6]
+
+        # 1. Save the user's current playback preference
+        original_playback_state = config.SCENE_PLAYBACK
+
+        # 2. Temporarily disable playback to show a static frame and release the VLC file lock
+        if original_playback_state:
+            config.SCENE_PLAYBACK = False
+            self.display_media(path, is_video=True, start_ms=start_ms, end_ms=end_ms)
+        else:
+            self._stop_video_loop()
+
+        from exporter import SceneExportDialog
+        dialog = SceneExportDialog(self, path, start_ms, end_ms)
+        
+        # 3. Yield the event loop until the export dialog is closed/destroyed
+        self.wait_window(dialog)
+        
+        # 4. Restore the playback preference once the dialog closes
+        if original_playback_state:
+            config.SCENE_PLAYBACK = True
+            
+            # Restart the video playback if the same item is still selected
+            sel = self.results_tree.selection()
+            if sel and int(sel[0]) == index:
+                self.display_media(path, is_video=True, start_ms=start_ms, end_ms=end_ms)
 
     def open_current_file(self):
             """Opens the selected file, using VLC with a timestamp if enabled."""

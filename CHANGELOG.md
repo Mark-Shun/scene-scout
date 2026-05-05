@@ -7,8 +7,10 @@ All notable changes to this project will be documented in this file.
 ### Main highlights
 - **File handling and queue system**: It is now possible to parse multiple files, folders and index them all at once. There is also a GUI list component in which details about these files can be found and options changed.
 - **Enhanced update checker**: More data is now being retrieved from Github when there is a new release. And the update details are now shown on the GUI.
+- **Scene Export**: Export specific video scenes with customizable FFmpeg settings. Supports Stream Copy (fast) and Re-encode (exact frame accuracy) modes with progress tracking.
 
 ### Added
+- **Scene Export**: Export video scenes with FFmpeg integration via a dedicated dialog
 - **Media Queue System**: Replace single-folder indexing with a queue-based system supporting multiple files and folders
 - **Queue Manager Popup**: Inspect, modify, and manage queued items with a Treeview list view
 - **Drag & Drop to Queue**: Drop files/folders directly onto the queue area in the GUI
