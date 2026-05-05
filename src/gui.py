@@ -131,6 +131,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.processor = None
         self.active_databases: List[str] = []
         self.primary_db: Optional[str] = None
+        self.db_manager_dlg = None
+        self.queue_manager_dlg = None
         self.query_image_path = None
         self.search_results = []
         self.last_selected_entry = None
@@ -546,6 +548,8 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.save_db_config()
             self._update_button_states()
             self.update_status(f'Added {len(added)} database(s).')
+            if self.db_manager_dlg and self.db_manager_dlg.winfo_exists():
+                self.db_manager_dlg.refresh()
 
     def save_db_config(self):
         self.config['active_databases'] = self.active_databases
@@ -556,6 +560,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         from database import get_db_stats
         
         dlg = tk.Toplevel(self)
+        self.db_manager_dlg = dlg
         gui_utils.apply_window_icon(dlg, self.app_icon)
         dlg.title('Database Manager')
         dlg.transient(self)
@@ -617,6 +622,8 @@ class SceneScoutApp(TkinterDnD.Tk):
                 ))
                 item_to_db[iid] = db_path
             update_status(total_scenes)
+
+        dlg.refresh = refresh_tree
 
         def update_status(total_scenes=0):
             count = len(self.active_databases)
@@ -744,7 +751,12 @@ class SceneScoutApp(TkinterDnD.Tk):
         refresh_tree()
 
         ttk.Button(main_frame, text='Close', command=dlg.destroy).pack(pady=(10, 0))
-        dlg.protocol('WM_DELETE_WINDOW', dlg.destroy)
+
+        def on_destroy():
+            self.db_manager_dlg = None
+            dlg.destroy()
+
+        dlg.protocol('WM_DELETE_WINDOW', on_destroy)
 
     def _update_button_states(self):
         has_search_dbs = len(self.active_databases) > 0
@@ -910,6 +922,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         if added > 0:
             self.update_queue_status()
             self.update_status(f'Added {added} item(s) to queue.')
+            if self.queue_manager_dlg and self.queue_manager_dlg.winfo_exists():
+                self.queue_manager_dlg.refresh()
         elif paths:
             self.update_status('No valid media files or directories dropped.')
 
@@ -945,6 +959,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         from database import get_queue, remove_from_queue, clear_queue, update_queue_recursive, queue_count
 
         dlg = tk.Toplevel(self)
+        self.queue_manager_dlg = dlg
         gui_utils.apply_window_icon(dlg, self.app_icon)
         dlg.title('Queue Manager')
         dlg.transient(self)
@@ -1007,6 +1022,8 @@ class SceneScoutApp(TkinterDnD.Tk):
                 item_to_queue_id[iid] = qid
             tree.tag_configure('missing', foreground='gray')
             update_status_label(missing_count)
+
+        dlg.refresh = refresh_tree
 
         def update_status_label(missing=0):
             count = queue_count(self.primary_db)
@@ -1145,7 +1162,11 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         ttk.Button(main_frame, text='Close', command=dlg.destroy).pack(pady=(10, 0))
 
-        dlg.protocol('WM_DELETE_WINDOW', dlg.destroy)
+        def on_destroy():
+            self.queue_manager_dlg = None
+            dlg.destroy()
+
+        dlg.protocol('WM_DELETE_WINDOW', on_destroy)
 
     def browse_database(self):
         path = filedialog.asksaveasfilename(parent=self, title='Create New Database File', initialdir='', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
