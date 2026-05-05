@@ -11,81 +11,77 @@ export UV_CACHE_DIR="$UV_DIR/uv_cache"
 # Set UV options
 export UV_VENV_CLEAR=1
 
-# Install uv locally if missing 
+# 1. Install uv locally if missing
 if [ ! -f "$UV_EXE" ]; then
     echo "Downloading uv to isolated folder..." 
     mkdir -p "$UV_DIR" 
-    # Use the official installation script for Unix systems
     export UV_INSTALL_DIR="$UV_DIR"
     export UV_UNMANAGED_INSTALL="1"
     curl -LsSf https://astral.sh/uv/install.sh | sh 
 fi
 
-# --- System Dependency Check ---
+export PATH="$UV_DIR:$PATH" 
+
+# 2. Dependency Check Logic
+CLI_ONLY=0
+
+check_vlc() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        [ -d "/Applications/VLC.app" ] || command -v vlc >/dev/null 2>&1
+    else
+        command -v vlc >/dev/null 2>&1
+    fi
+}
+
 install_dependencies() {
-    # Detect Operating System
     if [[ "$OSTYPE" == "darwin"* ]]; then
         echo "Detected macOS..."
-        if [[ -f /opt/homebrew/bin/brew ]]; then
-            eval "$(/opt/homebrew/bin/brew shellenv)"
+        if command -v brew >/dev/null 2>&1; then
+            echo "Installing VLC and Tcl/Tk via Homebrew..."
+            brew install --cask vlc && brew install tcl-tk
+        else
+            echo "[!] Homebrew not found. Automated install failed."
+            return 1
         fi
-        if ! command -v brew &> /dev/null; then
-            read -p "[?] Homebrew not found. Would you like to install it now? [y/n] " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                echo "Installing Homebrew..."
-                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-                # Configure Homebrew for the current shell session (Required for Apple Silicon)
-                if [[ -f /opt/homebrew/bin/brew ]]; then
-                    eval "$(/opt/homebrew/bin/brew shellenv)"
-                elif [[ -f /usr/local/bin/brew ]]; then
-                    eval "$(/usr/local/bin/brew shellenv)"
-                fi
-            else
-                echo "[!] Homebrew is required for automated dependency installation. Skipping..."
-                return 1
-            fi
-        fi
-        echo "Installing/Updating VLC and Tcl/Tk via Homebrew..."
-        brew install --cask vlc
-        brew install tcl-tk
     elif [ -f /etc/os-release ]; then
         . /etc/os-release
         case "$ID" in
-            ubuntu|debian|linuxmint|lubuntu)
-                echo "Detected Debian-based system ($ID)..."
-                sudo apt update && sudo apt install -y python3-tk vlc
-                ;;
+            ubuntu|debian|linuxmint)
+                sudo apt update && sudo apt install -y python3-tk vlc ;;
             arch|manjaro)
-                echo "Detected Arch-based system ($ID)..."
-                sudo pacman -S --needed --noconfirm tk vlc vlc-plugin-ffmpeg vlc-plugin-mpeg2 vlc-plugin-x264 vlc-plugin-x265 vlc-plugin-matroska
-                ;;
-            *)
-                echo "Unknown Linux distribution. Please install 'tk' and 'vlc' manually."
-                ;;
+                sudo pacman -S --needed --noconfirm tk vlc ;;
+            *) return 1 ;;
         esac
     fi
 }
 
-# Ask the user for dependency check
-read -p "Check and install system dependencies (VLC and tkinter)? [y/n] " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    install_dependencies
+echo "Checking for VLC..."
+if check_vlc; then
+    echo "VLC is already installed."
+else
+    echo "VLC was not found. The GUI requires VLC for video playback."
+    read -p "Attempt to install dependencies automatically? [y/n] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        install_dependencies
+        if ! check_vlc; then
+            echo "[!] Automatic installation failed. Continuing in CLI-only mode."
+            CLI_ONLY=1
+        fi
+    else
+        CLI_ONLY=1
+    fi
 fi
 
-# Add the isolated folder to this session's PATH 
-export PATH="$UV_DIR:$PATH" 
-
-# Interactive Menu
+# 3. Hardware Selection
 echo "------------------------------------------"
 echo "Install options for graphics card acceleration:"
-echo "1) NVIDIA CUDA 13.0 (RTX, newer GPUs)"
-echo "2) NVIDIA CUDA 12.6 (GTX, older GPUs)"
+echo "1) NVIDIA CUDA 13.0 (Linux Only)"
+echo "2) NVIDIA CUDA 12.6 (Linux Only)"
 echo "3) Intel Arc/Xe (XPU)" 
-echo "4) AMD ROCm (Linux only)"
+echo "4) AMD ROCm (Linux Only)"
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "5) CPU (Apple MAC: Fast with MPS support (M chips), but slow on regular CPU)"
+    echo "5) Apple Silicon / CPU (MPS support)"
 else
     echo "5) CPU (Slow)"
 fi
@@ -93,36 +89,29 @@ echo "------------------------------------------"
 
 read -p "Select an option [1-5]: " user_choice
 
-# Map choices to uv extras
 case "$user_choice" in
     1) EXTRA="cu130" ;;
     2) EXTRA="cu126" ;;
     3) EXTRA="xpu" ;;
     4) EXTRA="rocm" ;;
     5) EXTRA="cpu" ;;
-    *) 
-        echo "Error: Invalid selection."
-        exit 1 
-        ;;
+    *) echo "Error: Invalid selection."; exit 1 ;;
 esac
 
-echo "Running installer with extra: $EXTRA..."
-if ! uv venv; then
-    echo "Error: Failed to create the virtual environment."
-    read -p "Press [Enter] to continue..."
-    exit 1
-fi
-
-if uv pip install -e .["$EXTRA"]; then
-    echo "------------------------------------------"
-    echo "Installation successful, you can now open run.sh"
-    echo "------------------------------------------"
-    read -p "Press [Enter] to continue..."
+echo "Synchronizing environment with extra: $EXTRA..."
+# uv sync ensures the environment matches pyproject.toml
+if uv sync --extra "$EXTRA" --python 3.12; then
+    echo "--------------------------------------------------"
+    echo "Installation successful."
+    if [ "$CLI_ONLY" -eq 1 ]; then
+        echo "NOTICE: VLC/Tkinter missing. Only CLI mode is supported."
+        echo "You can install these manually if you want to use the GUI."
+        echo "Run via: ./run_cli.sh"
+    else
+        echo "Run via: ./run_gui.sh"
+    fi
+    echo "--------------------------------------------------"
 else
-    echo "------------------------------------------"
-    echo "Error: Something went wrong during the installation."
-    echo "Please check the logs above for details."
-    echo "------------------------------------------"
-    read -p "Press [Enter] to continue..."
+    echo "Error: Synchronization failed."
     exit 1
 fi
