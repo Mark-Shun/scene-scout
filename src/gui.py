@@ -6,6 +6,7 @@ import tkinter as tk
 import subprocess
 import webbrowser
 import sqlite3
+import gc
 from model_loader import load_siglip_model
 from tkinter import filedialog, messagebox, ttk, simpledialog
 from typing import Callable, List, Optional, Tuple
@@ -1614,6 +1615,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.thumbnail_references.clear()
         self.thumbnail_widgets = {} 
         visible_thumb_count = 0
+        gc.collect() # Force garbage collection of old data
 
         if not self.search_results:
             self.stats_label.config(text='No results found.')
