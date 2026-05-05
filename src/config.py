@@ -39,7 +39,14 @@ DEFAULT_CONFIG = {
     "active_databases": [],
     "primary_database": "",
     "github_token": "",
-    "show_update_details": False
+    "show_update_details": False,
+    "export_mode": "encode",
+    "export_audio_mode": "Copy Audio",
+    "export_video_codec": "H.264 (libx264)",
+    "export_audio_codec": "AAC (aac)",
+    "export_crf": 23,
+    "export_audio_bitrate": "192k",
+    "export_open_folder": True
 }
 
 def load_config() -> Dict[str, Any]:

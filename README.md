@@ -29,6 +29,7 @@ The focus on this fork has shifted from searching for videos/images in a user's 
 - **Multi-Database Search**: Query multiple databases simultaneously with merged, deduplicated results and source database labels
 - **Image-to-Scene search**: Search a scene using reference images
 - **Video playback support**: Watch the scene play out in the GUI
+- **Scene Export**: Export video scenes with customizable FFmpeg settings (Stream Copy/Re-encode), audio options, and progress tracking
 - **Dual interface**: Available both as GUI and CLI
 - **Standalone CLI**: Options for an interactive CLI interface with the possibility to retrieve JSON data of search results.
 - **GPU acceleration**: Supports for various acceleration platforms (CPU (Apple SMP), CUDA, TensorRT, DML, Intel Arc/Xe, AMD ROCm)
@@ -119,7 +120,7 @@ Example queries:
 > It is supported to drag and drop a database file and a folder in the GUI. It automatically resolves the paths.
 
 **First Time Setup (Creating a new database):**
-
+ 
 1. Click **"Database->Create New..."** → Select where you want to create the database
 2. *(Optional)* Click **"Manage Databases..."** to view statistics and configure multiple databases
 3. Add files/folders to the queue using one of these methods:
@@ -131,6 +132,14 @@ Example queries:
 6. Enter a search query in the "Text" field or click **"Load Query Image..."**
 7. Click **"Search Scene"** to find matching scenes
 8. *(Optional)* Search across multiple databases by adding more databases via "Manage Databases..."
+
+**Exporting Scenes:**
+- Right-click any video search result → **"Export Scene..."**
+- Or click the **"Export Scene..."** button below the preview panel
+- Choose between **Stream Copy** (fast, lossless) or **Re-encode** (exact frame accuracy)
+- Customize video (codec, resolution, CRF) and audio (copy, disable, re-encode) options
+- Progress bar shows real-time export status
+- Some settings are saved between sessions via `scene_scout_config.json`, others are extracted from the source video.
 
 **Searching an existing database:**
 
@@ -291,6 +300,7 @@ Embeddings are stored in SQLite with automatic management:
 - **Image processing**: PIL with decompression bomb protection disabled
 - **Video processing**: For accurate detection, PySceneDetect is used to detect new scenes, for the fast detection method AV is utilised to quickly extract I-frames.
 - **Video playback**: VLC is utilized for the video playback, when showing just the first frame AV is used.
+- **Scene video export**: Utilising FFMPEG to export a chosen scene to a video.
 
 
 ## License
