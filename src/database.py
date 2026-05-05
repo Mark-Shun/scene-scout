@@ -2,7 +2,7 @@ import os
 import sqlite3
 from typing import Callable, List, Optional, Tuple
 import numpy as np
-
+from pathlib import Path
 import config
 
 DB_SCHEMA = f"""
@@ -309,6 +309,87 @@ def queue_count(db_path: str) -> int:
             return cursor.fetchone()[0]
     except sqlite3.Error:
         return 0
+
+def combine_databases(source_db_paths: List[str], output_db_path: str, progress_callback: Optional[Callable] = None) -> None:
+    """Merges databases using Python-level iteration to bypass SQLite ATTACH locks."""
+    abs_out = str(Path(output_db_path).resolve())
+    safe_sources = [p for p in source_db_paths if str(Path(p).resolve()) != abs_out]
+    
+    init_db(output_db_path)
+    
+    # Track inserted files to prevent duplicate entries if databases overlap
+    seen_images = set()
+    seen_videos = set()
+    
+    with sqlite3.connect(output_db_path, timeout=10.0) as target_conn:
+        target_cursor = target_conn.cursor()
+        
+        for i, source_db in enumerate(safe_sources):
+            if progress_callback:
+                progress_callback(f"Merging database {i+1}/{len(safe_sources)}...")
+                
+            try:
+                # Connect individually (avoids ATTACH locking completely)
+                source_uri = f"file:{Path(source_db).as_posix()}?mode=ro"
+                with sqlite3.connect(source_uri, uri=True, timeout=10.0) as source_conn:
+                    source_cursor = source_conn.cursor()
+                    
+                    # 1. Merge image_embeddings
+                    source_cursor.execute("SELECT filepath, modified_at, embedding, model_version, file_type FROM image_embeddings")
+                    while True:
+                        batch = source_cursor.fetchmany(1000)
+                        if not batch: break
+                        
+                        filtered_batch = [row for row in batch if row[0] not in seen_images]
+                        if filtered_batch:
+                            target_cursor.executemany("""
+                                INSERT INTO image_embeddings 
+                                (filepath, modified_at, embedding, model_version, file_type) 
+                                VALUES (?, ?, ?, ?, ?)
+                            """, filtered_batch)
+                            seen_images.update(row[0] for row in filtered_batch)
+                            
+                    # 2. Merge processed_videos & scene_embeddings
+                    source_cursor.execute("SELECT filepath, modified_at, model_version FROM processed_videos")
+                    while True:
+                        v_batch = source_cursor.fetchmany(500)
+                        if not v_batch: break
+                        
+                        filtered_v_batch = [row for row in v_batch if row[0] not in seen_videos]
+                        if not filtered_v_batch:
+                            continue
+                            
+                        # Insert videos
+                        target_cursor.executemany("""
+                            INSERT INTO processed_videos 
+                            (filepath, modified_at, model_version) 
+                            VALUES (?, ?, ?)
+                        """, filtered_v_batch)
+                        
+                        new_filepaths = [row[0] for row in filtered_v_batch]
+                        seen_videos.update(new_filepaths)
+                        
+                        # Fetch and insert scenes linked to these videos
+                        placeholders = ','.join('?' * len(new_filepaths))
+                        source_cursor.execute(f"""
+                            SELECT filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail 
+                            FROM scene_embeddings 
+                            WHERE filepath IN ({placeholders})
+                        """, new_filepaths)
+                        
+                        scenes = source_cursor.fetchall()
+                        if scenes:
+                            target_cursor.executemany("""
+                                INSERT INTO scene_embeddings 
+                                (filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail) 
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            """, scenes)
+                            
+            except Exception as e:
+                raise RuntimeError(f"Error reading {os.path.basename(source_db)}: {e}")
+                
+        target_conn.commit()
+
 
 def get_db_stats(db_path: str) -> dict:
     """Return metadata about a database: scene_count, video_count, image_count, file_size_kb."""

@@ -714,6 +714,25 @@ class SceneScoutApp(TkinterDnD.Tk):
         remove_btn.pack(side='left', padx=5)
         ToolTip(remove_btn, 'Remove the selected database from the search list.')
         
+        def combine_all_databases():
+            if not self.active_databases:
+                messagebox.showwarning('Warning', 'No active databases to combine.')
+                return
+            
+            out_path = filedialog.asksaveasfilename(
+                title='Save Combined Database', 
+                filetypes=[('SQLite Database', '*.db')], 
+                defaultextension='.db'
+            )
+            
+            if out_path:
+                dlg.destroy()
+                self.threaded_task(self._combine_task, out_path)
+
+        combine_btn = ttk.Button(btn_frame, text='Combine All...', command=combine_all_databases)
+        combine_btn.pack(side='left', padx=5)
+        ToolTip(combine_btn, 'Merge all databases in the list into a single new file.')
+        
         refresh_btn = ttk.Button(btn_frame, text='Refresh', command=refresh_tree)
         refresh_btn.pack(side='left', padx=5)
         ToolTip(refresh_btn, 'Re-query all databases for updated scene/video/image counts.')
@@ -1288,6 +1307,72 @@ class SceneScoutApp(TkinterDnD.Tk):
             return
         if messagebox.askyesno('Confirm', 'Remove entries for deleted files from the database?'):
             self.threaded_task(self._cleanup_task)
+
+    def show_merging_popup(self):
+        """Creates a non-blocking progress popup for the database merge."""
+        self.merge_popup = tk.Toplevel(self)
+        gui_utils.apply_window_icon(self.merge_popup, self.app_icon)
+        self.merge_popup.title('Merging Databases')
+        self.merge_popup.transient(self)
+        self.merge_popup.grab_set()
+        self.merge_popup.minsize(400, 150)
+        
+        frame = ttk.Frame(self.merge_popup, padding=20)
+        frame.pack(fill='both', expand=True)
+        
+        self.merge_status_var = tk.StringVar(master=self.merge_popup, value='Starting merge...')
+        ttk.Label(frame, textvariable=self.merge_status_var, font=('Arial', 10, 'bold')).pack(pady=(0, 10))
+        
+        self.merge_progress = ttk.Progressbar(frame, mode='indeterminate')
+        self.merge_progress.pack(fill='x', pady=5)
+        self.merge_progress.start(10)
+        
+        gui_utils.center_window(self.merge_popup, 400, 150)
+        self.merge_popup.protocol('WM_DELETE_WINDOW', lambda: None)
+
+    def update_merge_status(self, message: str):
+        """Thread-safe update for the merge popup label."""
+        if hasattr(self, 'merge_status_var'):
+            self.after(0, lambda: self.merge_status_var.set(message))
+        # Also update the main status bar
+        self.update_status(message)
+
+    def close_merging_popup(self):
+        """Safely closes the merge popup and stops the progress bar."""
+        if hasattr(self, 'merge_progress') and self.merge_progress:
+            try:
+                self.merge_progress.stop()
+            except Exception:
+                pass
+                
+        if hasattr(self, 'merge_popup') and self.merge_popup:
+            try:
+                self.merge_popup.destroy()
+            except Exception:
+                pass
+            self.merge_popup = None
+
+    def _combine_task(self, out_path: str):
+        from database import combine_databases
+        
+        # 1. Initialize the popup on the main thread
+        self.after(0, self.show_merging_popup)
+        self.after(0, lambda: self.set_controls_enabled(False))
+        
+        try:
+            # 2. Pass the UI update method as the callback
+            combine_databases(self.active_databases, out_path, self.update_merge_status)
+            
+            self.after(0, lambda: self._add_databases([out_path]))
+            self.after(0, lambda: messagebox.showinfo('Success', 'Databases combined successfully.'))
+        except Exception as e:
+            error_msg = str(e)
+            self.after(0, lambda: messagebox.showerror('Merge Error', f'Failed to combine databases: {error_msg}'))
+        finally:
+            # 3. Clean up UI
+            self.after(0, self.close_merging_popup)
+            self.after(0, lambda: self.set_controls_enabled(True))
+            self.update_status('Database merge complete.')
 
     def _cleanup_task(self):
         assert self.primary_db is not None
