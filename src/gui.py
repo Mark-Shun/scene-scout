@@ -45,10 +45,7 @@ import config
 import gui_utils
 
 def show_splash():
-    root = tk.Tk()
-    root.withdraw()
-
-    splash = tk.Toplevel(root)
+    splash = tk.Tk()
     splash.overrideredirect(True)
     
     # Load and resize logo
@@ -65,12 +62,7 @@ def show_splash():
     label.pack()
 
     # Attach to splash object so it can be referenced later
-    splash.status_label = ttk.Label(
-        splash, 
-        text="Initializing...", 
-        font=("Arial", 10),
-        anchor="center"
-    )
+    splash.status_label = ttk.Label(splash, text="Initializing...", font=("Arial", 10), anchor="center")
     splash.status_label.pack(fill='x', pady=10)
     
     # Calculate center position including the new label height
@@ -82,12 +74,13 @@ def show_splash():
     splash.geometry(f"{w}x{h}+{x}+{y}")
     
     splash.lift()
-    return splash, root
+    return splash
 
 class SceneScoutApp(TkinterDnD.Tk):
 
     def __init__(self, splash_ref=None):
         super().__init__()
+        self.withdraw()
         self.is_active = True
         self.title('Scene Scout')
         self.splash_ref = splash_ref
@@ -159,7 +152,6 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         # When closing the app, run the on_closing logic
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
-        self.withdraw()
 
 
     def setup_widgets(self):

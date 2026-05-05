@@ -26,7 +26,7 @@ if __name__ == '__main__':
         from gui import SceneScoutApp, show_splash
         from gui_utils import show_update_dialog
         
-        splash, splash_root = show_splash()
+        splash = show_splash()
         splash.status_label.config(text="Starting Scene Scout GUI")
         splash.update()
 
@@ -42,11 +42,6 @@ if __name__ == '__main__':
 
         splash.destroy()
         app.splash_ref = None
-
-        try:
-            splash_root.destroy()
-        except Exception:
-            pass
             
         # Trigger the update dialog after the main window is rendered
         if update_info and update_info.get("update_available"):
