@@ -23,24 +23,34 @@ class SceneExportDialog(tk.Toplevel):
         '1080p': 1080,
         '720p': 720,
         '480p': 480,
+        'Custom': 'custom'
     }
 
     VIDEO_CODECS = {
         'H.264 (libx264)': 'libx264',
         'H.265 (libx265)': 'libx265',
-        'VP9 (libvpx-vp9)': 'libvpx-vp9'
+        'AV1 (libsvtav1)': 'libsvtav1',
+        'VP9 (libvpx-vp9)': 'libvpx-vp9',
+        'ProRes 422 (prores_ks)': 'prores_ks'
     }
 
-    AUDIO_MODES = {
-        'Copy Audio': 'copy',
-        'Disable Audio': 'disable',
-        'Re-encode Audio': 'reencode'
+    CONTAINERS = {
+        'MP4 (.mp4)': '.mp4',
+        'Matroska (.mkv)': '.mkv',
+        'QuickTime (.mov)': '.mov',
+        'WebM (.webm)': '.webm'
     }
 
     AUDIO_CODECS = {
         'AAC (aac)': 'aac',
         'MP3 (libmp3lame)': 'libmp3lame',
         'Opus (libopus)': 'libopus'
+    }
+
+    AUDIO_MODES = {
+        'Copy Audio (Fast)': 'copy',
+        'Re-encode Audio': 'encode',
+        'No Audio (Mute)': 'disable'
     }
 
     def __init__(self, parent, video_path: str, start_ms: int, end_ms: int):
@@ -134,17 +144,26 @@ class SceneExportDialog(tk.Toplevel):
         self._build_crf_option(self.video_frame)
 
     def _build_resolution_option(self, parent):
-        """Build resolution dropdown."""
         ttk.Label(parent, text='Resolution:').grid(row=0, column=0, sticky='w', pady=2)
-
-        # Default to 'Original' or whatever the user saved previously
-        saved_res = self.config.get('export_resolution', 'Original')
-        self.resolution_var = tk.StringVar(self, value=saved_res)
         
-        resolution_combo = ttk.Combobox(parent, textvariable=self.resolution_var,
-                                        values=list(self.RESOLUTION_PRESETS.keys()),
-                                        state='readonly', width=20)
-        resolution_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
+        self.resolution_var = tk.StringVar(self, value='Original')
+        res_combo = ttk.Combobox(parent, textvariable=self.resolution_var, 
+                                values=list(self.RESOLUTION_PRESETS.keys()), state='readonly')
+        # Use sticky='w' to keep the dropdown to the left
+        res_combo.grid(row=0, column=1, sticky='w', padx=(10, 0))
+        res_combo.bind('<<ComboboxSelected>>', lambda e: self._update_widget_states())
+
+        # Custom Resolution Fields
+        self.custom_res_frame = ttk.Frame(parent)
+        self.width_var = tk.StringVar(self, value='1920')
+        self.height_var = tk.StringVar(self, value='1080')
+        
+        ttk.Entry(self.custom_res_frame, textvariable=self.width_var, width=6).pack(side='left')
+        ttk.Label(self.custom_res_frame, text='x').pack(side='left', padx=2)
+        ttk.Entry(self.custom_res_frame, textvariable=self.height_var, width=6).pack(side='left')
+        
+        # Initialize hidden
+        self.custom_res_frame.grid_forget()
 
     def _build_codec_option(self, parent):
         """Build video codec dropdown."""
@@ -294,6 +313,11 @@ class SceneExportDialog(tk.Toplevel):
 
         # Update keyframe info label
         self.keyframe_info_var.set(self._get_keyframe_info())
+        
+        if self.resolution_var.get() == 'Custom' and self.mode_var.get() == 'encode':
+            self.custom_res_frame.grid(row=0, column=2, padx=(0, 0), sticky='w')
+        else:
+            self.custom_res_frame.grid_forget()
 
     def _save_settings(self):
         """Save current export settings to config."""
@@ -404,17 +428,21 @@ class SceneExportDialog(tk.Toplevel):
         return 'ffmpeg'  # Fallback, may fail but provides clear error
     
     def _get_video_encode_args(self) -> list:
-        """Get video encoding arguments for re-encode mode."""
         args = []
-
         codec_name = self.VIDEO_CODECS.get(self.video_codec_var.get(), 'libx264')
         args.extend(['-c:v', codec_name])
         args.extend(['-crf', str(self.crf_var.get())])
 
-        target_height = self.RESOLUTION_PRESETS.get(self.resolution_var.get())
-        if target_height:
-            args.extend(['-vf', f'scale=-2:{target_height}'])
-
+        res_choice = self.resolution_var.get()
+        if res_choice == 'Custom':
+            # Ensure dimensions are even numbers (requirement for many codecs)
+            w, h = self.width_var.get(), self.height_var.get()
+            args.extend(['-vf', f'scale={w}:{h}'])
+        else:
+            target_height = self.RESOLUTION_PRESETS.get(res_choice)
+            if target_height:
+                args.extend(['-vf', f'scale=-2:{target_height}'])
+        
         return args
 
     def _get_audio_args(self) -> list:
