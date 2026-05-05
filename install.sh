@@ -106,9 +106,9 @@ if uv sync --extra "$EXTRA" --python 3.12; then
     if [ "$CLI_ONLY" -eq 1 ]; then
         echo "NOTICE: VLC/Tkinter missing. Only CLI mode is supported."
         echo "You can install these manually if you want to use the GUI."
-        echo "Run via: ./run_cli.sh"
+        echo "Run via: ./scene-scout-cli.sh"
     else
-        echo "Run via: ./run_gui.sh"
+        echo "Run via: ./scene-scout.sh"
     fi
     echo "--------------------------------------------------"
 else

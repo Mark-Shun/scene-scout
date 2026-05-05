@@ -76,10 +76,10 @@ During installation you can choose the appropriate option for your system. If yo
 
 - 3: Launch Scene Scout
 ```
-Windows run: run_gui.bat
+Windows run: scene-scout.bat
 ```
 ```
-Mac/Linux run: run_gui.sh
+Mac/Linux run: scene-scout.sh
 ```
 
 ## Usage
@@ -179,10 +179,10 @@ In this case you need a python environment with the appropriate packages.
 
 Enter interactive mode
 ```
-Windows run: run_cli.bat
+Windows run: scene-scout-cli.bat
 ```
 ```
-Mac/Linux run: run_cli.sh
+Mac/Linux run: scene-scout-cli.sh
 ```
 
 Index a folder:
