@@ -86,32 +86,26 @@ def center_window(window, width, height):
     y = (sh - height) // 2
     window.geometry(f"{width}x{height}+{x}+{y}")
 
+RE_STRIP_IMAGES = re.compile(r'!\[.*?\]\(.*?\)')
+RE_STRIP_LINKS = re.compile(r'\[([^\]]+)\]\(.*?\)')
+RE_MARKDOWN_PARTS = re.compile(r'(\*\*.*?\*\*|`.*?`)')
+
 def insert_markdown(text_widget, text):
     """A lightweight Markdown parser for tk.Text widgets."""
     
-    # 1. Pre-process text to strip markdown artifacts
-    # Strip images entirely: ![alt text](url) -> ""
-    text = re.sub(r'!\[.*?\]\(.*?\)', '', text)
-    # Strip links but keep the display text: [display text](url) -> display text
-    text = re.sub(r'\[([^\]]+)\]\(.*?\)', r'\1', text)
+    text = RE_STRIP_IMAGES.sub('', text)
+    text = RE_STRIP_LINKS.sub(r'\1', text)
     
-    # 2. Define text styles (tags)
-    # Using Tkinter's cross-platform built-in fonts ensures it blends with any theme
-    base_font = "TkDefaultFont"
-    mono_font = "TkFixedFont"
-    
-    # Headings (with spacing above and below)
-    text_widget.tag_configure('h1', font=(base_font, 14, 'bold'), spacing1=15, spacing3=5)
-    text_widget.tag_configure('h2', font=(base_font, 12, 'bold'), spacing1=10, spacing3=5)
-    text_widget.tag_configure('h3', font=(base_font, 11, 'bold'), spacing1=10, spacing3=3)
-    
-    # Inline formatting
-    text_widget.tag_configure('bold', font=(base_font, 9, 'bold'))
-    text_widget.tag_configure('code', font=(mono_font, 9)) 
-    
-    # lmargin1 is the first line, lmargin2 is where wrapped text aligns
-    text_widget.tag_configure('bullet', lmargin1=15, lmargin2=30, spacing1=2, spacing3=2)
-    text_widget.tag_configure('normal', lmargin1=5, lmargin2=5, spacing1=2, spacing3=2)
+    if 'h1' not in text_widget.tag_names():
+        base_font = "TkDefaultFont"
+        mono_font = "TkFixedFont"
+        text_widget.tag_configure('h1', font=(base_font, 14, 'bold'), spacing1=15, spacing3=5)
+        text_widget.tag_configure('h2', font=(base_font, 12, 'bold'), spacing1=10, spacing3=5)
+        text_widget.tag_configure('h3', font=(base_font, 11, 'bold'), spacing1=10, spacing3=3)
+        text_widget.tag_configure('bold', font=(base_font, 9, 'bold'))
+        text_widget.tag_configure('code', font=(mono_font, 9))
+        text_widget.tag_configure('bullet', lmargin1=15, lmargin2=30, spacing1=2, spacing3=2)
+        text_widget.tag_configure('normal', lmargin1=5, lmargin2=5, spacing1=2, spacing3=2)
 
     lines = text.split('\n')
     for line in lines:
@@ -142,9 +136,7 @@ def insert_markdown(text_widget, text):
         else:
             line_tags = ('normal',)
         
-        # Parse Inline Markdown (Bold and Code blocks)
-        # Regex splits the line while keeping the delimiters so we can identify them
-        parts = re.split(r'(\*\*.*?\*\*|`.*?`)', line)
+        parts = RE_MARKDOWN_PARTS.split(line)
         
         for part in parts:
             if not part:
