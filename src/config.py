@@ -20,7 +20,7 @@ text_logo = ASSETS_DIR / "logo" / "scene-scout-text-logo.png"
 
 DEFAULT_MODEL = 'google/siglip2-so400m-patch16-naflex'
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
-VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm')
+VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.ts', '.m2ts', '.mts', '.mpg', '.mpeg', '.vob', '.m4v', '.f4v', '.3gp', '.ogv', '.mxf')
 
 # Defining every possible setting and its baseline value
 DEFAULT_CONFIG = {
@@ -45,7 +45,9 @@ DEFAULT_CONFIG = {
     "export_audio_codec": "AAC (aac)",
     "export_crf": 23,
     "export_audio_bitrate": "192k",
-    "export_open_folder": True
+    "export_open_folder": True,
+    "gpu_standby": True,
+    "idle_offload_seconds": 300
 }
 
 def load_config() -> Dict[str, Any]:

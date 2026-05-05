@@ -39,7 +39,8 @@ def _run_batch_inference(frames, info, model, processor, device, cursor, path, g
 
             if generate_thumbnails:
                 thumb = frames[idx].copy()
-                thumb.thumbnail((160, 160), Image.Resampling.BILINEAR)
+                # Restrict max size to 160px width and 90px height to natively fit the 3 rows
+                thumb.thumbnail((160, 90), Image.Resampling.BILINEAR)
                 buffer = io.BytesIO()
                 thumb.save(buffer, format="JPEG", quality=60, optimize=True)
                 thumb_bytes = buffer.getvalue()
