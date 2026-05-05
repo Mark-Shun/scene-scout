@@ -571,7 +571,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         columns = ('target', 'name', 'path', 'scenes', 'videos', 'images')
         tree = ttk.Treeview(tree_frame, columns=columns, show='headings',
-                           selectmode='browse', height=10)
+                           selectmode='extended', height=10)
         tree.heading('target', text='')
         tree.heading('name', text='Name')
         tree.heading('path', text='Path')
@@ -661,17 +661,32 @@ class SceneScoutApp(TkinterDnD.Tk):
                 self.update_queue_status()
 
         def remove_selected():
-            sel = tree.selection()
-            if not sel:
+            selected_items = tree.selection()
+            if not selected_items:
                 messagebox.showwarning('Warning', 'No database selected.')
                 return
-            db_path = item_to_db.get(sel[0])
-            if db_path:
-                self.active_databases.remove(db_path)
-                if self.primary_db == db_path:
-                    self.primary_db = self.active_databases[0] if self.active_databases else None
+            
+            current_idx = tree.index(selected_items[0])
+            
+            if messagebox.askyesno('Confirm', f'Remove {len(selected_items)} selected database(s)?'):
+                for item in selected_items:
+                    db_path = item_to_db.get(item)
+                    if db_path:
+                        if db_path in self.active_databases:
+                            self.active_databases.remove(db_path)
+                        if self.primary_db == db_path:
+                            self.primary_db = self.active_databases[0] if self.active_databases else None
+                
                 self.save_db_config()
                 refresh_tree()
+                
+                children = tree.get_children()
+                if children:
+                    new_idx = min(current_idx, len(children) - 1)
+                    tree.selection_set(children[new_idx])
+                    tree.focus(children[new_idx])
+                    tree.see(children[new_idx])
+                
                 self._update_db_section()
                 self._update_button_states()
                 self.update_queue_status()
@@ -714,14 +729,17 @@ class SceneScoutApp(TkinterDnD.Tk):
             item = tree.identify_row(event.y)
             if not item:
                 return
-            tree.selection_set(item)
+            if item not in tree.selection():
+                tree.selection_set(item)
             menu = tk.Menu(tree, tearoff=0)
             menu.add_command(label='Set as Target', command=set_target)
             menu.add_separator()
-            menu.add_command(label='Remove', command=remove_selected)
+            menu.add_command(label=f'Remove ({len(tree.selection())})', command=remove_selected)
             menu.post(event.x_root, event.y_root)
 
         tree.bind('<Button-3>', show_context_menu)
+
+        dlg.bind('<Delete>', lambda e: remove_selected())
 
         refresh_tree()
 
@@ -1008,6 +1026,9 @@ class SceneScoutApp(TkinterDnD.Tk):
             if not selected:
                 messagebox.showwarning('Warning', 'No items selected.')
                 return
+            
+            current_idx = tree.index(selected[0])
+
             if messagebox.askyesno('Confirm', 'Remove %d selected item(s)?' % len(selected)):
                 for iid in selected:
                     qid = item_to_queue_id.get(iid)
@@ -1015,6 +1036,13 @@ class SceneScoutApp(TkinterDnD.Tk):
                         remove_from_queue(self.primary_db, qid)
                 refresh_tree()
                 self.update_queue_status()
+                
+                children = tree.get_children()
+                if children:
+                    new_idx = min(current_idx, len(children) - 1)
+                    tree.selection_set(children[new_idx])
+                    tree.focus(children[new_idx])
+                    tree.see(children[new_idx])
 
         def clear_all():
             if messagebox.askyesno('Confirm', 'Clear all items from the queue?'):
