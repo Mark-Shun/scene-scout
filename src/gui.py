@@ -1411,7 +1411,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if hasattr(self, '_cancel_event') and self._cancel_event is not None:
             self._cancel_event.set()
         if hasattr(self, 'index_filename_var'):
-            self.index_status_var.set('Cancelling...')
+            self.index_filename_var.set('Cancelling...')
         if hasattr(self, 'index_popup') and self.index_popup:
             self.index_popup.grab_release()
 
@@ -1929,13 +1929,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             
         except Exception as e:
             self.update_status(f"VLC Error: {e}")
-
-    def _setup_vlc_loop(self, media):
-        # VLC doesn't have a simple 'loop range' flag, so we use events
-        events = self.player.event_manager()
-        events.event_attach(vlc.EventType.MediaPlayerEndReached, 
-                        lambda e: self.player.set_media(media) or self.player.play())
-
+    
     def _stop_video_loop(self):
         if hasattr(self, 'player'):
             self.player.stop()

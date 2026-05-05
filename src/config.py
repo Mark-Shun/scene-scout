@@ -22,8 +22,6 @@ DEFAULT_MODEL = 'google/siglip2-so400m-patch16-naflex'
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
 VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm')
 
-SCENE_DETECTOR_THRESHOLD = 30
-
 # Defining every possible setting and its baseline value
 DEFAULT_CONFIG = {
     "generate_thumbnails": True,
