@@ -49,5 +49,8 @@ models/
 # Configuration
 *.json
 
+# Generic files
+*.lnk
+
 # Scene Scout specific folder
 temp/

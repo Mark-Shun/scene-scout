@@ -14,12 +14,23 @@ set "UV_CACHE_DIR=%UV_DIR%\uv_cache"
 :: Set UV options
 set "UV_VENV_CLEAR=1"
 
+:: Set shortcut variables
+set "NAME=Scene Scout"
+set "TARGET=scene-scout.bat"
+set "ICON=assets\logo\scene-scout-logo.ico"
+set "BASE_DIR=%~dp0"
+set "TARGET_PATH=%BASE_DIR%%TARGET%"
+set "ICON_PATH=%BASE_DIR%%ICON%"
+set "SHORTCUT_PATH=%BASE_DIR%%NAME%.lnk"
+
 :: Install uv locally if missing 
 if not exist "%UV_EXE%" (
     echo Downloading uv to isolated folder... 
     if not exist "%UV_DIR%" mkdir "%UV_DIR%" 
     powershell -ExecutionPolicy Bypass -Command "$env:UV_INSTALL_DIR='%UV_DIR%'; $env:UV_UNMANAGED_INSTALL='1'; irm https://astral.sh/uv/install.ps1 | iex" 
 )
+
+powershell -ExecutionPolicy Bypass -Command "$s = (New-Object -ComObject WScript.Shell).CreateShortcut('%SHORTCUT_PATH%'); " "$s.TargetPath = '%TARGET_PATH%'; " "$s.WorkingDirectory = '%WORKING_DIR%'; " "$s.IconLocation = 'cmd.exe'; " "$s.Save()"
 
 :: Add the isolated folder to this session's PATH 
 set "PATH=%UV_DIR%;%PATH%" 
@@ -113,5 +124,15 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Installation succesful, you can now open run.bat
+echo.
+echo Creating shortcut for %NAME%...
+powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%SHORTCUT_PATH%'); $s.TargetPath='%TARGET_PATH%'; $s.WorkingDirectory='%BASE_DIR%'; $s.IconLocation='%ICON_PATH%'; $s.Save()"
+
+echo.
+if exist "%SHORTCUT_PATH%" (
+    echo [SUCCESS] Shortcut created at: %SHORTCUT_PATH%, open the file to start %NAME%.
+) else (
+    echo [ERROR] Failed to create shortcut.
+)
+
 pause
