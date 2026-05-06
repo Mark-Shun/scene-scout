@@ -1791,10 +1791,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                     elif ftype == 'video':
                         if isinstance(scene_idx, tuple):
                             start_idx, end_idx = scene_idx
-                            cursor.execute(
-                                'SELECT embedding FROM scene_embeddings WHERE filepath=? AND scene_index >= ? AND scene_index <= ?', 
-                                (path, start_idx, end_idx)
-                            )
+                            cursor.execute('''
+                                SELECT se.embedding FROM scene_embeddings se
+                                JOIN processed_videos pv ON se.video_id = pv.id
+                                WHERE pv.filepath=? AND se.scene_index >= ? AND se.scene_index <= ?
+                            ''', (path, start_idx, end_idx))
                             results = cursor.fetchall()
                             if results:
                                 max_sim = -1.0
@@ -1805,7 +1806,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                                         max_sim = sim
                                 self.search_results[i] = (path, score, ftype, max_sim, scene_idx, scene_time, scene_end, thumb_bytes, source_db)
                         else:
-                            cursor.execute('SELECT embedding FROM scene_embeddings WHERE filepath=? AND scene_index=?', (path, scene_idx))
+                            cursor.execute('''
+                                SELECT se.embedding FROM scene_embeddings se
+                                JOIN processed_videos pv ON se.video_id = pv.id
+                                WHERE pv.filepath=? AND se.scene_index=?
+                            ''', (path, scene_idx))
                             result = cursor.fetchone()
                             if result:
                                 embedding = np.frombuffer(result[0], dtype=np.float32)

@@ -17,23 +17,25 @@ CREATE TABLE IF NOT EXISTS image_embeddings (
 
 -- track which video files have been fully processed; scenes go into scene_embeddings
 CREATE TABLE IF NOT EXISTS processed_videos (
-    filepath TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filepath TEXT UNIQUE NOT NULL,
     modified_at REAL NOT NULL,
-    model_version TEXT DEFAULT '{config.DEFAULT_MODEL}'
+    model_version TEXT DEFAULT '{config.DEFAULT_MODEL}',
+    status TEXT DEFAULT 'completed'
 );
 
 CREATE TABLE IF NOT EXISTS scene_embeddings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filepath TEXT NOT NULL,
+    video_id INTEGER NOT NULL,
     scene_index INTEGER NOT NULL,
     start_time_ms INTEGER NOT NULL,
     end_time_ms INTEGER NOT NULL,
     embedding BLOB NOT NULL,
     thumbnail BLOB,
-    FOREIGN KEY (filepath) REFERENCES processed_videos(filepath) ON DELETE CASCADE
+    FOREIGN KEY (video_id) REFERENCES processed_videos(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_scene_filepath ON scene_embeddings(filepath);
+CREATE INDEX IF NOT EXISTS idx_scene_video_id ON scene_embeddings(video_id);
 
 -- index queue for tracking files/directories to process
 CREATE TABLE IF NOT EXISTS index_queue (
@@ -49,9 +51,19 @@ def init_db(db_path: str) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
-        conn.executescript(DB_SCHEMA)
+        
+        # Check if this is a fresh database by looking for a core table
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='image_embeddings'")
+        db_exists = cursor.fetchone() is not None
 
-    # Migration/healing check
+        if not db_exists:
+            # Fresh database: run full schema and set the latest version
+            conn.executescript(DB_SCHEMA)
+            conn.execute("PRAGMA user_version = 3")
+            return
+
+    # Existing database: skip DB_SCHEMA to avoid index clashes and let migration handle it
     migrate_database(db_path)
 
 def db_is_empty(db_path: str) -> bool:
@@ -168,7 +180,12 @@ def search_db(query_embedding: np.ndarray, db_paths: List[str], top_k: int=10, s
 def _search_scenes_single(query_embedding: np.ndarray, db_path: str, source_name: str, top_k: int = 50, similarity_threshold: float = -1.0, batch_size: int = 1000) -> List[Tuple[str, int, int, int, bytes, float, str]]:
     with sqlite3.connect(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail FROM scene_embeddings')
+        cursor.execute('''
+            SELECT pv.filepath, se.scene_index, se.start_time_ms, se.end_time_ms, se.embedding, se.thumbnail
+            FROM scene_embeddings se
+            JOIN processed_videos pv ON se.video_id = pv.id
+            WHERE pv.status = 'completed'
+        ''')
         results = []
         while True:
             batch = cursor.fetchmany(batch_size)
@@ -242,6 +259,66 @@ def migrate_database(db_path: str):
             
             conn.execute("PRAGMA user_version = 2")
             conn.commit()
+
+        # VERSION 3: Transition to Integer Foreign Keys & Status Column
+        if current_version < 3:
+            # Disable foreign keys during table reconstruction
+            conn.execute("PRAGMA foreign_keys = OFF")
+            
+            try:
+                # 1. Create the new structured tables
+                conn.execute("""
+                    CREATE TABLE processed_videos_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        filepath TEXT UNIQUE NOT NULL,
+                        modified_at REAL NOT NULL,
+                        model_version TEXT DEFAULT 'siglip-base-patch16-224',
+                        status TEXT DEFAULT 'completed'
+                    )
+                """)
+                
+                conn.execute("""
+                    CREATE TABLE scene_embeddings_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        video_id INTEGER NOT NULL,
+                        scene_index INTEGER NOT NULL,
+                        start_time_ms INTEGER NOT NULL,
+                        end_time_ms INTEGER NOT NULL,
+                        embedding BLOB NOT NULL,
+                        thumbnail BLOB,
+                        FOREIGN KEY (video_id) REFERENCES processed_videos_new(id) ON DELETE CASCADE
+                    )
+                """)
+
+                # 2. Migrate Data: processed_videos
+                conn.execute("""
+                    INSERT INTO processed_videos_new (filepath, modified_at, model_version)
+                    SELECT filepath, modified_at, model_version FROM processed_videos
+                """)
+
+                # 3. Migrate Data: scene_embeddings (Attaching the new ID)
+                conn.execute("""
+                    INSERT INTO scene_embeddings_new (video_id, scene_index, start_time_ms, end_time_ms, embedding, thumbnail)
+                    SELECT pv_new.id, se.scene_index, se.start_time_ms, se.end_time_ms, se.embedding, se.thumbnail
+                    FROM scene_embeddings se
+                    JOIN processed_videos_new pv_new ON se.filepath = pv_new.filepath
+                """)
+
+                # 4. Swap tables and recreate index
+                conn.execute("DROP TABLE scene_embeddings")
+                conn.execute("DROP TABLE processed_videos")
+                conn.execute("ALTER TABLE processed_videos_new RENAME TO processed_videos")
+                conn.execute("ALTER TABLE scene_embeddings_new RENAME TO scene_embeddings")
+                conn.execute("CREATE INDEX idx_scene_video_id ON scene_embeddings(video_id)")
+                
+                conn.execute("PRAGMA user_version = 3")
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                print(f"Migration to v3 failed: {e}")
+            finally:
+                # Re-enable foreign keys
+                conn.execute("PRAGMA foreign_keys = ON")
 
 
 def add_to_queue(db_path: str, path: str, is_directory: bool, recursive: bool = True) -> bool:
@@ -350,40 +427,51 @@ def combine_databases(source_db_paths: List[str], output_db_path: str, progress_
                             seen_images.update(row[0] for row in filtered_batch)
                             
                     # 2. Merge processed_videos & scene_embeddings
-                    source_cursor.execute("SELECT filepath, modified_at, model_version FROM processed_videos")
+                    source_cursor.execute("SELECT id, filepath, modified_at, model_version, status FROM processed_videos")
                     while True:
                         v_batch = source_cursor.fetchmany(500)
                         if not v_batch: break
                         
-                        filtered_v_batch = [row for row in v_batch if row[0] not in seen_videos]
+                        filtered_v_batch = [row for row in v_batch if row[1] not in seen_videos]
                         if not filtered_v_batch:
                             continue
                             
-                        # Insert videos
-                        target_cursor.executemany("""
-                            INSERT INTO processed_videos 
-                            (filepath, modified_at, model_version) 
-                            VALUES (?, ?, ?)
-                        """, filtered_v_batch)
+                        # Insert videos and track old_id to new_id mapping
+                        id_mapping = {}
+                        for row in filtered_v_batch:
+                            target_cursor.execute("""
+                                INSERT INTO processed_videos 
+                                (filepath, modified_at, model_version, status) 
+                                VALUES (?, ?, ?, ?)
+                            """, (row[1], row[2], row[3], row[4]))
+                            new_id = target_cursor.lastrowid
+                            id_mapping[row[0]] = new_id
+                            seen_videos.add(row[1])
                         
-                        new_filepaths = [row[0] for row in filtered_v_batch]
-                        seen_videos.update(new_filepaths)
-                        
-                        # Fetch and insert scenes linked to these videos
-                        placeholders = ','.join('?' * len(new_filepaths))
+                        # Fetch and insert scenes linked to these videos (using old ids)
+                        old_ids = list(id_mapping.keys())
+                        placeholders = ','.join('?' * len(old_ids))
                         source_cursor.execute(f"""
-                            SELECT filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail 
+                            SELECT video_id, scene_index, start_time_ms, end_time_ms, embedding, thumbnail 
                             FROM scene_embeddings 
-                            WHERE filepath IN ({placeholders})
-                        """, new_filepaths)
+                            WHERE video_id IN ({placeholders})
+                        """, old_ids)
                         
                         scenes = source_cursor.fetchall()
                         if scenes:
-                            target_cursor.executemany("""
-                                INSERT INTO scene_embeddings 
-                                (filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail) 
-                                VALUES (?, ?, ?, ?, ?, ?)
-                            """, scenes)
+                            # Remap video_id to new ids
+                            remapped_scenes = []
+                            for scene in scenes:
+                                new_video_id = id_mapping.get(scene[0])
+                                if new_video_id:
+                                    remapped_scenes.append((new_video_id, scene[1], scene[2], scene[3], scene[4], scene[5]))
+                            
+                            if remapped_scenes:
+                                target_cursor.executemany("""
+                                    INSERT INTO scene_embeddings 
+                                    (video_id, scene_index, start_time_ms, end_time_ms, embedding, thumbnail) 
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """, remapped_scenes)
                             
             except Exception as e:
                 raise RuntimeError(f"Error reading {os.path.basename(source_db)}: {e}")
@@ -414,7 +502,11 @@ def get_embedding_for_result(db_path: str, filepath: str, scene_idx: Optional[in
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
             if scene_idx is not None:
-                cursor.execute('SELECT embedding FROM scene_embeddings WHERE filepath=? AND scene_index=?', (filepath, scene_idx))
+                cursor.execute('''
+                    SELECT se.embedding FROM scene_embeddings se
+                    JOIN processed_videos pv ON se.video_id = pv.id
+                    WHERE pv.filepath=? AND se.scene_index=?
+                ''', (filepath, scene_idx))
             else:
                 cursor.execute('SELECT embedding FROM image_embeddings WHERE filepath=?', (filepath,))
 
