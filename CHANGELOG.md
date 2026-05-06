@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.1.0] - 2026-05-05
+## [1.1.0] - 2026-05-06
 
 A pretty big update, focused on bringing more functionality to the tool and enhancing existing features.
 
