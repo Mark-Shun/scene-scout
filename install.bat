@@ -91,7 +91,7 @@ goto :PROCEED_NORMAL
 echo.
 echo TensorRT can significantly speed up search on NVIDIA GPUs.
 echo Note: This requires an extra ~1GB download and dynamic initial compile time for search and index.
-choice /C YN /M "Would you like to install with TensorRT optimization? "
+choice /C YN /M "Would you like to install with TensorRT optimization?"
 if errorlevel 2 (
     if "%user_choice%"=="1" set "EXTRA=cu130"
     if "%user_choice%"=="2" set "EXTRA=cu126"
@@ -135,9 +135,10 @@ powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.S
 
 echo.
 if exist "%SHORTCUT_PATH%" (
-    powershell -Command "Write-Host '`n[SUCCESS] Shortcut created at: %SHORTCUT_PATH%`n' -ForegroundColor Green"
+    powershell -Command "Write-Host '[SUCCESS] Shortcut created at: %SHORTCUT_PATH%' -ForegroundColor Green"
 ) else (
-    powershell -Command "Write-Host '`n[ERROR] Failed to create shortcut. Check permissions.`n' -ForegroundColor Red"
+    powershell -Command "Write-Host '[ERROR] Failed to create shortcut. Check permissions.' -ForegroundColor Red"
+    powershell -Command "Write-Host 'Though you can manually run scene-scout.bat without the shortcut' -ForegroundColor Cyan"
 )
 
 pause
