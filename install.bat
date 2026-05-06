@@ -41,6 +41,7 @@ powershell -ExecutionPolicy Bypass -Command "$s = (New-Object -ComObject WScript
 set "PATH=%UV_DIR%;%PATH%" 
 
 :: Check for VLC Media Player
+echo.
 echo Checking for VLC...
 if exist "C:\Program Files\VideoLAN\VLC\vlc.exe" (
     echo VLC is already installed. 
@@ -51,7 +52,6 @@ echo VLC was not found. This application requires VLC for the scene playback vie
 choice /C YN /M "Would you like to install VLC via winget now?"
 
 :: CHOICE sets errorlevel: 1 for Y, 2 for N
-:: Note: 'if errorlevel' checks if value is >= the number. Check 2 first.
 if errorlevel 2 (
     echo Skipping automatic VLC installation. Please install VLC manually at: https://www.videolan.org/
     pause 
@@ -68,6 +68,7 @@ if errorlevel 1 (
 )
 
 echo VLC installed successfully.
+echo.
 
 :MENU
 :: Interactive Menu
@@ -84,7 +85,6 @@ set /p user_choice="Select an option [1-5]: "
 
 :: Handle NVIDIA-specific TensorRT question
 if "%user_choice%"=="1" goto :TRT_PROMPT
-if "%user_choice%"=="2" goto :TRT_PROMPT
 goto :PROCEED_NORMAL
 
 :TRT_PROMPT
@@ -135,9 +135,9 @@ powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.S
 
 echo.
 if exist "%SHORTCUT_PATH%" (
-    echo [SUCCESS] Shortcut created at: %SHORTCUT_PATH%, open the file to start %NAME%.
+    powershell -Command "Write-Host '`n[SUCCESS] Shortcut created at: %SHORTCUT_PATH%`n' -ForegroundColor Green"
 ) else (
-    echo [ERROR] Failed to create shortcut.
+    powershell -Command "Write-Host '`n[ERROR] Failed to create shortcut. Check permissions.`n' -ForegroundColor Red"
 )
 
 pause
