@@ -18,7 +18,7 @@ dependencies = [
     "transformers>=4.35.0",
     "tkinterdnd2>=0.3.0",
     "ttkthemes",
-
+    "hf-transfer",
 ]
 
 [project.optional-dependencies]
