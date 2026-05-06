@@ -173,6 +173,10 @@ class SceneScoutShell(cmd.Cmd):
             pass
         readline.set_history_length(1000)
 
+    def _db_status_callback(self, msg):
+        if not getattr(self.state, 'silent', False):
+            print(f"[INFO] {msg}")
+
     def postcmd(self, stop, line):
         if HISTORY_AVAILABLE and readline is not None:
             try:
@@ -264,7 +268,7 @@ class SceneScoutShell(cmd.Cmd):
                 return
             self.active_databases.append(abs_path)
             try:
-                init_db(abs_path)
+                init_db(abs_path, status_callback=self._db_status_callback)
             except Exception as e:
                 print(f"Error initializing database: {e}")
                 self.active_databases.remove(abs_path)
@@ -330,7 +334,7 @@ class SceneScoutShell(cmd.Cmd):
             
         try:
             abs_path = str(Path(db_path).resolve())
-            init_db(abs_path)
+            init_db(abs_path, status_callback=self._db_status_callback)
             if abs_path not in self.active_databases:
                 self.active_databases.append(abs_path)
             if not self.target_db:
@@ -517,7 +521,7 @@ class SceneScoutShell(cmd.Cmd):
             if not target:
                 print("Error: No target database set. Use 'db target <index>' to set one.")
                 return
-            init_db(target)
+            init_db(target, status_callback=self._db_status_callback)
             from database import get_queue, remove_from_queue, clear_queue
             
             cmd_action = args[0] if args else 'ls'
@@ -564,7 +568,7 @@ class SceneScoutShell(cmd.Cmd):
             return
             
         paths = shlex.split(arg)
-        init_db(target)
+        init_db(target, status_callback=self._db_status_callback)
         
         from database import add_to_queue
         added = 0
@@ -601,7 +605,7 @@ class SceneScoutShell(cmd.Cmd):
         if not target:
             print("Error: No target database set. Use 'db target <index>' to set one.")
             return
-        init_db(target)
+        init_db(target, status_callback=self._db_status_callback)
         count = cleanup_orphaned_entries(target)
         if not getattr(self.state, 'silent', False):
             print(f'Removed {count} orphaned embeddings.')
@@ -662,6 +666,10 @@ def cli_mode(update_info=None):
     parser.add_argument('--end', type=int, help='End time of the scene in milliseconds')
     parser.add_argument('--out', type=str, help='Output file path for the exported video')
     args = parser.parse_args()
+
+    def cli_migration_callback(msg):
+        if not args.silent:
+            print(f"[INFO] {msg}")
 
     saved_config = config.load_config()
     
@@ -727,14 +735,14 @@ def cli_mode(update_info=None):
 
     for db_path in active_dbs:
         try:
-            init_db(db_path)
+            init_db(db_path, cli_migration_callback)
         except Exception as e:
             if not args.silent:
                 print(f'Database error ({db_path}): {e}', file=sys.stderr)
 
     if target_db:
         try:
-            init_db(target_db)
+            init_db(target_db, cli_migration_callback)
         except Exception as e:
             if not args.silent:
                 print(f'Target database error: {e}', file=sys.stderr)

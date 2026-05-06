@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS index_queue (
 );
 """
 
-def init_db(db_path: str) -> None:
+def init_db(db_path: str, status_callback: Optional[Callable] = None) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
@@ -64,7 +64,7 @@ def init_db(db_path: str) -> None:
             return
 
     # Existing database: skip DB_SCHEMA to avoid index clashes and let migration handle it
-    migrate_database(db_path)
+    migrate_database(db_path, status_callback)
 
 def db_is_empty(db_path: str) -> bool:
     """Return True if there are no entries in `embeddings`,`processed_videos` or `scene_embeddings`."""
@@ -229,7 +229,7 @@ def search_scenes(query_embedding: np.ndarray, db_paths: List[str], top_k: int =
     
     return deduped[:top_k]
 
-def migrate_database(db_path: str):
+def migrate_database(db_path: str, status_callback: Optional[Callable] = None):
     with sqlite3.connect(db_path) as conn:
         # Get the current version of the loaded file
         current_version = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -262,6 +262,12 @@ def migrate_database(db_path: str):
 
         # VERSION 3: Transition to Integer Foreign Keys & Status Column
         if current_version < 3:
+            msg = f"Migrating database '{os.path.basename(db_path)}' to v3. This may take a moment..."
+            if status_callback:
+                status_callback(msg)
+            else:
+                print(f"[INFO] {msg}")
+
             # Disable foreign keys during table reconstruction
             conn.execute("PRAGMA foreign_keys = OFF")
             
@@ -313,6 +319,13 @@ def migrate_database(db_path: str):
                 
                 conn.execute("PRAGMA user_version = 3")
                 conn.commit()
+
+                success_msg = f"Migration of '{os.path.basename(db_path)}' to v3 complete."
+                if status_callback:
+                    status_callback(success_msg)
+                else:
+                    print(f"[INFO] {success_msg}")
+
             except Exception as e:
                 conn.rollback()
                 print(f"Migration to v3 failed: {e}")
@@ -392,7 +405,7 @@ def combine_databases(source_db_paths: List[str], output_db_path: str, progress_
     abs_out = str(Path(output_db_path).resolve())
     safe_sources = [p for p in source_db_paths if str(Path(p).resolve()) != abs_out]
     
-    init_db(output_db_path)
+    init_db(output_db_path, progress_callback)
     
     # Track inserted files to prevent duplicate entries if databases overlap
     seen_images = set()

@@ -572,7 +572,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             abs_path = str(Path(path).resolve())
             if abs_path not in self.active_databases:
                 self.active_databases.append(abs_path)
-                init_db(abs_path)
+                init_db(abs_path, self.handle_migration_callback) 
                 added.append(abs_path)
         if added:
             if not self.primary_db:
@@ -679,7 +679,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             path = filedialog.asksaveasfilename(title='Create New Database', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
             if path:
                 abs_path = str(Path(path).resolve())
-                init_db(abs_path)
+                init_db(abs_path, self.handle_migration_callback)
                 self.active_databases.append(abs_path)
                 if not self.primary_db:
                     self.primary_db = abs_path
@@ -899,6 +899,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                     pass
         self.update_idletasks()
 
+    def force_update_status(self, message: str):
+        """Forces an immediate UI redraw before a blocking operation (like DB migrations)."""
+        self._update_status_ui(message)
+        self.update() # Force Tkinter to process all pending draw events instantly
+
     def load_saved_paths(self):
         from database import add_to_queue, queue_count
         
@@ -931,7 +936,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status(f'Loaded {len(valid_dbs)} database(s). Target: {primary_name}')
         
         for db_path in self.active_databases:
-            init_db(db_path)
+            init_db(db_path, self.handle_migration_callback)
         
         if 'folder_path' in self.config and self.config['folder_path'] and os.path.exists(self.config['folder_path']):
             if self.primary_db and queue_count(self.primary_db) == 0:
@@ -1227,7 +1232,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         path = filedialog.asksaveasfilename(parent=self, title='Create New Database File', initialdir='', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
         if path:
             abs_path = str(Path(path).resolve())
-            init_db(abs_path)
+            init_db(abs_path, self.force_update_status)
             self.active_databases.append(abs_path)
             self.primary_db = abs_path
             self._update_db_section()
@@ -1343,6 +1348,73 @@ class SceneScoutApp(TkinterDnD.Tk):
             return
         if messagebox.askyesno('Confirm', 'Remove entries for deleted files from the database?'):
             self.threaded_task(self._cleanup_task)
+
+    def show_migration_popup(self):
+            """Creates a blocking progress popup for database migrations."""
+            # Prevent opening multiple popups if multiple DBs migrate sequentially
+            if hasattr(self, 'migration_popup') and self.migration_popup:
+                return 
+                
+            self.migration_popup = tk.Toplevel(self)
+            import gui_utils
+            gui_utils.apply_window_icon(self.migration_popup, self.app_icon)
+            self.migration_popup.title('Database Migration')
+            self.migration_popup.transient(self)
+            self.migration_popup.grab_set()
+            self.migration_popup.minsize(400, 150)
+            
+            frame = ttk.Frame(self.migration_popup, padding=20)
+            frame.pack(fill='both', expand=True)
+            
+            self.migration_status_var = tk.StringVar(master=self.migration_popup, value='Preparing database migration...')
+            ttk.Label(frame, textvariable=self.migration_status_var, font=('Arial', 10, 'bold'), wraplength=360).pack(pady=(0, 10))
+            
+            self.migration_progress = ttk.Progressbar(frame, mode='indeterminate')
+            self.migration_progress.pack(fill='x', pady=5)
+            self.migration_progress.start(10)
+            
+            gui_utils.center_window(self.migration_popup, 400, 150)
+            
+            # Disable the close button so the user can't interrupt the SQL operation
+            self.migration_popup.protocol('WM_DELETE_WINDOW', lambda: None)
+            self.migration_popup.update()
+
+    def close_migration_popup(self):
+        """Safely closes the migration popup."""
+        if hasattr(self, 'migration_progress') and self.migration_progress:
+            try:
+                self.migration_progress.stop()
+            except Exception:
+                pass
+                
+        if hasattr(self, 'migration_popup') and self.migration_popup:
+            try:
+                self.migration_popup.grab_release()
+                self.migration_popup.destroy()
+            except Exception:
+                pass
+            self.migration_popup = None
+
+    def handle_migration_callback(self, msg: str):
+        """Intelligent callback that handles the popup lifecycle based on the message."""
+        # 1. Update the bottom status bar and splash screen (if it exists)
+        self.force_update_status(msg)
+        
+        # 2. Check the message text to determine popup lifecycle
+        msg_lower = msg.lower()
+        if "migrating database" in msg_lower:
+            # Only show popup if the main window is visible (not during initial boot splash)
+            if self.winfo_viewable():
+                self.show_migration_popup()
+                self.migration_status_var.set(msg)
+                self.migration_popup.update()
+                
+        elif "complete" in msg_lower or "failed" in msg_lower:
+            if hasattr(self, 'migration_popup') and self.migration_popup:
+                self.migration_status_var.set(msg)
+                self.migration_popup.update()
+                # Leave it open for 1 second so the user can read that it finished
+                self.after(1000, self.close_migration_popup)
 
     def show_merging_popup(self):
         """Creates a non-blocking progress popup for the database merge."""
