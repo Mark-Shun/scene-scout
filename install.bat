@@ -3,9 +3,11 @@ setlocal
 
 echo ---Installation script for Scene Scout---
 
+:: Teleport to the script's actual directory
+cd /d "%~dp0"
+
 :: Define the local folder 
-set "UV_DIR=%~dp0.uv" 
-set "UV_EXE=%UV_DIR%\uv.exe" 
+set "UV_EXE=.uv\uv.exe" 
 set "UV_PYTHON_INSTALL_DIR=%UV_DIR%\python" 
 set "UV_CACHE_DIR=%UV_DIR%\uv_cache" 
 

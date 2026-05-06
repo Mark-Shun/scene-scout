@@ -1,5 +1,9 @@
 @echo off
 setlocal
+
+:: Teleport to the script's actual directory
+cd /d "%~dp0"
+
 set "UV_DIR=%~dp0.uv"
 set "UV_EXE=%UV_DIR%\uv.exe"
 
