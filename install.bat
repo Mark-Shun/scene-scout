@@ -3,6 +3,11 @@ setlocal
 
 echo ---Installation script for Scene Scout---
 
+:: --- START UPDATE CHECK ---
+echo Checking for updates...
+powershell -ExecutionPolicy Bypass -Command "try { $v = (Select-String -Path '%~dp0pyproject.toml' -Pattern '^version = \"(.*)\"').Matches.Groups[1].Value; $latest = (Invoke-RestMethod -Uri 'https://api.github.com/repos/Mark-Shun/scene-scout/releases/latest' -TimeoutSec 2).tag_name.TrimStart('v'); if ([version]$latest -gt [version]$v) { Write-Host \"`n[UPDATE] A newer version (v$latest) is available!\" -ForegroundColor Cyan; Write-Host 'Latest Release: https://github.com/Mark-Shun/scene-scout/releases/latest' -ForegroundColor White; Write-Host \"Current version: v$v`n\" -ForegroundColor Gray } } catch {}"
+:: --- END UPDATE CHECK ---
+
 :: Define the local folder 
 set "UV_DIR=%~dp0.uv" 
 set "UV_EXE=%UV_DIR%\uv.exe" 

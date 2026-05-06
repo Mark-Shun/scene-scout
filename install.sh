@@ -3,12 +3,26 @@
 # Define the local folder 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || { echo "Failed to enter directory"; exit 1; }
+
+# --- START UPDATE CHECK ---
+echo "Checking for updates..."
+# Fetch remote tag and strip 'v' prefix if present
+REMOTE_TAG=$(curl -s --connect-timeout 2 https://api.github.com/repos/Mark-Shun/scene-scout/releases/latest | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
+# Read local version from pyproject.toml
+LOCAL_VER=$(grep '^version =' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
+
+if [ -n "$REMOTE_TAG" ] && [ "$REMOTE_TAG" != "$LOCAL_VER" ]; then
+    echo -e "\n\033[1;36m[UPDATE] A newer version (v$REMOTE_TAG) is available!\033[0m"
+    echo -e "\033[1;37mLatest Release: https://github.com/Mark-Shun/scene-scout/releases/latest\033[0m"
+    echo -e "\033[0;90mCurrent version: v$LOCAL_VER\033[0m\n"
+fi
+# --- END UPDATE CHECK ---
+
+# Set uv environment
 UV_DIR="$SCRIPT_DIR/.uv" 
 UV_EXE="$UV_DIR/uv" 
 export UV_PYTHON_INSTALL_DIR="$UV_DIR/python" 
 export UV_CACHE_DIR="$UV_DIR/uv_cache"
-
-# Set UV options
 export UV_VENV_CLEAR=1
 
 # 1. Install uv locally if missing
