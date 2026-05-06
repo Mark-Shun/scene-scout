@@ -795,6 +795,7 @@ body::before {
 .timeline-item:nth-child(4) .timeline-marker { border-color: #e8d85a; color: #e8d85a; }
 .timeline-item:nth-child(5) .timeline-marker { border-color: var(--accent-cyan); color: var(--accent-cyan); }
 .timeline-item:nth-child(6) .timeline-marker { border-color: #2ba89e; color: #2ba89e; }
+.timeline-item:nth-child(7) .timeline-marker { border-color: #4fe7da; color: #2ba89e; }
 
 .timeline-content {
   background: var(--bg-card);

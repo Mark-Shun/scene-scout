@@ -94,9 +94,14 @@
                     <p class="feature-description">Use a reference image to find similar scenes in your video collection with visual similarity matching.</p>
                 </div>
                 <div class="feature-card">
+                    <div class="feature-icon"><i class="fa-solid fa-database"></i></div>
+                    <h3 class="feature-title">Database & Queue management system</h3>
+                    <p class="feature-description">Search through multiple databases at once. Also queue up different files and folders to process.</p>
+                </div>
+                <div class="feature-card">
                     <div class="feature-icon"><i class="fa-solid fa-film"></i></div>
-                    <h3 class="feature-title">Video Playback</h3>
-                    <p class="feature-description">Watch scenes play directly in the GUI with integrated VLC video player support.</p>
+                    <h3 class="feature-title">Video Playback and Export</h3>
+                    <p class="feature-description">Watch scenes play out directly in the GUI. And export a selected scene to a seperate video file.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i class="fa-solid fa-desktop"></i></div>
@@ -109,9 +114,9 @@
                     <p class="feature-description">Supports CUDA, TensorRT, DML, Intel Arc/Xe, AMD ROCm, and Apple MPS for fast processing.</p>
                 </div>
                 <div class="feature-card">
-                    <div class="feature-icon"><i class="fa-solid fa-database"></i></div>
+                    <div class="feature-icon"><i class="fa-solid fa-file-shield"></i></div>
                     <h3 class="feature-title">Local SQLite Database</h3>
-                    <p class="feature-description">Efficient embedding storage with scene data and thumbnails. Incremental indexing in the database for new files only.</p>
+                    <p class="feature-description">Local efficient embedding storage with scene data and thumbnails. Incremental indexing in the database for new files only.</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-icon"><i class="fa-solid fa-terminal"></i></div>
@@ -148,6 +153,10 @@
                     <img src="https://mark-shun.github.io/scene-scout/assets/screenshots/interactive-cli-json-data.png" alt="Interactive CLI interface showing JSON output from database">
                     <div class="screenshot-caption">CLI Text query: person wearing frog costume</div>
                 </div>
+                <div class="screenshot-card" data-full="https://mark-shun.github.io/scene-scout/assets/screenshots/export-car-scene.png">
+                    <img src="https://mark-shun.github.io/scene-scout/assets/screenshots/export-car-scene.png" alt="Exporting a scene to a video file">
+                    <div class="screenshot-caption">Exporting a chosen scene to a video file</div>
+                </div>
             </div>
             </div>
         </section>
@@ -161,35 +170,35 @@
                     <div class="timeline-marker">1</div>
                     <div class="timeline-content">
                         <h3 class="timeline-title">Launch</h3>
-                        <p class="timeline-description">Start Scene Scout using the GUI or CLI run script. On first launch the vision model downloads automatically.</p>
+                        <p class="timeline-description">After installing with the install script, start Scene Scout using the GUI or CLI script. On first launch the vision model downloads automatically.</p>
                     </div>
                 </div>
                 <div class="timeline-item">
                     <div class="timeline-marker">2</div>
                     <div class="timeline-content">
                         <h3 class="timeline-title">Database</h3>
-                        <p class="timeline-description">Create a new database via <strong>Database &rarr; Create New</strong> or open an existing one with <strong>Database &rarr; Open Existing</strong>.</p>
+                        <p class="timeline-description">Create a new database via <strong>Database &rarr; Create New</strong> or drag and drop a database file onto the GUI.
                     </div>
                 </div>
                 <div class="timeline-item">
                     <div class="timeline-marker">3</div>
                     <div class="timeline-content">
-                        <h3 class="timeline-title">Select Folder</h3>
-                        <p class="timeline-description">Click <strong>Browse</strong> to select the directory containing your videos and images. You can also drag and drop folders directly into the GUI.</p>
+                        <h3 class="timeline-title">Add to queue</h3>
+                        <p class="timeline-description">You can add multiple files and/or folder to the queue to be processed. To get an overview of the current queue click on the <strong>Inspect Queue</strong> button.</p>
                     </div>
                 </div>
                 <div class="timeline-item">
                     <div class="timeline-marker">4</div>
                     <div class="timeline-content">
                         <h3 class="timeline-title">Index Media</h3>
-                        <p class="timeline-description">Click <strong>Process Media Folder</strong> to extract scenes and build embeddings. This may take a while depending on your collection size, hardware and selected option during installation. Only new or modified files are processed on subsequent runs.</p>
+                        <p class="timeline-description">Click <strong>Process Media Folder</strong> to extract scenes and build embeddings for all the files in the queue. This may take a while depending on your collection size, hardware and selected option during installation. Only new or modified files are processed on subsequent runs.</p>
                     </div>
                 </div>
                 <div class="timeline-item">
                     <div class="timeline-marker">5</div>
                     <div class="timeline-content">
                         <h3 class="timeline-title">Search</h3>
-                        <p class="timeline-description">Enter a text description in the search field, load a reference image, or combine both for a multimodal query. Press Enter or click <strong>Search Scene</strong>.</p>
+                        <p class="timeline-description">Enter a text description in the search field, load a reference image, or combine both for a multimodal query. Press Enter or click <strong>Search Scene</strong>. This can be performed for one or multiple loaded databases at once.</p>
                     </div>
                 </div>
                 <div class="timeline-item">
@@ -197,6 +206,13 @@
                     <div class="timeline-content">
                         <h3 class="timeline-title">Browse &amp; Play</h3>
                         <p class="timeline-description">Scroll through ranked results with similarity scores. Click on any result to play the scene directly in the built-in video viewer.</p>
+                    </div>
+                </div>
+                                <div class="timeline-item">
+                    <div class="timeline-marker">7</div>
+                    <div class="timeline-content">
+                        <h3 class="timeline-title">Export scene</h3>
+                        <p class="timeline-description">If you have found just the right scene. Then you can export it to a seperate file by clicking on the <strong>Export Scene</strong> button.</p>
                     </div>
                 </div>
             </div>
@@ -224,7 +240,7 @@
                     <div class="step-number">3</div>
                     <h3 class="step-title">Launch</h3>
                     <p class="step-description">Start Scene Scout GUI and begin searching your video collection</p>
-                    <div class="code-block">Windows: run_gui.bat<br>Mac/Linux: ./run_gui.sh</div>
+                    <div class="code-block">Windows: scene-scout.bat<br>Mac/Linux: ./scene-scout.sh</div>
                 </div>
             </div>
             <div class="gpu-subsection">
