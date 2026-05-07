@@ -13,6 +13,8 @@ import gui_utils
 from gui_utils import ToolTip
 import config
 
+from utils import _get_ffmpeg_path
+
 _FFMPEG_CACHE = None
 
 class SceneExportDialog(tk.Toplevel):
@@ -58,7 +60,6 @@ class SceneExportDialog(tk.Toplevel):
     def __init__(self, parent, video_path: str, start_ms: int, end_ms: int):
         super().__init__(parent)
         self.parent = parent
-        
         gui_utils.apply_window_icon(self, getattr(parent, 'app_icon', None))
         
         self.video_path = video_path
@@ -93,6 +94,7 @@ class SceneExportDialog(tk.Toplevel):
         """Extract metadata and nearest keyframe from the source video."""
         self.metadata = get_video_info_and_keyframe(self.video_path, self.start_ms)
 
+    # UI builders
     def _build_ui(self):
         """Build the dialog UI components."""
         main = ttk.Frame(self, padding='10')
@@ -269,6 +271,7 @@ class SceneExportDialog(tk.Toplevel):
         self.cancel_btn = ttk.Button(btn_frame, text='Cancel', command=self._on_cancel)
         self.cancel_btn.pack(side='left', fill='x', expand=True, padx=(5, 0))
 
+    # UI helpers
     def _generate_default_output(self) -> str:
         """Generate default output filename."""
         base = os.path.splitext(os.path.basename(self.video_path))[0]
@@ -305,7 +308,7 @@ class SceneExportDialog(tk.Toplevel):
                 continue
             state = 'normal' if is_encode else 'disabled'
             try:
-                child.config(state=state)
+                child.config(state=state)  # type: ignore[call-overload]
             except Exception:
                 pass
 
@@ -333,6 +336,7 @@ class SceneExportDialog(tk.Toplevel):
         self.config['export_open_folder'] = self.open_folder_var.get()
         config.save_config(self.config)
 
+    # Export flow
     def _start_export(self):
         """Start the export process in a background thread."""
         output_path = self.output_path_var.get()
@@ -477,13 +481,15 @@ class SceneExportDialog(tk.Toplevel):
             bufsize=1,
             universal_newlines=True
         )
+        process = self.process
 
         time_regex = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
 
-        for line in self.process.stderr:
+        assert process.stderr is not None
+        for line in process.stderr:
             if self.cancelled:
-                self.process.terminate()
-                self.process.wait()
+                process.terminate()
+                process.wait()
                 self.after(0, self._on_export_cancelled)
                 return
 
@@ -495,17 +501,18 @@ class SceneExportDialog(tk.Toplevel):
                 self.after(0, lambda p=progress: self._update_progress(
                     p, f'Exporting... {self._format_ms(current_ms)} / {self._format_ms(self.duration_ms)}'))
 
-        self.process.wait()
+        process.wait()
 
-        if self.process.returncode == 0 and not self.cancelled:
+        if process.returncode == 0 and not self.cancelled:
             self.after(0, self._on_export_complete)
         elif not self.cancelled:
             stderr_output = ''
-            if self.process.stderr:
-                stderr_output = ''.join(self.process.stderr.readlines())
+            if process.stderr:
+                stderr_output = ''.join(process.stderr.readlines())
             self.after(0, lambda: self._on_export_error(
-                f'FFmpeg exited with code {self.process.returncode}\n{stderr_output}'))
+                f'FFmpeg exited with code {process.returncode}\n{stderr_output}'))
 
+    # Progress/time helpers
     def _parse_time_to_ms(self, time_str: str) -> int:
         """Convert HH:MM:SS.ms string to milliseconds."""
         parts = time_str.split(':')
@@ -540,6 +547,7 @@ class SceneExportDialog(tk.Toplevel):
         else:
             self.export_btn.config(state='normal')
 
+    # Completion / error / cancellation
     def _on_export_complete(self):
         """Handle successful export completion."""
         self.progress_var.set(100)
@@ -628,21 +636,6 @@ def get_video_info_and_keyframe(video_path: str, target_ms: int) -> Dict[str, An
         if container: container.close()
 
 _FFMPEG_PATH_CACHE = None
-
-def _get_ffmpeg_path() -> str:
-    global _FFMPEG_PATH_CACHE
-    if _FFMPEG_PATH_CACHE:
-        return _FFMPEG_PATH_CACHE
-
-    try:
-        import imageio_ffmpeg
-        path = imageio_ffmpeg.get_ffmpeg_exe()
-    except ImportError:
-        import shutil
-        path = shutil.which('ffmpeg') or 'ffmpeg'
-
-    _FFMPEG_PATH_CACHE = path
-    return path
 
 def export_video_scene(video_path: str, start_ms: int, end_ms: int, output_path: str) -> None:
     duration_ms = end_ms - start_ms

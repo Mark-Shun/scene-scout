@@ -478,7 +478,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.clear_rescore_button.pack(side='left', padx=5)
         ToolTip(self.clear_rescore_button, 'Clear any custom rescore adjustments from results.')
         
-        self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','source','score','rescore'), show='headings', selectmode='browse')
+        self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','source','score','rescore'), show='headings', selectmode='extended') # changed selectmode to extended to allow for ctrl + click, shift + click
         for col, width in zip(['filename', 'scene', 'time', 'source', 'score', 'rescore'], [300, 80, 150, 140, 80, 80]):
             self.results_tree.heading(col, text=col.capitalize(), command=lambda c=col: self.sort_treeview(c))
             self.results_tree.column(col, width=width, anchor='center' if col not in ('filename', 'source') else 'w')
@@ -2160,10 +2160,29 @@ class SceneScoutApp(TkinterDnD.Tk):
         """Handle treeview selection change to update export button state."""
         sel = self.results_tree.selection()
         if not sel:
-            self.export_btn.config(state='disabled')
+            self.export_btn.config(state='disabled', text='Export Scene...')
+            return
+
+        # if multiple clips are selected
+        if len(sel) > 1:
+            # check that all are exportable video scenes
+            exportable = [
+                i for i in sel
+                if int(i) < len(self.search_results)
+                and self.search_results[int(i)][2] == 'video'
+                and self.search_results[int(i)][5] is not None
+                and self.search_results[int(i)][6] is not None
+            ]
+            # changing how the button looks and what it says depending on if the user is selecting multiple scenes or not
+            if exportable:
+                self.export_btn.config(state='normal', text=f'Export {len(exportable)} Scenes...')
+            else:
+                self.export_btn.config(state='disabled', text='Export Scene...')
+            # Don't call on_result_select for multi-select to avoid flickering
             return
 
         index = int(sel[0])
+        self.export_btn.config(text='Export Scene...') # refreshing it here?
         if index < len(self.search_results):
             file_type = self.search_results[index][2]
             start_ms = self.search_results[index][5]
@@ -2180,11 +2199,30 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.on_result_select(event)
 
     def open_export_dialog(self):
-        """Open export dialog for the currently selected scene."""
+        """Open export dialog for the currently selected scene(s)."""
         sel = self.results_tree.selection()
         if not sel:
             return
-        # sel[0] is the tree iid, which we use as the index
+        # if the user has multiple scenes selected
+        if len(sel) > 1:
+            scenes = []
+            for iid in sel: # go through each scene and run the same export logic on each one
+                index = int(iid)
+                if index >= len(self.search_results):
+                    continue
+                path = self.search_results[index][0]
+                start_ms = self.search_results[index][5]
+                end_ms = self.search_results[index][6]
+                file_type = self.search_results[index][2]
+                if file_type == 'video' and start_ms is not None and end_ms is not None:
+                    scenes.append((path, start_ms, end_ms))
+            if scenes:
+                self._stop_video_loop()
+                from exporters.bulk_exporter import BulkExportDialog
+                dialog = BulkExportDialog(self, scenes)
+                self.wait_window(dialog)
+            return
+
         self.open_export_dialog_for_index(int(sel[0]))
 
     def open_export_dialog_for_index(self, index: int):
@@ -2206,7 +2244,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         else:
             self._stop_video_loop()
 
-        from exporter import SceneExportDialog
+        from exporters.single_exporter import SceneExportDialog
         dialog = SceneExportDialog(self, path, start_ms, end_ms)
         
         # 3. Yield the event loop until the export dialog is closed/destroyed

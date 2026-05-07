@@ -462,7 +462,7 @@ class SceneScoutShell(cmd.Cmd):
             out_path = args[1]
             path, scene_idx, start_time, end_time, _, _, source_db = self.last_results[idx]
 
-            from exporter import export_video_scene
+            from exporters.single_exporter import export_video_scene
             print(f"Exporting scene {scene_idx + 1} to {out_path}...")
             export_video_scene(path, start_time, end_time, out_path)
             print("Export completed successfully.")
@@ -705,7 +705,7 @@ def cli_mode(update_info=None):
             sys.exit(EXIT_INVALID_INPUT)
 
         try:
-            from exporter import export_video_scene
+            from exporters.single_exporter import export_video_scene
 
             if not args.silent:
                 print(f'Exporting scene to {args.out}...')
