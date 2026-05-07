@@ -529,3 +529,30 @@ def get_embedding_for_result(db_path: str, filepath: str, scene_idx: Optional[in
     except Exception as e:
         print(f"Database error fetching embedding: {e}")
     return None
+
+def get_all_processed_videos(db_path: str) -> list:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute("SELECT id, filepath FROM processed_videos")
+            return cursor.fetchall()
+    except sqlite3.Error:
+        return []
+
+def update_video_filepath(db_path: str, video_id: int, new_filepath: str) -> bool:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("UPDATE processed_videos SET filepath = ? WHERE id = ?", (new_filepath, video_id))
+            conn.commit()
+            return True
+    except sqlite3.IntegrityError:
+        return False
+
+def delete_video_record(db_path: str, video_id: int) -> bool:
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("DELETE FROM processed_videos WHERE id = ?", (video_id,))
+            conn.commit()
+            return True
+    except sqlite3.Error:
+        return False

@@ -583,6 +583,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status(f'Added {len(added)} database(s).')
             if self.db_manager_dlg and self.db_manager_dlg.winfo_exists():
                 self.db_manager_dlg.refresh()
+        self.verify_database_paths()
 
     def save_db_config(self):
         self.config['active_databases'] = self.active_databases
@@ -863,6 +864,138 @@ class SceneScoutApp(TkinterDnD.Tk):
             thread = threading.Thread(target=target_func, args=args, daemon=True)
             thread.start()
 
+    def verify_database_paths(self):
+        self.threaded_task(self._verify_paths_task)
+
+    def _verify_paths_task(self):
+        from database import get_all_processed_videos
+
+        missing_files = []
+        for db_path in self.active_databases:
+            videos = get_all_processed_videos(db_path)
+            for video_id, filepath in videos:
+                if not os.path.exists(filepath):
+                    missing_files.append((db_path, video_id, filepath))
+
+        if missing_files:
+            self.after(0, lambda: self.show_missing_files_dialog(missing_files))
+
+    def show_missing_files_dialog(self, missing_files: list):
+        if hasattr(self, 'missing_files_dlg') and self.missing_files_dlg and self.missing_files_dlg.winfo_exists():
+            return
+
+        dlg = tk.Toplevel(self)
+        self.missing_files_dlg = dlg
+        gui_utils.apply_window_icon(dlg, self.app_icon)
+        dlg.title("Missing Files Detected")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.minsize(750, 400)
+        gui_utils.center_window(dlg, 750, 400)
+
+        main_frame = ttk.Frame(dlg, padding=15)
+        main_frame.pack(fill='both', expand=True)
+
+        ttk.Label(main_frame, text=f"Found {len(missing_files)} missing video file(s). They may have been moved, renamed, or deleted on your drive.", font=('', 10)).pack(anchor='w', pady=(0, 10))
+
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill='both', expand=True, pady=(0, 10))
+
+        columns = ('db', 'filename', 'path')
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', selectmode='extended')
+        tree.heading('db', text='Database')
+        tree.heading('filename', text='File Name')
+        tree.heading('path', text='Missing Path')
+
+        tree.column('db', width=120, anchor='w')
+        tree.column('filename', width=200, anchor='w')
+        tree.column('path', width=400, anchor='w')
+
+        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        item_data_map = {}
+
+        for db_path, video_id, filepath in missing_files:
+            iid = tree.insert('', 'end', values=(os.path.basename(db_path), os.path.basename(filepath), filepath))
+            item_data_map[iid] = (db_path, video_id)
+
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x')
+
+        def locate_selected():
+            selected = tree.selection()
+            if not selected:
+                messagebox.showwarning("Notice", "Please select a file to locate.")
+                return
+
+            from database import update_video_filepath
+            import config
+
+            for iid in selected:
+                db_path, video_id = item_data_map[iid]
+                old_path = tree.item(iid)['values'][2]
+
+                new_path = filedialog.askopenfilename(
+                    parent=dlg,
+                    title=f"Locate: {os.path.basename(old_path)}",
+                    filetypes=[('Video Files', ' '.join(f'*{ext}' for ext in config.VIDEO_EXTENSIONS))]
+                )
+
+                if new_path:
+                    success = update_video_filepath(db_path, video_id, new_path)
+                    if success:
+                        tree.delete(iid)
+                        del item_data_map[iid]
+                    else:
+                        messagebox.showerror("Conflict", f"The path '{new_path}' is already indexed in this database. Please remove this orphaned entry instead.")
+
+            if not tree.get_children():
+                dlg.destroy()
+
+        def remove_selected():
+            selected = tree.selection()
+            if not selected:
+                messagebox.showwarning("Notice", "Please select an entry to remove.")
+                return
+
+            if not messagebox.askyesno("Confirm", "Remove the selected entries and all their associated scene data? This cannot be undone."):
+                return
+
+            from database import delete_video_record
+
+            for iid in selected:
+                db_path, video_id = item_data_map[iid]
+                if delete_video_record(db_path, video_id):
+                    tree.delete(iid)
+                    del item_data_map[iid]
+
+            if self.search_results:
+                self.search_results.clear()
+                self._update_listview()
+                self.stats_label.config(text="Search cleared due to database modifications.")
+
+            if not tree.get_children():
+                dlg.destroy()
+
+        locate_btn = ttk.Button(btn_frame, text="Locate Selected...", command=locate_selected)
+        locate_btn.pack(side='left', padx=(0, 5))
+        gui_utils.ToolTip(locate_btn, "Browse your computer to reconnect the selected entry to its new file location.")
+
+        remove_btn = ttk.Button(btn_frame, text="Remove Selected", command=remove_selected)
+        remove_btn.pack(side='left', padx=5)
+        gui_utils.ToolTip(remove_btn, "Permanently delete the video entry and its scenes from the database.")
+
+        close_btn = ttk.Button(btn_frame, text="Ignore", command=dlg.destroy)
+        close_btn.pack(side='right')
+
     def set_controls_enabled(self, enabled: bool):
         state = 'normal' if enabled else 'disabled'
         for name in ['load_model_button', 'index_button', 'search_button', 'rescore_button', 'clear_rescore_button', 'query_text_entry']:
@@ -948,6 +1081,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self._update_db_section()
         self.update_queue_status()
         self._update_button_states()
+        self.verify_database_paths()
 
     def update_queue_status(self):
         if not self.primary_db:
