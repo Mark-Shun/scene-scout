@@ -26,7 +26,7 @@ ENGINE_CACHE_PATH = os.path.join(os.path.dirname(__file__), "../", "siglip2_trt_
 
 def get_compute_device(device_choice=None):
     """
-    Determines the best available device.
+    Determines the best available device and optimal precision.
     Returns (device_str, msg, torch_device, torch_dtype).
     """
     # 1. Handle forced devices
@@ -35,16 +35,22 @@ def get_compute_device(device_choice=None):
             return 'cpu', 'DirectML not available. Falling back to CPU.', torch.device('cpu'), torch.float32
         if device_choice == 'cuda' and (torch is None or not torch.cuda.is_available()):
             return 'cpu', 'CUDA not available. Falling back to CPU.', torch.device('cpu'), torch.float32
-        
-        # If forced and valid, map it
-        if device_choice == 'cuda' or device_choice == 'rocm':
-            return device_choice, f'Device forced to {device_choice.upper()}.', torch.device('cuda'), torch.float16
-        if device_choice == 'dml':
-            return 'dml', 'Device forced to DML.', torch_directml.device(), torch.float32
             
-    # 2. Auto-detect if not forced
+    # 2. Auto-detect and handle Architecture-specific Precision
     if torch is not None and torch.cuda.is_available():
-        return 'cuda', 'NVIDIA/AMD GPU detected.', torch.device('cuda'), torch.float16
+        major, minor = torch.cuda.get_device_capability()
+        device_name = torch.cuda.get_device_name()
+        
+        # Pascal (6.x) and older perform poorly with FP16 or lack hardware support.
+        # Volta (7.0), Turing (7.5), and newer have Tensor Cores for fast FP16.
+        if major < 7:
+            dtype = torch.float32
+            msg = f"Older NVIDIA GPU ({device_name}) detected. Using Float32 for compatibility."
+        else:
+            dtype = torch.float16
+            msg = f"Modern NVIDIA GPU ({device_name}) detected. Using Float16 for performance."
+            
+        return 'cuda', msg, torch.device('cuda'), dtype
     if hasattr(torch, 'xpu') and torch.xpu.is_available():
         return 'xpu', 'Intel GPU (XPU) detected.', torch.device('xpu'), torch.float16
     if torch_directml and torch_directml.is_available():
@@ -65,15 +71,15 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
     update(f"Hardware Status: {msg}")
     update("Loading processor config...")
 
-    token = config.get_hf_token()
-    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-    token = config.get_hf_token()
-    
-    processor = AutoProcessor.from_pretrained(config.DEFAULT_MODEL, token=token)
+    processor = AutoProcessor.from_pretrained(config.DEFAULT_MODEL, token=config.get_hf_token())
 
-    update("Loading model weights (this can take a while)...")
-    attn_implementation = 'sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager'
-    model = Siglip2Model.from_pretrained(config.DEFAULT_MODEL, token=token, torch_dtype=dtype, attn_implementation=attn_implementation).to(device)
+    update(f"Loading weights in {str(dtype).split('.')[-1]}...")
+    model = Siglip2Model.from_pretrained(
+            config.DEFAULT_MODEL, 
+            token=config.get_hf_token(), 
+            torch_dtype=dtype, 
+            attn_implementation='sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager'
+        ).to(device)
 
     if use_trt and device_str == 'cuda' and TRT_AVAILABLE:
         import logging
