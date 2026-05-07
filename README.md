@@ -226,6 +226,8 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 - `--top-k N`: Number of results to return (default: 10)
 - `--db PATH`: Database file path(s) - can specify multiple times for multi-database search (default: siglip2_embeddings.db)
 - `--target-db PATH`: Target database for indexing operations when using multiple databases
+- `--verify`: Check the target database for missing or moved video files
+- `--relink`: ID PATH: Update the file path of a database entry using its ID
 - `--device {cuda,cpu,dml,xpu,mps}`: Force specific device
 - `--max-patches N`: Max patches for model (default: 256)
 - `--batch-size N`: Inference batch size (default: 16)
@@ -255,6 +257,8 @@ When in REPL mode (`--interactive`), use these commands:
 - `db rm <path>`: Remove a database
 - `db target <path>`: Set target database for indexing
 - `db clear`: Clear all databases
+- `v`: Check the target database for missing or moved video files
+- `rl <ID> <PATH>`: Update the file path of a database entry
 - `ex <index> <output>`: Export a scene from last search results
 - `rs <query>`: Rescore last search results with a new text query
 - `update` / `u`: View full patch notes from latest release

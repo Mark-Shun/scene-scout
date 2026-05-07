@@ -21,7 +21,7 @@ from database import cleanup_orphaned_entries
 from utils import normalize_embedding
 
 
-def _run_batch_inference(frames, info, model, processor, device, cursor, path, generate_thumbnails, pbar=None):
+def _run_batch_inference(frames, info, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None):
     """Internal helper to handle SigLIP2 inference and DB insertion."""
     if not frames:
         return
@@ -47,9 +47,9 @@ def _run_batch_inference(frames, info, model, processor, device, cursor, path, g
 
             cursor.execute('''
                 INSERT INTO scene_embeddings 
-                (filepath, scene_index, start_time_ms, end_time_ms, embedding, thumbnail) 
+                (video_id, scene_index, start_time_ms, end_time_ms, embedding, thumbnail) 
                 VALUES (?, ?, ?, ?, ?, ?)
-            ''', (path, scene_idx, start_ms, end_ms, emb_bytes, thumb_bytes))
+            ''', (video_id, scene_idx, start_ms, end_ms, emb_bytes, thumb_bytes))
         
         if pbar:
             pbar.update(len(info))
@@ -57,7 +57,7 @@ def _run_batch_inference(frames, info, model, processor, device, cursor, path, g
         if pbar is None or not getattr(pbar, 'disable', False):
             tqdm.write(f"Inference Error: {e}")
 
-def fast_process_and_embed(video_path, model, processor, device, cursor, generate_thumbnails, batch_size=16, cancel_event=None, silent=False):
+def fast_process_and_embed(video_path, model, processor, device, cursor, video_id, generate_thumbnails, batch_size=16, cancel_event=None, silent=False):
     if not silent:
         tqdm.write(f"Fast processing: {os.path.basename(video_path)}")
     
@@ -112,7 +112,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, generat
                 pending_start_ms = current_ms
 
                 if len(batch_frames) >= batch_size:
-                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, generate_thumbnails=generate_thumbnails)
+                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_id, generate_thumbnails=generate_thumbnails)
                     pbar.update((batch_info[-1][2] - last_pbar_update) / 60000)
                     last_pbar_update = batch_info[-1][2]
                     batch_frames, batch_info = [], []
@@ -127,7 +127,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, generat
             batch_info.append((scene_idx, pending_start_ms, total_duration_ms))
 
         if batch_frames:
-            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, generate_thumbnails=generate_thumbnails)
+            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_id, generate_thumbnails=generate_thumbnails)
             pbar.update((batch_info[-1][2] - last_pbar_update) / 60000)
 
         container.close()
@@ -139,7 +139,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, generat
             tqdm.write(f"Fatal error: {e}")
         return False
 
-def accurate_process_and_embed(video_path, model, processor, device, cursor, generate_thumbnails, batch_size=16, cancel_event=None, silent=False):
+def accurate_process_and_embed(video_path, model, processor, device, cursor, video_id, generate_thumbnails, batch_size=16, cancel_event=None, silent=False):
     """
     Two-pass accurate detection:
     1. PySceneDetect finds precise cut points (slower, looks at every frame).
@@ -206,12 +206,12 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, gen
                 target_idx += 1
 
                 if len(batch_frames) >= batch_size:
-                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, pbar, generate_thumbnails=generate_thumbnails)
+                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_id, pbar, generate_thumbnails=generate_thumbnails)
                     batch_frames, batch_info = [], []
 
         # Cleanup final batch
         if batch_frames:
-            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_path, pbar, generate_thumbnails=generate_thumbnails)
+            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_id, pbar, generate_thumbnails=generate_thumbnails)
 
     finally:
         container.close()
@@ -356,12 +356,27 @@ def index_files(device: torch.device, processor, model, db_path: str, batch_size
                     "file": os.path.basename(path)
                 })
             try:
-                cursor.execute('DELETE FROM scene_embeddings WHERE filepath = ?', (path,))
+                mtime = os.path.getmtime(path)
+
+                # 1. Insert or update the video record and set status to 'indexing'
+                cursor.execute('''
+                    INSERT INTO processed_videos (filepath, modified_at, model_version, status) 
+                    VALUES (?, ?, ?, 'indexing')
+                    ON CONFLICT(filepath) DO UPDATE SET 
+                        modified_at=excluded.modified_at,
+                        status='indexing'
+                ''', (path, mtime, config.DEFAULT_MODEL))
+
+                # 2. Retrieve the integer ID
+                cursor.execute('SELECT id FROM processed_videos WHERE filepath = ?', (path,))
+                video_id = cursor.fetchone()[0]
+
+                cursor.execute('DELETE FROM scene_embeddings WHERE video_id = ?', (video_id,))
                 video_processed = False
                 if fast_scene_detect:
-                    video_processed = fast_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails, silent=silent)
+                    video_processed = fast_process_and_embed(path, model, processor, device, cursor, video_id, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails, silent=silent)
                 else:
-                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails, silent=silent)
+                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, video_id, batch_size=batch_size, cancel_event=cancel_event, generate_thumbnails=generate_thumbnails, silent=silent)
 
                 if not video_processed:
                     # Video processing was cancelled or failed
@@ -369,18 +384,21 @@ def index_files(device: torch.device, processor, model, db_path: str, batch_size
                         conn.rollback()
                         conn.close()
                         return 'cancelled'
+                    # Mark as failed
+                    cursor.execute("UPDATE processed_videos SET status = 'failed' WHERE id = ?", (video_id,))
                     continue
 
-                # Mark video as processed
-                try:
-                    mtime = os.path.getmtime(path)
-                    cursor.execute('REPLACE INTO processed_videos (filepath, modified_at, model_version) VALUES (?, ?, ?)', (path, mtime, config.DEFAULT_MODEL))
-                except Exception:
-                    pass
+                # 3. If successful, mark as completed
+                cursor.execute("UPDATE processed_videos SET status = 'completed' WHERE id = ?", (video_id,))
                 processed_count += 1
             except Exception as e:
                 if not silent:
                     print(f'Error processing video {path}: {e}')
+                # Mark as failed on exception
+                try:
+                    cursor.execute("UPDATE processed_videos SET status = 'failed' WHERE filepath = ?", (path,))
+                except Exception:
+                    pass
             conn.commit()
         conn.close()
     if progress_callback:

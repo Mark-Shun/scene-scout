@@ -83,6 +83,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         super().__init__()
         self.withdraw()
         self.is_active = True
+        self._is_background_task_running = False
         self.title('Scene Scout')
         self.splash_ref = splash_ref
 
@@ -572,7 +573,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             abs_path = str(Path(path).resolve())
             if abs_path not in self.active_databases:
                 self.active_databases.append(abs_path)
-                init_db(abs_path)
+                init_db(abs_path, self.handle_migration_callback) 
                 added.append(abs_path)
         if added:
             if not self.primary_db:
@@ -583,6 +584,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status(f'Added {len(added)} database(s).')
             if self.db_manager_dlg and self.db_manager_dlg.winfo_exists():
                 self.db_manager_dlg.refresh()
+        self.verify_database_paths()
 
     def save_db_config(self):
         self.config['active_databases'] = self.active_databases
@@ -679,7 +681,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             path = filedialog.asksaveasfilename(title='Create New Database', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
             if path:
                 abs_path = str(Path(path).resolve())
-                init_db(abs_path)
+                init_db(abs_path, self.handle_migration_callback)
                 self.active_databases.append(abs_path)
                 if not self.primary_db:
                     self.primary_db = abs_path
@@ -863,6 +865,138 @@ class SceneScoutApp(TkinterDnD.Tk):
             thread = threading.Thread(target=target_func, args=args, daemon=True)
             thread.start()
 
+    def verify_database_paths(self):
+        self.threaded_task(self._verify_paths_task)
+
+    def _verify_paths_task(self):
+        from database import get_all_processed_videos
+
+        missing_files = []
+        for db_path in self.active_databases:
+            videos = get_all_processed_videos(db_path)
+            for video_id, filepath in videos:
+                if not os.path.exists(filepath):
+                    missing_files.append((db_path, video_id, filepath))
+
+        if missing_files:
+            self.after(0, lambda: self.show_missing_files_dialog(missing_files))
+
+    def show_missing_files_dialog(self, missing_files: list):
+        if hasattr(self, 'missing_files_dlg') and self.missing_files_dlg and self.missing_files_dlg.winfo_exists():
+            return
+
+        dlg = tk.Toplevel(self)
+        self.missing_files_dlg = dlg
+        gui_utils.apply_window_icon(dlg, self.app_icon)
+        dlg.title("Missing Files Detected")
+        dlg.transient(self)
+        dlg.grab_set()
+        dlg.minsize(750, 400)
+        gui_utils.center_window(dlg, 750, 400)
+
+        main_frame = ttk.Frame(dlg, padding=15)
+        main_frame.pack(fill='both', expand=True)
+
+        ttk.Label(main_frame, text=f"Found {len(missing_files)} missing video file(s). They may have been moved, renamed, or deleted on your drive.", font=('', 10)).pack(anchor='w', pady=(0, 10))
+
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill='both', expand=True, pady=(0, 10))
+
+        columns = ('db', 'filename', 'path')
+        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', selectmode='extended')
+        tree.heading('db', text='Database')
+        tree.heading('filename', text='File Name')
+        tree.heading('path', text='Missing Path')
+
+        tree.column('db', width=120, anchor='w')
+        tree.column('filename', width=200, anchor='w')
+        tree.column('path', width=400, anchor='w')
+
+        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        tree.grid(row=0, column=0, sticky='nsew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        hsb.grid(row=1, column=0, sticky='ew')
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        item_data_map = {}
+
+        for db_path, video_id, filepath in missing_files:
+            iid = tree.insert('', 'end', values=(os.path.basename(db_path), os.path.basename(filepath), filepath))
+            item_data_map[iid] = (db_path, video_id)
+
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill='x')
+
+        def locate_selected():
+            selected = tree.selection()
+            if not selected:
+                messagebox.showwarning("Notice", "Please select a file to locate.")
+                return
+
+            from database import update_video_filepath
+            import config
+
+            for iid in selected:
+                db_path, video_id = item_data_map[iid]
+                old_path = tree.item(iid)['values'][2]
+
+                new_path = filedialog.askopenfilename(
+                    parent=dlg,
+                    title=f"Locate: {os.path.basename(old_path)}",
+                    filetypes=[('Video Files', ' '.join(f'*{ext}' for ext in config.VIDEO_EXTENSIONS))]
+                )
+
+                if new_path:
+                    success = update_video_filepath(db_path, video_id, new_path)
+                    if success:
+                        tree.delete(iid)
+                        del item_data_map[iid]
+                    else:
+                        messagebox.showerror("Conflict", f"The path '{new_path}' is already indexed in this database. Please remove this orphaned entry instead.")
+
+            if not tree.get_children():
+                dlg.destroy()
+
+        def remove_selected():
+            selected = tree.selection()
+            if not selected:
+                messagebox.showwarning("Notice", "Please select an entry to remove.")
+                return
+
+            if not messagebox.askyesno("Confirm", "Remove the selected entries and all their associated scene data? This cannot be undone."):
+                return
+
+            from database import delete_video_record
+
+            for iid in selected:
+                db_path, video_id = item_data_map[iid]
+                if delete_video_record(db_path, video_id):
+                    tree.delete(iid)
+                    del item_data_map[iid]
+
+            if self.search_results:
+                self.search_results.clear()
+                self._update_listview()
+                self.stats_label.config(text="Search cleared due to database modifications.")
+
+            if not tree.get_children():
+                dlg.destroy()
+
+        locate_btn = ttk.Button(btn_frame, text="Locate Selected...", command=locate_selected)
+        locate_btn.pack(side='left', padx=(0, 5))
+        gui_utils.ToolTip(locate_btn, "Browse your computer to reconnect the selected entry to its new file location.")
+
+        remove_btn = ttk.Button(btn_frame, text="Remove Selected", command=remove_selected)
+        remove_btn.pack(side='left', padx=5)
+        gui_utils.ToolTip(remove_btn, "Permanently delete the video entry and its scenes from the database.")
+
+        close_btn = ttk.Button(btn_frame, text="Ignore", command=dlg.destroy)
+        close_btn.pack(side='right')
+
     def set_controls_enabled(self, enabled: bool):
         state = 'normal' if enabled else 'disabled'
         for name in ['load_model_button', 'index_button', 'search_button', 'rescore_button', 'clear_rescore_button', 'query_text_entry']:
@@ -899,6 +1033,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                     pass
         self.update_idletasks()
 
+    def force_update_status(self, message: str):
+        """Forces an immediate UI redraw before a blocking operation (like DB migrations)."""
+        self._update_status_ui(message)
+        self.update() # Force Tkinter to process all pending draw events instantly
+
     def load_saved_paths(self):
         from database import add_to_queue, queue_count
         
@@ -931,7 +1070,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status(f'Loaded {len(valid_dbs)} database(s). Target: {primary_name}')
         
         for db_path in self.active_databases:
-            init_db(db_path)
+            init_db(db_path, self.handle_migration_callback)
         
         if 'folder_path' in self.config and self.config['folder_path'] and os.path.exists(self.config['folder_path']):
             if self.primary_db and queue_count(self.primary_db) == 0:
@@ -943,6 +1082,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self._update_db_section()
         self.update_queue_status()
         self._update_button_states()
+        self.verify_database_paths()
 
     def update_queue_status(self):
         if not self.primary_db:
@@ -1227,7 +1367,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         path = filedialog.asksaveasfilename(parent=self, title='Create New Database File', initialdir='', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
         if path:
             abs_path = str(Path(path).resolve())
-            init_db(abs_path)
+            init_db(abs_path, self.force_update_status)
             self.active_databases.append(abs_path)
             self.primary_db = abs_path
             self._update_db_section()
@@ -1344,6 +1484,73 @@ class SceneScoutApp(TkinterDnD.Tk):
         if messagebox.askyesno('Confirm', 'Remove entries for deleted files from the database?'):
             self.threaded_task(self._cleanup_task)
 
+    def show_migration_popup(self):
+            """Creates a blocking progress popup for database migrations."""
+            # Prevent opening multiple popups if multiple DBs migrate sequentially
+            if hasattr(self, 'migration_popup') and self.migration_popup:
+                return 
+                
+            self.migration_popup = tk.Toplevel(self)
+            import gui_utils
+            gui_utils.apply_window_icon(self.migration_popup, self.app_icon)
+            self.migration_popup.title('Database Migration')
+            self.migration_popup.transient(self)
+            self.migration_popup.grab_set()
+            self.migration_popup.minsize(400, 150)
+            
+            frame = ttk.Frame(self.migration_popup, padding=20)
+            frame.pack(fill='both', expand=True)
+            
+            self.migration_status_var = tk.StringVar(master=self.migration_popup, value='Preparing database migration...')
+            ttk.Label(frame, textvariable=self.migration_status_var, font=('Arial', 10, 'bold'), wraplength=360).pack(pady=(0, 10))
+            
+            self.migration_progress = ttk.Progressbar(frame, mode='indeterminate')
+            self.migration_progress.pack(fill='x', pady=5)
+            self.migration_progress.start(10)
+            
+            gui_utils.center_window(self.migration_popup, 400, 150)
+            
+            # Disable the close button so the user can't interrupt the SQL operation
+            self.migration_popup.protocol('WM_DELETE_WINDOW', lambda: None)
+            self.migration_popup.update()
+
+    def close_migration_popup(self):
+        """Safely closes the migration popup."""
+        if hasattr(self, 'migration_progress') and self.migration_progress:
+            try:
+                self.migration_progress.stop()
+            except Exception:
+                pass
+                
+        if hasattr(self, 'migration_popup') and self.migration_popup:
+            try:
+                self.migration_popup.grab_release()
+                self.migration_popup.destroy()
+            except Exception:
+                pass
+            self.migration_popup = None
+
+    def handle_migration_callback(self, msg: str):
+        """Intelligent callback that handles the popup lifecycle based on the message."""
+        # 1. Update the bottom status bar and splash screen (if it exists)
+        self.force_update_status(msg)
+        
+        # 2. Check the message text to determine popup lifecycle
+        msg_lower = msg.lower()
+        if "migrating database" in msg_lower:
+            # Only show popup if the main window is visible (not during initial boot splash)
+            if self.winfo_viewable():
+                self.show_migration_popup()
+                self.migration_status_var.set(msg)
+                self.migration_popup.update()
+                
+        elif "complete" in msg_lower or "failed" in msg_lower:
+            if hasattr(self, 'migration_popup') and self.migration_popup:
+                self.migration_status_var.set(msg)
+                self.migration_popup.update()
+                # Leave it open for 1 second so the user can read that it finished
+                self.after(1000, self.close_migration_popup)
+
     def show_merging_popup(self):
         """Creates a non-blocking progress popup for the database merge."""
         self.merge_popup = tk.Toplevel(self)
@@ -1452,17 +1659,20 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def load_model_task(self, device_choice, use_trt):
         """Background task runner."""
+        self._is_background_task_running = True
         try:
             # Pass values through to load_model
             self.load_model(device_choice=device_choice, use_trt=use_trt)
             self.after(0, self.on_model_load_finished)
         except Exception as e:
+            self._is_background_task_running = False
             self.after(0, lambda: messagebox.showerror('Model Error', f'Failed to load model: {e}'))
             self.after(0, lambda: self.load_model_button.config(state='normal'))
             self.after(0, lambda: self.update_status('Error loading model.'))
 
     def on_model_load_finished(self):
         """Updates the GUI once the background loading thread is complete."""
+        self._is_background_task_running = False
         # Now safely update the Tkinter variable on the main thread
         if hasattr(self, '_last_active_device') and hasattr(self, 'device_var'):
             self.device_var.set(self._last_active_device)
@@ -1481,6 +1691,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if queue_count(self.primary_db) == 0:
             messagebox.showerror('Error', 'Please add files or folders to the queue before indexing.')
             return
+        self._is_background_task_running = True
         self.ensure_model_active()
         self.index_button.config(state='disabled')
         self.search_button.config(state='disabled')
@@ -1578,6 +1789,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.after(0, lambda: self.search_button.config(state='normal'))
 
     def on_index_finished(self, result: str = 'completed'):
+        self._is_background_task_running = False
         if hasattr(self, 'index_popup') and self.index_popup:
             self.index_popup.destroy()
         if result == 'cancelled':
@@ -1604,6 +1816,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if not self.query_text_var.get() and (not self.query_image_path):
             messagebox.showwarning('Warning', 'Please enter text or select an image to search.')
             return
+        self._is_background_task_running = True
         self.ensure_model_active()
         self.search_button.config(state='disabled')
         self._stop_video_loop()
@@ -1624,6 +1837,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.after(0, lambda: self.search_button.config(state='normal'))
 
     def on_search_finished(self, results: List[Tuple[str, int, int, int, bytes, float, str]]):
+        self._is_background_task_running = False
         self.search_results = [(path, score, 'video', None, scene_idx, start_time, end_time, thumb_bytes, source_db)
                               for path, scene_idx, start_time, end_time, thumb_bytes, score, source_db in results]
         self._update_listview()
@@ -1770,6 +1984,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def rescore_task(self, query_text: str):
         assert self.primary_db is not None
+        self._is_background_task_running = True
         self.update_status(f"Rescoring with: '{query_text}'...")
         try:
             rescore_embedding = get_query_embedding(query_text, None, self.device, self.processor, self.model)
@@ -1791,10 +2006,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                     elif ftype == 'video':
                         if isinstance(scene_idx, tuple):
                             start_idx, end_idx = scene_idx
-                            cursor.execute(
-                                'SELECT embedding FROM scene_embeddings WHERE filepath=? AND scene_index >= ? AND scene_index <= ?', 
-                                (path, start_idx, end_idx)
-                            )
+                            cursor.execute('''
+                                SELECT se.embedding FROM scene_embeddings se
+                                JOIN processed_videos pv ON se.video_id = pv.id
+                                WHERE pv.filepath=? AND se.scene_index >= ? AND se.scene_index <= ?
+                            ''', (path, start_idx, end_idx))
                             results = cursor.fetchall()
                             if results:
                                 max_sim = -1.0
@@ -1805,7 +2021,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                                         max_sim = sim
                                 self.search_results[i] = (path, score, ftype, max_sim, scene_idx, scene_time, scene_end, thumb_bytes, source_db)
                         else:
-                            cursor.execute('SELECT embedding FROM scene_embeddings WHERE filepath=? AND scene_index=?', (path, scene_idx))
+                            cursor.execute('''
+                                SELECT se.embedding FROM scene_embeddings se
+                                JOIN processed_videos pv ON se.video_id = pv.id
+                                WHERE pv.filepath=? AND se.scene_index=?
+                            ''', (path, scene_idx))
                             result = cursor.fetchone()
                             if result:
                                 embedding = np.frombuffer(result[0], dtype=np.float32)
@@ -1814,9 +2034,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                                 
             self.after(0, self.on_rescore_finished)
         except Exception as e:
+            self._is_background_task_running = False
             self.after(0, lambda: messagebox.showerror('Rescore Error', str(e)))
 
     def on_rescore_finished(self):
+        self._is_background_task_running = False
         self._update_listview()
         self.update_status('Rescore complete.')
         self.clear_rescore_button.config(state='normal')
@@ -2396,7 +2618,8 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def check_idle_and_state(self):
         """Periodic background loop for time-based offloading."""
-        if not self.is_active:
+        if not self.is_active or self._is_background_task_running:
+            self._idle_counter = 0
             return
 
         # Increment counter
