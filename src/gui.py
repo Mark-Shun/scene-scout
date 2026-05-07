@@ -2466,8 +2466,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         else:
             self._stop_video_loop()
 
-        from exporters.single_exporter import SceneExportDialog
-        dialog = SceneExportDialog(self, path, start_ms, end_ms)
+        from exporters.single_exporter import SingleExportDialog
+        dialog = SingleExportDialog(self, path, start_ms, end_ms)
         
         # 3. Yield the event loop until the export dialog is closed/destroyed
         self.wait_window(dialog)

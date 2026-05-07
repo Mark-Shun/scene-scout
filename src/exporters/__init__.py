@@ -3,9 +3,9 @@
 # instead of having to reference the individual sub-modules.
 #
 # Usage examples:
-#   from exporters import SceneExportDialog
+#   from exporters import SingleExportDialog
 #   from exporters import BulkExportDialog
 #   from exporters import export_video_scene
 
-from .single_exporter import SceneExportDialog, export_video_scene, get_video_info_and_keyframe
+from .single_exporter import SingleExportDialog, export_video_scene, get_video_info_and_keyframe
 from .bulk_exporter import BulkExportDialog
