@@ -83,6 +83,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         super().__init__()
         self.withdraw()
         self.is_active = True
+        self._is_background_task_running = False
         self.title('Scene Scout')
         self.splash_ref = splash_ref
 
@@ -1452,17 +1453,20 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def load_model_task(self, device_choice, use_trt):
         """Background task runner."""
+        self._is_background_task_running = True
         try:
             # Pass values through to load_model
             self.load_model(device_choice=device_choice, use_trt=use_trt)
             self.after(0, self.on_model_load_finished)
         except Exception as e:
+            self._is_background_task_running = False
             self.after(0, lambda: messagebox.showerror('Model Error', f'Failed to load model: {e}'))
             self.after(0, lambda: self.load_model_button.config(state='normal'))
             self.after(0, lambda: self.update_status('Error loading model.'))
 
     def on_model_load_finished(self):
         """Updates the GUI once the background loading thread is complete."""
+        self._is_background_task_running = False
         # Now safely update the Tkinter variable on the main thread
         if hasattr(self, '_last_active_device') and hasattr(self, 'device_var'):
             self.device_var.set(self._last_active_device)
@@ -1481,6 +1485,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if queue_count(self.primary_db) == 0:
             messagebox.showerror('Error', 'Please add files or folders to the queue before indexing.')
             return
+        self._is_background_task_running = True
         self.ensure_model_active()
         self.index_button.config(state='disabled')
         self.search_button.config(state='disabled')
@@ -1578,6 +1583,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.after(0, lambda: self.search_button.config(state='normal'))
 
     def on_index_finished(self, result: str = 'completed'):
+        self._is_background_task_running = False
         if hasattr(self, 'index_popup') and self.index_popup:
             self.index_popup.destroy()
         if result == 'cancelled':
@@ -1604,6 +1610,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if not self.query_text_var.get() and (not self.query_image_path):
             messagebox.showwarning('Warning', 'Please enter text or select an image to search.')
             return
+        self._is_background_task_running = True
         self.ensure_model_active()
         self.search_button.config(state='disabled')
         self._stop_video_loop()
@@ -1624,6 +1631,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.after(0, lambda: self.search_button.config(state='normal'))
 
     def on_search_finished(self, results: List[Tuple[str, int, int, int, bytes, float, str]]):
+        self._is_background_task_running = False
         self.search_results = [(path, score, 'video', None, scene_idx, start_time, end_time, thumb_bytes, source_db)
                               for path, scene_idx, start_time, end_time, thumb_bytes, score, source_db in results]
         self._update_listview()
@@ -1770,6 +1778,7 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def rescore_task(self, query_text: str):
         assert self.primary_db is not None
+        self._is_background_task_running = True
         self.update_status(f"Rescoring with: '{query_text}'...")
         try:
             rescore_embedding = get_query_embedding(query_text, None, self.device, self.processor, self.model)
@@ -1814,9 +1823,11 @@ class SceneScoutApp(TkinterDnD.Tk):
                                 
             self.after(0, self.on_rescore_finished)
         except Exception as e:
+            self._is_background_task_running = False
             self.after(0, lambda: messagebox.showerror('Rescore Error', str(e)))
 
     def on_rescore_finished(self):
+        self._is_background_task_running = False
         self._update_listview()
         self.update_status('Rescore complete.')
         self.clear_rescore_button.config(state='normal')
@@ -2358,7 +2369,8 @@ class SceneScoutApp(TkinterDnD.Tk):
 
     def check_idle_and_state(self):
         """Periodic background loop for time-based offloading."""
-        if not self.is_active:
+        if not self.is_active or self._is_background_task_running:
+            self._idle_counter = 0
             return
 
         # Increment counter
