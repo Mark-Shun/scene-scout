@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.2] - 2026-05-07
+
+An important fix for GPU utilization and nice to have features
+
+### Added
+- **Database migration feedback**: When an older database is being migrated to a newer version schema, there is now a visual pop up when this happens.
+- **Database file/path check**: When a database gets imported, there is now an initial check to see if the videos are still accessible. If not the user is prompted to either provide a new path, remove the entry (with its scene embeddings) or ignore it.
+
+### Changed
+- **Float32 computation for older NVIDIA GPU**: All NVIDIA GPUs with CUDA automatically used FP16, however older GPUs (pre-RTX) lack this hardware support or perform poorly with it. So these use FP32 now.
+
+### Fixed
+- **GPU offloading during tasks**: Due to threading tasks, during processes that take a while (for example indexing files) the idle timer was not being reset. Due to this the GPU weights could get offloaded to CPU/RAM in the middle of the process. Now there is a blocking check flag to prevent this.
+- **uv not found**: When the bat scripts were opened from a folder outside the program folder, it could result in the wrong path being set to use for uv (and other files)
+
+## [1.1.1] - 2026-05-06
+
+A hotfix patch for the installation scripts
+
+### Added
+- **Install script update check**: Only the GUI had update notification capabilities. 
+
+### Fixed
+- **Python version ceiling**: uv was installing incompatible wheels for users who had a specific python version installed on their system. Introduced a Python ceiling version during install, Python 3.13 for now.
+
 ## [1.1.0] - 2026-05-06
 
 A pretty big update, focused on bringing more functionality to the tool and enhancing existing features.
