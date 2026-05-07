@@ -33,7 +33,9 @@ COMMAND_ALIASES = {
     'qu': 'queue',
     'u': 'update',
     'ex': 'export',
-    'rs': 'rescore'
+    'rs': 'rescore',
+    'v': 'verify',
+    'rl': 'relink'
 }
 
 # --- Helper Functions ---
@@ -609,6 +611,56 @@ class SceneScoutShell(cmd.Cmd):
         count = cleanup_orphaned_entries(target)
         if not getattr(self.state, 'silent', False):
             print(f'Removed {count} orphaned embeddings.')
+
+    def do_verify(self, arg):
+        """Check the target database for missing or moved video files."""
+        target = self._get_effective_target()
+        if not target:
+            print("Error: No target database set.")
+            return
+
+        from database import get_all_processed_videos
+        videos = get_all_processed_videos(target)
+        
+        missing = [(vid, path) for vid, path in videos if not os.path.exists(path)]
+        
+        if not missing:
+            print("All video files are present and accounted for.")
+            return
+            
+        print(f"\nFound {len(missing)} missing video file(s):")
+        for vid, path in missing:
+            print(f"  [ID: {vid}] {path}")
+        print("\nUse 'relink <ID> <new_path>' to fix a path, or 'cleanup' to permanently remove all missing entries.")
+
+    def do_relink(self, arg):
+        """Update the file path of a database entry. Usage: relink <ID> <new_path>"""
+        args = shlex.split(arg)
+        if len(args) < 2:
+            print("Usage: relink <ID> <new_path>")
+            return
+        
+        try:
+            vid_id = int(args[0])
+        except ValueError:
+            print("Error: ID must be a number.")
+            return
+            
+        new_path = os.path.expanduser(args[1])
+        new_path = str(Path(new_path).resolve())
+        
+        if not os.path.exists(new_path):
+            print(f"Error: The new file does not exist at: {new_path}")
+            return
+            
+        target = self._get_effective_target()
+        from database import update_video_filepath
+        
+        success = update_video_filepath(target, vid_id, new_path)
+        if success:
+            print(f"Successfully relinked entry {vid_id} to:\n  {new_path}")
+        else:
+            print(f"Error: The path '{new_path}' is already indexed in this database. You must use 'cleanup' to remove the orphaned entry instead.")
     
     def do_update(self, arg):
         """View details about the latest available software update."""
