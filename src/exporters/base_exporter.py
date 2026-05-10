@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import subprocess
 import tkinter as tk
@@ -431,6 +432,45 @@ def get_video_info_and_keyframe(video_path: str, target_ms: int) -> Dict[str, An
             container.close()
 
 
+VIDEO_CODEC_MAP = {
+    'H.264 (libx264)': 'libx264',
+    'H.265 (libx265)': 'libx265',
+    'AV1 (libsvtav1)': 'libsvtav1',
+    'VP9 (libvpx-vp9)': 'libvpx-vp9',
+    'ProRes 422 (prores_ks)': 'prores_ks'
+}
+
+
+def build_ffmpeg_args_headless(config_dict: dict, metadata: dict) -> list:
+    """Generates encoding arguments based on a config dictionary for CLI/Headless use."""
+    args = []
+
+    codec = config_dict.get('export_video_codec', 'H.264 (libx264)')
+    codec_name = VIDEO_CODEC_MAP.get(codec, 'libx264')
+    args.extend(['-c:v', codec_name, '-crf', str(config_dict.get('export_crf', 23))])
+
+    res_choice = config_dict.get('export_resolution', 'Original')
+    if res_choice == 'Custom':
+        args.extend(['-vf', f"scale={config_dict.get('export_custom_width', 1920)}:{config_dict.get('export_custom_height', 1080)}"])
+    elif res_choice != 'Original':
+        h = re.search(r'\d+', res_choice)
+        if h:
+            args.extend(['-vf', f'scale=-2:{h.group()}'])
+
+    audio_mode_raw = config_dict.get('export_audio_mode', 'Copy Audio (Fast)')
+    is_no_audio = audio_mode_raw in ('disable', 'No Audio (Mute)')
+    is_copy = audio_mode_raw in ('copy', 'Copy Audio', 'Copy Audio (Fast)')
+    if is_no_audio:
+        args.append('-an')
+    elif is_copy:
+        args.extend(['-c:a', 'copy'])
+    else:
+        acodec = config_dict.get('export_audio_codec', 'AAC (aac)')
+        args.extend(['-c:a', acodec, '-b:a', config_dict.get('export_audio_bitrate', '192k')])
+
+    return args
+
+
 def export_video_scene(video_path: str, start_ms: int, end_ms: int, output_path: str) -> None:
     duration_ms = end_ms - start_ms
     start_sec = start_ms / 1000.0
@@ -444,20 +484,21 @@ def export_video_scene(video_path: str, start_ms: int, end_ms: int, output_path:
         fast_seek = 0.0
         exact_seek = start_sec
 
+    app_config = config.load_config()
+    metadata = get_video_info_and_keyframe(video_path, start_ms)
+
     cmd = [
         _get_cached_ffmpeg_path(),
         '-ss', str(fast_seek),
         '-i', video_path,
         '-ss', str(exact_seek),
-        '-c:v', 'libx264',
-        '-c:a', 'copy',
-        '-map', '0:v:0',
-        '-map', '0:a?',
-        '-t', str(duration_sec),
-        '-avoid_negative_ts', 'make_zero',
-        '-y',
-        output_path
     ]
+
+    cmd.extend(build_ffmpeg_args_headless(app_config, metadata))
+    cmd.extend(['-map', '0:v:0'])
+    if metadata.get('has_audio'):
+        cmd.extend(['-map', '0:a?'])
+    cmd.extend(['-t', str(duration_sec), '-avoid_negative_ts', 'make_zero', '-y', output_path])
 
     creation_flags = 0
     if sys.platform == 'win32':

@@ -40,7 +40,7 @@ DEFAULT_CONFIG = {
     "hf_token": "",
     "show_update_details": False,
     "export_mode": "encode",
-    "export_audio_mode": "Copy Audio",
+    "export_audio_mode": "Copy Audio (Fast)",
     "export_video_codec": "H.264 (libx264)",
     "export_audio_codec": "AAC (aac)",
     "export_crf": 23,

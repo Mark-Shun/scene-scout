@@ -452,30 +452,111 @@ class SceneScoutShell(cmd.Cmd):
         
         display_results(self.last_results, as_json=use_json, include_thumbs=include_thumbs, output_file=output_file, silent=is_silent)
 
+    def _parse_indices(self, index_str: str, max_val: int) -> list[int]:
+        """Parses strings like '1,3,5-7' into a list of 0-based integers."""
+        indices = set()
+        for part in index_str.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            if '-' in part:
+                try:
+                    start, end = map(int, part.split('-'))
+                    indices.update(range(start, end + 1))
+                except ValueError:
+                    continue
+            else:
+                try:
+                    indices.add(int(part))
+                except ValueError:
+                    continue
+        return [i - 1 for i in indices if 0 < i <= max_val]
+
+    def _run_headless_export(self, path: str, start_ms: int, end_ms: int, output_file: str, app_config: dict):
+        from exporters.base_exporter import build_ffmpeg_args_headless, _get_cached_ffmpeg_path
+
+        start_sec = start_ms / 1000.0
+        duration_sec = (end_ms - start_ms) / 1000.0
+
+        buffer_sec = 10.0
+        fast_seek = max(0.0, start_sec - buffer_sec)
+        exact_seek = start_sec - fast_seek
+
+        cmd = [
+            _get_cached_ffmpeg_path(),
+            '-ss', str(fast_seek),
+            '-i', path,
+            '-ss', str(exact_seek),
+        ]
+
+        metadata = {'has_audio': True}
+        cmd.extend(build_ffmpeg_args_headless(app_config, metadata))
+        cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
+        cmd.extend(['-t', str(duration_sec), '-avoid_negative_ts', 'make_zero', '-y', output_file])
+
+        creation_flags = 0
+        if sys.platform == 'win32':
+            creation_flags = subprocess.CREATE_NO_WINDOW
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=creation_flags
+        )
+        _stdout, stderr = process.communicate()
+
+        if process.returncode != 0:
+            raise RuntimeError(f'FFmpeg failed with code {process.returncode}: {stderr.decode()}')
+
     def do_export(self, arg):
-        """Export a scene from the last search results. Usage: export <result_index> <output_path>"""
-        args = shlex.split(arg)
-        if len(args) < 2:
-            print("Usage: export <result_index> <output_path>")
+        """Export scenes. Usage: export <1,2,5-8> <output_folder> OR export <1> <output_file.mp4>"""
+        export_args = shlex.split(arg)
+        if len(export_args) < 2:
+            print("Usage: export <1,2,5-8> <output_folder> OR export <1> <output_file.mp4>")
             return
 
         if not self.last_results:
             print("No recent search results to export. Run a search first.")
             return
 
-        try:
-            idx = int(args[0]) - 1
-            out_path = args[1]
-            path, scene_idx, start_time, end_time, _, _, source_db = self.last_results[idx]
+        indices = self._parse_indices(export_args[0], len(self.last_results))
+        if not indices:
+            print("No valid indices provided. Check your search results.")
+            return
 
-            from exporters.single_exporter import export_video_scene
-            print(f"Exporting scene {scene_idx + 1} to {out_path}...")
-            export_video_scene(path, start_time, end_time, out_path)
-            print("Export completed successfully.")
-        except (ValueError, IndexError):
-            print("Invalid index provided. Please check your search results.")
-        except Exception as e:
-            print(f"Export failed: {e}", file=sys.stderr)
+        target_path = export_args[1]
+        is_bulk = len(indices) > 1 or os.path.isdir(target_path)
+
+        app_config = config.load_config()
+
+        for idx in indices:
+            try:
+                path, scene_idx, start_ms, end_ms, _, _, _ = self.last_results[idx]
+
+                if is_bulk:
+                    os.makedirs(target_path, exist_ok=True)
+                    filename = f"{os.path.splitext(os.path.basename(path))[0]}_scene_{idx+1}.mp4"
+                    output_file = os.path.join(target_path, filename)
+                else:
+                    output_file = target_path
+
+                print(f"[{idx+1}/{len(indices)}] Exporting: {os.path.basename(path)}...")
+
+                self._run_headless_export(path, start_ms, end_ms, output_file, app_config)
+
+                if not is_bulk:
+                    print("Export completed successfully.")
+
+            except (ValueError, IndexError):
+                print(f"  [ERROR] Scene {idx+1}: Invalid index.")
+                continue
+            except Exception as e:
+                print(f"  [ERROR] Scene {idx+1} failed: {e}")
+                continue
+
+        if is_bulk and not getattr(self.state, 'silent', False):
+            print(f"Bulk export finished. Processed {len(indices)} scene(s) to: {os.path.abspath(target_path)}")
 
     def do_rescore(self, arg):
         """Rescore the last search results with a new text query. Usage: rescore <query>"""
@@ -717,6 +798,12 @@ def cli_mode(update_info=None):
     parser.add_argument('--start', type=int, help='Start time of the scene in milliseconds')
     parser.add_argument('--end', type=int, help='End time of the scene in milliseconds')
     parser.add_argument('--out', type=str, help='Output file path for the exported video')
+    parser.add_argument('--crf', type=int, default=None, help='Quality (0-51, lower=better, default=23)')
+    parser.add_argument('--video-codec', type=str, default=None, choices=['H.264 (libx264)', 'H.265 (libx265)', 'AV1 (libsvtav1)', 'VP9 (libvpx-vp9)', 'ProRes 422 (prores_ks)'], help='Video codec for export')
+    parser.add_argument('--audio-mode', type=str, default=None, choices=['copy', 'encode', 'disable'], help='Audio mode for export')
+    parser.add_argument('--audio-codec', type=str, default=None, help='Audio codec for export (e.g. AAC (aac), MP3 (libmp3lame))')
+    parser.add_argument('--audio-bitrate', type=str, default=None, help='Audio bitrate (e.g. 128k, 192k, 256k, 320k)')
+    parser.add_argument('--resolution', type=str, default=None, help='Output resolution (e.g. 1080p, 720p, 480p, or Custom 1920x1080)')
     args = parser.parse_args()
 
     def cli_migration_callback(msg):
@@ -765,12 +852,59 @@ def cli_mode(update_info=None):
             sys.exit(EXIT_INVALID_INPUT)
 
         try:
-            from exporters.single_exporter import export_video_scene
+            from exporters.base_exporter import build_ffmpeg_args_headless, _get_cached_ffmpeg_path
+
+            temp_config = saved_config.copy()
+            if args.crf is not None:
+                temp_config['export_crf'] = args.crf
+            if args.video_codec is not None:
+                temp_config['export_video_codec'] = args.video_codec
+            if args.audio_mode is not None:
+                temp_config['export_audio_mode'] = args.audio_mode
+            if args.audio_codec is not None:
+                temp_config['export_audio_codec'] = args.audio_codec
+            if args.audio_bitrate is not None:
+                temp_config['export_audio_bitrate'] = args.audio_bitrate
+            if args.resolution is not None:
+                temp_config['export_resolution'] = args.resolution
+
+            import subprocess
+            start_sec = args.start / 1000.0
+            duration_sec = ((args.end or args.start + 1000) - args.start) / 1000.0
+
+            buffer_sec = 10.0
+            fast_seek = max(0.0, start_sec - buffer_sec)
+            exact_seek = start_sec - fast_seek
+
+            cmd = [
+                _get_cached_ffmpeg_path(),
+                '-ss', str(fast_seek),
+                '-i', args.export_scene,
+                '-ss', str(exact_seek),
+            ]
+
+            metadata = {'has_audio': True}
+            cmd.extend(build_ffmpeg_args_headless(temp_config, metadata))
+            cmd.extend(['-map', '0:v:0', '-map', '0:a?'])
+            cmd.extend(['-t', str(duration_sec), '-avoid_negative_ts', 'make_zero', '-y', args.out])
 
             if not args.silent:
                 print(f'Exporting scene to {args.out}...')
 
-            export_video_scene(args.export_scene, args.start, args.end, args.out)
+            creation_flags = 0
+            if sys.platform == 'win32':
+                creation_flags = subprocess.CREATE_NO_WINDOW
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=creation_flags
+            )
+            _stdout, stderr = process.communicate()
+
+            if process.returncode != 0:
+                raise RuntimeError(f'FFmpeg failed with code {process.returncode}: {stderr.decode()}')
 
             if not args.silent:
                 print('Export completed successfully.')
