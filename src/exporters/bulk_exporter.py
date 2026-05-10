@@ -329,55 +329,30 @@ class BulkExportDialog(BaseExporter):
         except Exception as e:
             self.after(0, lambda err=str(e): self._on_export_error(err))
 
-    def _build_ffmpeg_command(
-        self,
-        scene_idx: int,
-        video_path: str,
-        start_ms: int,
-        end_ms: int,
-        output_path: str
-    ) -> list:
-        duration_ms = end_ms - start_ms
-        duration_sec = duration_ms / 1000.0
+    def _build_ffmpeg_command(self, scene_idx: int, video_path: str, start_ms: int, end_ms: int, output_path: str) -> list:
+        duration_sec = (end_ms - start_ms) / 1000.0
         metadata = self.metadata_by_scene[scene_idx] if scene_idx < len(self.metadata_by_scene) else {}
 
         cmd = [self._get_ffmpeg_path()]
 
         if self.mode_var.get() == 'copy':
+            # Bulk Copy: Use pre-calculated metadata keyframe
             keyframe_ms = metadata.get('keyframe_ms', start_ms)
-            start_sec = keyframe_ms / 1000.0
-
-            cmd.extend(['-ss', str(start_sec)])
-            cmd.extend(['-i', video_path])
-            cmd.extend(['-c', 'copy'])
+            cmd.extend(['-ss', str(keyframe_ms / 1000.0), '-i', video_path, '-c', 'copy'])
         else:
+            # Bulk Re-encode: Two-step seek
             start_sec = start_ms / 1000.0
-
             buffer_sec = 10.0
-            if start_sec > buffer_sec:
-                fast_seek = start_sec - buffer_sec
-                exact_seek = buffer_sec
-            else:
-                fast_seek = 0.0
-                exact_seek = start_sec
+            fast_seek = max(0.0, start_sec - buffer_sec)
+            exact_seek = start_sec - fast_seek
 
-            cmd.extend(['-ss', str(fast_seek)])
-            cmd.extend(['-i', video_path])
-            cmd.extend(['-ss', str(exact_seek)])
-            cmd.extend(self._get_video_encode_args())
+            cmd.extend(['-ss', str(fast_seek), '-i', video_path, '-ss', str(exact_seek)])
+            
+            # Inject shared core arguments
+            cmd.extend(self._get_core_ffmpeg_args(metadata))
 
-        cmd.extend(self._get_audio_args())
-
-        cmd.extend(['-map', '0:v:0'])
-        if metadata.get('has_audio'):
-            cmd.extend(['-map', '0:a?'])
-
-        cmd.extend([
-            '-t', str(duration_sec),
-            '-avoid_negative_ts', 'make_zero',
-            '-y',
-            output_path
-        ])
+        # Add bulk-specific output path
+        cmd.extend(['-t', str(duration_sec), output_path])
 
         return cmd
 

@@ -73,6 +73,20 @@ class BaseExporter(tk.Toplevel):
 
         self.config = config.load_config()
 
+    def _get_core_ffmpeg_args(self, metadata: dict) -> list:
+        """Returns encoding, audio, mapping, and sync arguments."""
+        args = self._get_video_encode_args()
+        args.extend(self._get_audio_args())
+
+        # Standard stream mapping
+        args.extend(['-map', '0:v:0'])
+        if metadata.get('has_audio'):
+            args.extend(['-map', '0:a?'])
+
+        # Global synchronization flags
+        args.extend(['-avoid_negative_ts', 'make_zero', '-y'])
+        return args
+
     def _build_mode_section(self, parent):
         frame = ttk.LabelFrame(parent, text='Export Mode', padding='10')
         frame.pack(fill='x', pady=(0, 10))

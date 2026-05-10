@@ -156,40 +156,24 @@ class SingleExportDialog(BaseExporter):
         cmd = [self._get_ffmpeg_path()]
 
         if self.mode_var.get() == 'copy':
+            # Stream copy: Fast seek directly to the keyframe
             start_sec = self.metadata['keyframe_ms'] / 1000.0
-
-            cmd.extend(['-ss', str(start_sec)])
-            cmd.extend(['-i', self.video_path])
-            cmd.extend(['-c', 'copy'])
+            cmd.extend(['-ss', str(start_sec), '-i', self.video_path, '-c', 'copy'])
         else:
+            # Re-encode: Fast seek followed by accurate decode
             start_sec = self.start_ms / 1000.0
-
             buffer_sec = 10.0
-            if start_sec > buffer_sec:
-                fast_seek = start_sec - buffer_sec
-                exact_seek = buffer_sec
-            else:
-                fast_seek = 0.0
-                exact_seek = start_sec
+            fast_seek = max(0.0, start_sec - buffer_sec)
+            exact_seek = start_sec - fast_seek
 
-            cmd.extend(['-ss', str(fast_seek)])
-            cmd.extend(['-i', self.video_path])
-            cmd.extend(['-ss', str(exact_seek)])
-            cmd.extend(self._get_video_encode_args())
+            cmd.extend(['-ss', str(fast_seek), '-i', self.video_path, '-ss', str(exact_seek)])
+            
+            # Inject core encoding arguments from the base class
+            cmd.extend(self._get_core_ffmpeg_args(self.metadata))
 
-        cmd.extend(self._get_audio_args())
-
-        cmd.extend(['-map', '0:v:0'])
-        if self.metadata.get('has_audio'):
-            cmd.extend(['-map', '0:a?'])
-
+        # Add output-specific parameters
         duration_sec = self.duration_ms / 1000.0
-        cmd.extend([
-            '-t', str(duration_sec),
-            '-avoid_negative_ts', 'make_zero',
-            '-y',
-            self.output_path_var.get()
-        ])
+        cmd.extend(['-t', str(duration_sec), self.output_path_var.get()])
 
         return cmd
 
