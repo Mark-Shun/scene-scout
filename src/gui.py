@@ -143,6 +143,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.queue_manager_dlg = None
         self.query_image_path = None
         self.search_results = []
+        self.current_display_path = None
         self.last_selected_entry = None
         self.current_sort_col = 'score'
         self.current_sort_reverse = True
@@ -346,7 +347,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.device_var.trace_add('write', lambda *args: self._update_standby_ui_state())
         self._update_standby_ui_state()
 
-        ttk.Label(options_frame, text=f'Auto-detected: {self.device_msg}', font=('', 8, 'italic')).pack(anchor='w')
+        ttk.Label(options_frame, text=f'Detected: {self.device_msg}', font=('', 8, 'italic')).pack(anchor='w')
 
         # Add TRT Toggle if hardware supports it
         if self.show_trt_option:
@@ -2086,6 +2087,7 @@ class SceneScoutApp(TkinterDnD.Tk):
     def on_result_select(self, event: Optional[tk.Event]):
         sel = self.results_tree.selection()
         if not sel:
+            self.current_display_path = None
             for widget in self.thumbnail_widgets.values():
                 widget.config(relief='flat', bg=self.style.lookup('TFrame', 'background'))
             return
@@ -2095,6 +2097,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if primary_iid != self.last_selected_entry:
             self.last_selected_entry = primary_iid
             index = int(primary_iid)
+            self.current_display_path = self.search_results[index][0]
             path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[index]
             self.display_media(path, is_video=(ftype == 'video'), start_ms=start_ms, end_ms=end_ms)
 
@@ -2163,7 +2166,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         if num_selected == 1:
             idx = int(selection[0])
             path = self.search_results[idx][0]
-            menu.add_command(label='Open File', command=self.open_current_file)
+            menu.add_command(label='Open Video', command=self.open_current_file)
             menu.add_command(label='Copy Path', command=lambda p=path: self.clipboard_append(p))
             menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
             menu.add_separator()
