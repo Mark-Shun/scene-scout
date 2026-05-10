@@ -88,6 +88,26 @@ class BaseExporter(tk.Toplevel):
         args.extend(['-avoid_negative_ts', 'make_zero', '-y'])
         return args
 
+    def _setup_scrollable_container(self):
+        """Creates a scrollable area for the dialog content."""
+        self.main_canvas = tk.Canvas(self, highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.main_canvas.yview)
+        
+        self.scrollable_frame = ttk.Frame(self.main_canvas, padding="10")
+        
+        self.canvas_window = self.main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+        
+        self.main_canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.scrollable_frame.bind("<Configure>", lambda e: self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all")))
+        self.main_canvas.bind("<Configure>", lambda e: self.main_canvas.itemconfig(self.canvas_window, width=e.width))
+        
+        self.main_canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+        
+        self.main_canvas.bind_all("<MouseWheel>", lambda e: self.main_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+        
+        return self.scrollable_frame
+
     def _build_mode_section(self, parent):
         frame = ttk.LabelFrame(parent, text='Export Mode', padding='10')
         frame.pack(fill='x', pady=(0, 10))
@@ -374,6 +394,27 @@ class BaseExporter(tk.Toplevel):
 
     def _get_keyframe_info(self) -> str:
         return ''
+
+    def _resolve_naming_template(self, template: str, metadata: dict, video_path: str, start_ms: int, end_ms: int, scene_idx: int = 0) -> str:
+        from datetime import date
+
+        tags = {
+            '{source-name}': os.path.splitext(os.path.basename(video_path))[0],
+            '{scene-id}': str(scene_idx + 1),
+            '{time-start}': f"{start_ms / 1000.0:.1f}s",
+            '{time-end}': f"{end_ms / 1000.0:.1f}s",
+            '{duration}': f"{(end_ms - start_ms) / 1000.0:.1f}s",
+            '{codec}': metadata.get('video_codec', 'unknown'),
+            '{res}': f"{metadata.get('width', 0)}x{metadata.get('height', 0)}",
+            '{date-today}': date.today().isoformat(),
+        }
+
+        result = template
+        for tag, value in tags.items():
+            result = result.replace(tag, value)
+
+        sanitized = re.sub(r'[*?:"<>|]', "_", result)
+        return os.path.normpath(sanitized)
 
 
 def get_video_info_and_keyframe(video_path: str, target_ms: int) -> Dict[str, Any]:

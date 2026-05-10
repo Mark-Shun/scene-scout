@@ -30,35 +30,65 @@ class SingleExportDialog(BaseExporter):
         self.protocol('WM_DELETE_WINDOW', self._on_cancel)
 
     def _build_ui(self):
-        main = ttk.Frame(self, padding='10')
-        main.pack(fill='both', expand=True)
 
-        self._build_output_section(main)
+        main = self._setup_scrollable_container()
+
+        self._build_container_section(main)
         self._build_mode_section(main)
+        self._build_output_section(main)
         self._build_video_options(main)
         self._build_audio_options(main)
         self._build_progress_section(main)
         self._build_button_section(main, export_text='Export')
         self._update_widget_states()
 
+    def _build_container_section(self, parent):
+        """Add container selection to single exporter for parity."""
+        frame = ttk.LabelFrame(parent, text='Container', padding='10')
+        frame.pack(fill='x', pady=(0, 10))
+        
+        saved_container = self.config.get('export_container', 'MP4 (.mp4)')
+        self.container_var = tk.StringVar(self, value=saved_container)
+        
+        ttk.Label(frame, text='Format:').grid(row=0, column=0, sticky='w', pady=2)
+        self.container_combo = ttk.Combobox(frame, textvariable=self.container_var,
+                                        values=list(self.CONTAINERS.keys()), 
+                                        state='readonly', width=20)
+        self.container_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
+        # Refresh preview when format changes
+        self.container_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_output_preview())
+
     def _build_output_section(self, parent):
-        frame = ttk.LabelFrame(parent, text='Output', padding='10')
+        frame = ttk.LabelFrame(parent, text='Output & Naming', padding='10')
         frame.pack(fill='x', pady=(0, 10))
 
-        self.output_path_var = tk.StringVar(self, value=self._generate_default_output())
+        template_frame = ttk.Frame(frame)
+        template_frame.pack(fill='x', pady=(0, 5))
+        ttk.Label(template_frame, text="Template:").pack(side='left')
+
+        default_template = self.config.get('naming_template', '{source-name}_scene_{time-start}')
+        self.template_var = tk.StringVar(self, value=default_template)
+        self.template_entry = ttk.Entry(template_frame, textvariable=self.template_var)
+        self.template_entry.pack(side='left', fill='x', expand=True, padx=5)
+        self.template_var.trace_add('write', lambda *args: self._update_output_preview())
+
+        self.tag_options = {
+            "Original Name": "{source-name}", "Date": "{date-today}",
+            "Start": "{time-start}", "End": "{time-end}",
+            "Codec": "{codec}", "Resolution": "{res}",
+        }
+        self.tag_selector = ttk.Combobox(template_frame, values=list(self.tag_options.keys()), state='readonly', width=12)
+        self.tag_selector.set("Insert...")
+        self.tag_selector.pack(side='left')
+        self.tag_selector.bind("<<ComboboxSelected>>", self._on_tag_selected)
 
         path_frame = ttk.Frame(frame)
-        path_frame.pack(fill='x')
+        path_frame.pack(fill='x', pady=(5, 0))
+        self.output_path_var = tk.StringVar(self)
+        ttk.Entry(path_frame, textvariable=self.output_path_var).pack(side='left', fill='x', expand=True)
+        ttk.Button(path_frame, text='Browse...', command=self._browse_output).pack(side='left', padx=(5, 0))
 
-        ttk.Entry(path_frame, textvariable=self.output_path_var).pack(
-            side='left',
-            fill='x',
-            expand=True
-        )
-        ttk.Button(path_frame, text='Browse...', command=self._browse_output).pack(
-            side='left',
-            padx=(5, 0)
-        )
+        self._update_output_preview()
 
     def _build_progress_section(self, parent):
         frame = ttk.Frame(parent)
@@ -75,15 +105,22 @@ class SingleExportDialog(BaseExporter):
         self.keyframe_label = ttk.Label(frame, textvariable=self.keyframe_info_var, font=('', 8))
         self.keyframe_label.pack(anchor='w')
 
-    def _generate_default_output(self) -> str:
-        base = os.path.splitext(os.path.basename(self.video_path))[0]
-        start_sec = self.start_ms / 1000.0
-        end_sec = self.end_ms / 1000.0
+    def _on_tag_selected(self, event):
+        tag = self.tag_options.get(self.tag_selector.get())
+        if tag:
+            self.template_entry.insert(tk.INSERT, tag)
+            self.tag_selector.set("Insert...")
 
-        return os.path.join(
-            os.path.dirname(self.video_path),
-            f'{base}_scene_{start_sec:.1f}s-{end_sec:.1f}s.mp4'
+    def _update_output_preview(self):
+        filename = self._resolve_naming_template(
+            self.template_var.get(), self.metadata,
+            self.video_path, self.start_ms, self.end_ms
         )
+        ext = self.CONTAINERS.get(self.container_var.get(), '.mp4')
+
+        current = self.output_path_var.get()
+        folder = os.path.dirname(current) if current else os.path.dirname(self.video_path)
+        self.output_path_var.set(os.path.join(folder, f"{filename}{ext}"))
 
     def _browse_output(self):
         initial = self.output_path_var.get()
@@ -114,6 +151,7 @@ class SingleExportDialog(BaseExporter):
 
     def _save_settings(self):
         self._save_common_settings()
+        self.config['naming_template'] = self.template_var.get()
         config.save_config(self.config)
 
     def _start_export(self):
@@ -122,6 +160,8 @@ class SingleExportDialog(BaseExporter):
         if not output_path:
             messagebox.showerror('Error', 'Please specify an output path.', parent=self)
             return
+
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         if os.path.exists(output_path):
             if not messagebox.askyesno(
