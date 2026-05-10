@@ -17,6 +17,8 @@ class BulkExportDialog(BaseExporter):
     def __init__(self, parent, scenes: list):
         super().__init__(parent)
 
+        self.failed_exports = []
+
         self.scenes = scenes
         self.current_output_path: Optional[str] = None
         self.completed_outputs: list[str] = []
@@ -318,51 +320,38 @@ class BulkExportDialog(BaseExporter):
 
     def _export_task(self):
         total = len(self.scenes)
+        self.failed_exports = [] # Reset for new run
 
-        try:
-            for idx, (video_path, start_ms, end_ms) in enumerate(self.scenes):
-                if self.cancelled:
-                    self.after(0, self._on_export_cancelled)
-                    return
+        for idx, (video_path, start_ms, end_ms) in enumerate(self.scenes):
+            if self.cancelled:
+                self.after(0, self._on_export_cancelled)
+                return
 
-                self.current_scene_idx = idx
-                output_path = self.planned_outputs[idx]
-                self.current_output_path = output_path
+            self.current_scene_idx = idx
+            output_path = self.planned_outputs[idx]
+            self.current_output_path = output_path
 
-                self.after(
-                    0,
-                    lambda i=idx, total=total, vp=video_path:
-                        self.scene_label_var.set(f'Exporting {i + 1}/{total}: {os.path.basename(vp)}')
-                )
-                self.after(0, lambda: self.scene_progress_var.set(0))
-                self.after(0, lambda p=output_path: self.status_var.set(p))
-                self.after(0, lambda: self.keyframe_info_var.set(self._get_keyframe_info()))
-
-                cmd = self._build_ffmpeg_command(
-                    scene_idx=idx,
-                    video_path=video_path,
-                    start_ms=start_ms,
-                    end_ms=end_ms,
-                    output_path=output_path
-                )
-
-                self._run_ffmpeg(
-                    cmd=cmd,
-                    scene_idx=idx,
-                    total_scenes=total,
-                    duration_ms=end_ms - start_ms
-                )
-
-                if self.cancelled:
-                    self.after(0, self._on_export_cancelled)
-                    return
-
+            # Update UI labels for the current scene
+            self.after(0, lambda i=idx, t=total, vp=video_path: 
+                    self.scene_label_var.set(f'Exporting {i+1}/{total}: {os.path.basename(vp)}'))
+            
+            try:
+                # Build and run the command
+                cmd = self._build_ffmpeg_command(idx, video_path, start_ms, end_ms, output_path)
+                self._run_ffmpeg(cmd, idx, total, end_ms - start_ms)
+                
+                # If successful, add to completion list
                 self.completed_outputs.append(output_path)
+                
+            except Exception as e:
+                # Log the error and continue to the next scene
+                error_msg = str(e)
+                print(f"Error exporting scene {idx + 1}: {error_msg}")
+                self.failed_exports.append((idx, error_msg))
+                continue # Do continue the process, but give feedback about the failed export
 
-            self.after(0, self._on_export_complete)
-
-        except Exception as e:
-            self.after(0, lambda err=str(e): self._on_export_error(err))
+        # Once the loop finishes, call the completion handler
+        self.after(0, self._on_export_complete)
 
     def _build_ffmpeg_command(self, scene_idx: int, video_path: str, start_ms: int, end_ms: int, output_path: str) -> list:
         duration_sec = (end_ms - start_ms) / 1000.0
@@ -462,18 +451,21 @@ class BulkExportDialog(BaseExporter):
             self.export_btn.config(state='normal')
 
     def _on_export_complete(self):
+        success_count = len(self.completed_outputs)
+        fail_count = len(self.failed_exports)
+        
         self.scene_progress_var.set(100)
         self.overall_progress_var.set(100)
-        self.status_var.set('Bulk export complete!')
-        self.scene_label_var.set(f'Done! Exported {len(self.scenes)} scene(s).')
+        
+        if fail_count == 0:
+            self.status_var.set('Bulk export complete!')
+            msg = f'Successfully exported all {success_count} scene(s).'
+        else:
+            self.status_var.set(f'Export finished with {fail_count} failure(s).')
+            msg = f'Exported {success_count} scene(s).\n{fail_count} scene(s) failed to export.'
 
         output_dir = os.path.abspath(self.output_dir_var.get())
-
-        messagebox.showinfo(
-            'Bulk Export Complete',
-            f'Successfully exported {len(self.scenes)} scene(s) to:\n{output_dir}',
-            parent=self
-        )
+        messagebox.showinfo('Bulk Export Results', f'{msg}\n\nFolder: {output_dir}', parent=self)
 
         if self.open_folder_var.get():
             try:
