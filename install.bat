@@ -29,6 +29,9 @@ set "TARGET_PATH=%BASE_DIR%%TARGET%"
 set "ICON_PATH=%BASE_DIR%%ICON%"
 set "SHORTCUT_PATH=%BASE_DIR%%NAME%.lnk"
 
+for /f "delims=" %%i in ('powershell -command "[Environment]::GetFolderPath('Desktop')"') do set "DESKTOP_DIR=%%i"
+set "DESKTOP_SHORTCUT_PATH=%DESKTOP_DIR%\%NAME%.lnk"
+
 :: Install uv locally if missing 
 if not exist "%UV_EXE%" (
     echo Downloading uv to isolated folder... 
@@ -124,14 +127,27 @@ if errorlevel 1 (
 
 echo.
 echo Creating shortcut for %NAME%... 
+:: Local Shortcut
 powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%SHORTCUT_PATH%'); $s.TargetPath='%TARGET_PATH%'; $s.WorkingDirectory='%BASE_DIR%'; $s.IconLocation='%ICON_PATH%'; $s.Save()"
+:: Desktop Shortcut
+powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%DESKTOP_SHORTCUT_PATH%'); $s.TargetPath='%TARGET_PATH%'; $s.WorkingDirectory='%BASE_DIR%'; $s.IconLocation='%ICON_PATH%'; $s.Save()"
 
 echo.
-if exist "%SHORTCUT_PATH%" ( 
-    powershell -Command "Write-Host '[SUCCESS] Shortcut created at: %SHORTCUT_PATH%' -ForegroundColor Green"
-) else (
-    powershell -Command "Write-Host '[ERROR] Failed to create shortcut. Check permissions.' -ForegroundColor Red"
-    powershell -Command "Write-Host 'Though you can manually run scene-scout.bat without the shortcut.' -ForegroundColor Cyan"
+for %%P in ("%SHORTCUT_PATH%" "%DESKTOP_SHORTCUT_PATH%") do (
+    if exist "%%~P" (
+        powershell -Command "Write-Host '[SUCCESS] Shortcut created at: %%~P' -ForegroundColor Green"
+    ) else (
+        powershell -Command "Write-Host '[ERROR] Failed to create shortcut at: %%~P' -ForegroundColor Red"
+    )
 )
 
-pause
+:EXIT_PROMPT
+echo.
+choice /C YN /M "Would you like to launch %NAME% now?"
+
+:: If 'N' is chosen (errorlevel 2), the script will simply exit.
+if errorlevel 2 exit
+
+:: If 'Y' is chosen (errorlevel 1), start the batch file in a new process and close this terminal.
+start "" "%TARGET_PATH%"
+exit

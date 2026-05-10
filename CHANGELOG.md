@@ -9,6 +9,9 @@ All notable changes to this project will be documented in this file.
 - **Export Naming Templates**: Customizable filename patterns with tags (`{source-name}`, `{scene-id}`, `{time-start}`, `{time-end}`, etc.)
 - **CLI Export Options**: New `--crf`, `--video-codec`, `--audio-mode`, `--audio-codec`, `--audio-bitrate`, `--resolution` flags for headless scene export
 
+### Changed
+- **Windows installer**: Create shortcuts and added the option to open scene scout right after installation.
+
 ## [1.1.2] - 2026-05-07
 
 An important fix for GPU utilization and nice to have features
