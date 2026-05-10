@@ -27,6 +27,8 @@ class BulkExportDialog(BaseExporter):
         self.metadata_by_scene: list[Dict[str, Any]] = []
         self.planned_outputs: list[str] = []
 
+        self._init_naming_vars()
+        self.output_dir_var.set(self._generate_default_output_dir())
         self.title(f'Bulk Export — {len(scenes)} Scene(s)')
         self._build_ui()
 
@@ -45,90 +47,26 @@ class BulkExportDialog(BaseExporter):
             )
 
     def _build_ui(self):
-        main = self._setup_scrollable_container()
+        main = ttk.Frame(self, padding='10')
+        main.pack(fill='both', expand=True)
 
         self._build_container_section(main)
         self._build_mode_section(main)
-        self._build_output_section(main)
+        self._build_naming_section(main, is_bulk=True)
         self._build_video_options(main)
         self._build_audio_options(main)
         self._build_progress_section(main)
         self._build_button_section(main, export_text='Export All')
         self._update_widget_states()
 
-    def _build_output_section(self, parent):
-        """Builds the output selection and dynamic naming UI with a scrollable preview."""
-        frame = ttk.LabelFrame(parent, text='Output & Naming', padding='10')
-        frame.pack(fill='x', pady=(0, 10))
-
-        # 1. Directory Selection
-        self.output_dir_var = tk.StringVar(self, value=self._generate_default_output_dir())
-        path_frame = ttk.Frame(frame)
-        path_frame.pack(fill='x')
-
-        ttk.Entry(path_frame, textvariable=self.output_dir_var).pack(side='left', fill='x', expand=True)
-        ttk.Button(path_frame, text='Browse...', command=self._browse_output_dir).pack(side='left', padx=(5, 0))
-
-        # 2. Template Entry Row
-        template_frame = ttk.Frame(frame)
-        template_frame.pack(fill='x', pady=(5, 0))
-        ttk.Label(template_frame, text="Template:").pack(side='left')
-
-        default_template = self.config.get('naming_template', '{source-name}_scene_{time-start}')
-        self.template_var = tk.StringVar(self, value=default_template)
-        self.template_entry = ttk.Entry(template_frame, textvariable=self.template_var)
-        self.template_entry.pack(side='left', fill='x', expand=True, padx=5)
-        
-        # Trace the variable to update the preview box in real-time
-        self.template_var.trace_add('write', lambda *args: self._update_filename_note())
-
-        # 3. Tag Selection Dropdown
-        self.tag_options = {
-            "Original Name": "{source-name}", "Date": "{date-today}",
-            "Start": "{time-start}", "End": "{time-end}",
-            "Codec": "{codec}", "Resolution": "{res}",
-            "Duration": "{duration}", "Scene ID": "{scene-id}",
-        }
-        self.tag_selector = ttk.Combobox(template_frame, values=list(self.tag_options.keys()), state='readonly', width=12)
-        self.tag_selector.set("Insert...")
-        self.tag_selector.pack(side='left')
-        self.tag_selector.bind("<<ComboboxSelected>>", self._on_tag_selected)
-
-        # 4. Scrollable Preview Area
-        preview_label_frame = ttk.Frame(frame)
-        preview_label_frame.pack(fill='x', pady=(8, 0))
-        ttk.Label(preview_label_frame, text="Example Preview:", font=('', 8, 'bold')).pack(side='left')
-
-        self.preview_container = ttk.Frame(frame)
-        self.preview_container.pack(fill='x', pady=(2, 0))
-
-        # Text widget for the filename (fixed-height)
-        self.preview_text = tk.Text(
-            self.preview_container, 
-            height=3, 
-            wrap='char', 
-            font=('', 8, 'italic'),
-            padx=5, 
-            pady=5,
-            bg=self.style.lookup('TFrame', 'background'), 
-            relief='flat'
-        )
-        
-        self.preview_scroll = ttk.Scrollbar(self.preview_container, orient="vertical", command=self.preview_text.yview)
-        self.preview_text.configure(yscrollcommand=self.preview_scroll.set)
-        
-        self.preview_text.pack(side='left', fill='x', expand=True)
-        self.preview_scroll.pack(side='right', fill='y')
-
-        # Initial call to populate the box
-        self._update_filename_note()
+    def _get_preview_params(self):
+        v_path, s_ms, e_ms = self.scenes[0] if self.scenes else ('video.mp4', 0, 10000)
+        meta = self.metadata_by_scene[0] if self.metadata_by_scene else {}
+        return meta, v_path, s_ms, e_ms
 
     def _build_container_section(self, parent):
         frame = ttk.LabelFrame(parent, text='Container', padding='10')
         frame.pack(fill='x', pady=(0, 10))
-
-        saved_container = self.config.get('export_container', 'MP4 (.mp4)')
-        self.container_var = tk.StringVar(self, value=saved_container)
 
         ttk.Label(frame, text='Format:').grid(row=0, column=0, sticky='w', pady=2)
 
@@ -140,7 +78,7 @@ class BulkExportDialog(BaseExporter):
             width=20
         )
         self.container_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
-        self.container_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_filename_note())
+        self.container_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_preview_display())
 
     def _start_metadata_analysis(self):
         """Initializes the background thread for scene analysis."""
@@ -254,41 +192,6 @@ class BulkExportDialog(BaseExporter):
 
         if path:
             self.output_dir_var.set(path)
-
-    def _on_tag_selected(self, event):
-        tag = self.tag_options.get(self.tag_selector.get())
-        if tag:
-            self.template_entry.insert(tk.INSERT, tag)
-            self.tag_selector.set("Insert...")
-
-    def _update_filename_note(self):
-        """Updates the scrollable preview text widget with the current template resolution."""
-        # Ensure the widget exists before attempting update
-        if not hasattr(self, 'preview_text') or not hasattr(self, 'container_var'):
-            return
-
-        # Get current format extension
-        ext = self.CONTAINERS.get(self.container_var.get(), '.mp4')
-        
-        # Resolve the template using the first scene in the batch
-        # If no scenes are loaded, use generic fallback values
-        try:
-            full_name = self._resolve_naming_template(
-                self.template_var.get(), 
-                {}, # Empty metadata for preview pass
-                self.scenes[0][0] if self.scenes else 'video.mp4',
-                self.scenes[0][1] if self.scenes else 0, 
-                self.scenes[0][2] if self.scenes else 10000,
-                scene_idx=0
-            ) + ext
-        except Exception:
-            full_name = "Error resolving template"
-
-        # Safely update the read-only Text widget
-        self.preview_text.config(state='normal')
-        self.preview_text.delete('1.0', tk.END)
-        self.preview_text.insert(tk.END, full_name)
-        self.preview_text.config(state='disabled')
 
     def _get_keyframe_info(self) -> str:
         if not self.scenes:

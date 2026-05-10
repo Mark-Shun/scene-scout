@@ -416,6 +416,86 @@ class BaseExporter(tk.Toplevel):
         sanitized = re.sub(r'[*?:"<>|]', "_", result)
         return os.path.normpath(sanitized)
 
+    def _init_naming_vars(self):
+        """Initialize shared naming variables used by both exporters."""
+        self.template_var = tk.StringVar(self, value=self.config.get('naming_template', '{source-name}_scene_{time-start}'))
+        self.container_var = tk.StringVar(self, value=self.config.get('export_container', 'MP4 (.mp4)'))
+        self.output_path_var = tk.StringVar(self)
+        self.output_dir_var = tk.StringVar(self)
+
+    def _setup_scrollable_container(self):
+        main = ttk.Frame(self, padding='10')
+        main.pack(fill='both', expand=True)
+        return main
+
+    def _build_naming_section(self, parent, is_bulk=False):
+        """Merged naming UI for both Single and Bulk dialogs."""
+        frame = ttk.LabelFrame(parent, text='Output & Naming', padding='10')
+        frame.pack(fill='x', pady=(0, 10))
+
+        path_row = ttk.Frame(frame)
+        path_row.pack(fill='x', pady=(0, 5))
+        target_var = self.output_dir_var if is_bulk else self.output_path_var
+        ttk.Entry(path_row, textvariable=target_var).pack(side='left', fill='x', expand=True)
+        browse_cmd = self._browse_output_dir if is_bulk else self._browse_output
+        ttk.Button(path_row, text='Browse...', command=browse_cmd).pack(side='left', padx=(5, 0))
+
+        temp_row = ttk.Frame(frame)
+        temp_row.pack(fill='x', pady=5)
+        ttk.Label(temp_row, text="Template:").pack(side='left')
+        self.template_entry = ttk.Entry(temp_row, textvariable=self.template_var)
+        self.template_entry.pack(side='left', fill='x', expand=True, padx=5)
+        self.template_var.trace_add('write', lambda *args: self._update_preview_display())
+
+        self.tag_options = {
+            "Original Name": "{source-name}", "Date": "{date-today}", "Scene ID": "{scene-id}",
+            "Start": "{time-start}", "End": "{time-end}", "Codec": "{codec}", "Res": "{res}",
+        }
+        self.tag_selector = ttk.Combobox(temp_row, values=list(self.tag_options.keys()), state='readonly', width=10)
+        self.tag_selector.set("Insert...")
+        self.tag_selector.pack(side='left')
+        self.tag_selector.bind("<<ComboboxSelected>>", self._on_tag_selected)
+
+        ttk.Label(frame, text="Filename Preview:", font=('', 8, 'bold')).pack(anchor='w', pady=(5, 0))
+        preview_box = ttk.Frame(frame)
+        preview_box.pack(fill='x', pady=(2, 0))
+
+        self.preview_text = tk.Text(preview_box, height=2, wrap='char', font=('', 8, 'italic'),
+                                    padx=5, pady=5, bg=self.style.lookup('TFrame', 'background'), relief='flat')
+        scroll = ttk.Scrollbar(preview_box, orient="vertical", command=self.preview_text.yview)
+        self.preview_text.configure(yscrollcommand=scroll.set)
+        self.preview_text.pack(side='left', fill='x', expand=True)
+        scroll.pack(side='right', fill='y')
+
+    def _on_tag_selected(self, event):
+        tag = self.tag_options.get(self.tag_selector.get())
+        if tag:
+            self.template_entry.insert(tk.INSERT, tag)
+            self.tag_selector.set("Insert...")
+
+    def _update_preview_display(self):
+        """Internal helper to refresh the preview text box."""
+        if not hasattr(self, 'preview_text'):
+            return
+
+        metadata, v_path, s_ms, e_ms = self._get_preview_params()
+        filename = self._resolve_naming_template(self.template_var.get(), metadata, v_path, s_ms, e_ms)
+        ext = self.CONTAINERS.get(self.container_var.get(), '.mp4')
+        full_name = f"{filename}{ext}"
+
+        self.preview_text.config(state='normal')
+        self.preview_text.delete('1.0', tk.END)
+        self.preview_text.insert(tk.END, full_name)
+        self.preview_text.config(state='disabled')
+
+        if hasattr(self, 'output_path_var') and not self.output_path_var.get().endswith(full_name):
+            folder = os.path.dirname(self.output_path_var.get() or v_path)
+            self.output_path_var.set(os.path.join(folder, full_name))
+
+    def _get_preview_params(self):
+        """Override in subclasses to provide scene-specific preview data."""
+        return {}, 'video.mp4', 0, 10000
+
 
 def get_video_info_and_keyframe(video_path: str, target_ms: int) -> Dict[str, Any]:
     info = {
