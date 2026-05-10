@@ -479,7 +479,7 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.clear_rescore_button.pack(side='left', padx=5)
         ToolTip(self.clear_rescore_button, 'Clear any custom rescore adjustments from results.')
         
-        self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','source','score','rescore'), show='headings', selectmode='browse')
+        self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','source','score','rescore'), show='headings', selectmode='extended') # changed selectmode to extended to allow for ctrl + click, shift + click
         for col, width in zip(['filename', 'scene', 'time', 'source', 'score', 'rescore'], [300, 80, 150, 140, 80, 80]):
             self.results_tree.heading(col, text=col.capitalize(), command=lambda c=col: self.sort_treeview(c))
             self.results_tree.column(col, width=width, anchor='center' if col not in ('filename', 'source') else 'w')
@@ -1071,13 +1071,6 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         for db_path in self.active_databases:
             init_db(db_path, self.handle_migration_callback)
-        
-        if 'folder_path' in self.config and self.config['folder_path'] and os.path.exists(self.config['folder_path']):
-            if self.primary_db and queue_count(self.primary_db) == 0:
-                add_to_queue(self.primary_db, self.config['folder_path'], is_directory=True, recursive=True)
-            if 'folder_path' in self.config:
-                del self.config['folder_path']
-                config.save_config(self.config)
         
         self._update_db_section()
         self.update_queue_status()
@@ -1921,7 +1914,8 @@ class SceneScoutApp(TkinterDnD.Tk):
                 
                 thumb_lbl = ttk.Label(thumb_container, image=tk_img, cursor='hand2')
                 thumb_lbl.pack()
-                thumb_lbl.bind('<Button-1>', lambda e, iid=tree_id: self.on_thumbnail_click(iid))
+                thumb_lbl.bind('<Button-1>', lambda e, iid=tree_id: self.on_thumbnail_click(e, iid))
+                thumb_lbl.bind('<Button-3>', lambda e, iid=tree_id: self._on_thumb_right_click(e, iid))
                 
                 self.thumbnail_widgets[tree_id] = thumb_container
                 visible_thumb_count += 1
@@ -1971,11 +1965,39 @@ class SceneScoutApp(TkinterDnD.Tk):
             else:
                 self.results_tree.heading(c, text=base_text)
 
-    def on_thumbnail_click(self, tree_iid: str):
-        """Triggered when a thumbnail is clicked. Selects the corresponding row in the treeview."""
-        self.results_tree.selection_set(tree_iid)
-        self.results_tree.see(tree_iid) # Scroll treeview to the item
-        self.on_result_select(None)
+    def on_thumbnail_click(self, event, tree_iid: str):
+        """Handles multi-selection for thumbnails using standard Treeview methods."""
+        is_shift = event.state & 0x0001
+        is_ctrl = (event.state & 0x0004) or (sys.platform == 'darwin' and event.state & 0x0008)
+
+        if is_ctrl:
+            # Check if already selected using the standard selection() tuple
+            if tree_iid in self.results_tree.selection():
+                self.results_tree.selection_remove(tree_iid)
+            else:
+                self.results_tree.selection_add(tree_iid)
+        elif is_shift:
+            # Manual Range Selection for Shift-click
+            all_items = self.results_tree.get_children('')
+            current_sel = self.results_tree.selection()
+            
+            if current_sel:
+                anchor_iid = current_sel[0]
+                try:
+                    idx1 = all_items.index(anchor_iid)
+                    idx2 = all_items.index(tree_iid)
+                    start_idx, end_idx = min(idx1, idx2), max(idx1, idx2)
+                    range_iids = all_items[start_idx : end_idx + 1]
+                    self.results_tree.selection_set(range_iids)
+                except ValueError:
+                    self.results_tree.selection_set(tree_iid)
+            else:
+                self.results_tree.selection_set(tree_iid)
+        else:
+            self.results_tree.selection_set(tree_iid)
+        
+        self.results_tree.see(tree_iid)
+        self.on_selection_change(None)
 
     def open_rescore_dialog(self):
         query_text = simpledialog.askstring('Rescore', 'Enter new text query to rescore results:', parent=self)
@@ -2049,53 +2071,43 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.update_status('Rescore cleared.')
         self.clear_rescore_button.config(state='disabled')
 
+    def _scroll_thumb_to_view(self, widget):
+        """Ensures the selected thumbnail is visible in the horizontal strip."""
+        self.update_idletasks()
+        x_pos = widget.winfo_x()
+        canvas_w = self.thumb_canvas.winfo_width()
+        inner_w = self.thumb_inner_frame.winfo_width()
+        
+        if inner_w > canvas_w:
+            # Center the thumbnail in the viewport
+            scroll_fraction = max(0, (x_pos - (canvas_w / 2)) / inner_w)
+            self.thumb_canvas.xview_moveto(scroll_fraction)
+
     def on_result_select(self, event: Optional[tk.Event]):
-            sel = self.results_tree.selection()
-            if not sel:
-                return
-            
-            # Retrieve the unique ID string for the row (e.g., '0', '1', '2')
-            current_selected_entry = sel[0]
-            if current_selected_entry == self.last_selected_entry:
-                return
-            
-            self.last_selected_entry = current_selected_entry
-            index = int(current_selected_entry)
-            
-            # Extract metadata from search_results (matches the 9-item tuple structure)
-            # Structure: path, score, ftype, rescore, scene_idx, start_ms, end_ms, thumb_bytes, source_db
-            path, _, file_type, _, _, scene_time, scene_end, _, _ = self.search_results[index]
-            self.current_display_path = path
-            
-            # --- THUMBNAIL HIGHLIGHTING LOGIC ---
-            # Reset all existing thumbnail borders using dictionary values
+        sel = self.results_tree.selection()
+        if not sel:
             for widget in self.thumbnail_widgets.values():
-                widget.config(relief='flat', bg=self.cget('bg'))
-                
-            # Highlight ONLY if this result actually has a visual thumbnail widget mapped to its ID
-            if current_selected_entry in self.thumbnail_widgets:
-                selected_widget = self.thumbnail_widgets[current_selected_entry]
-                selected_widget.config(relief='solid', bg='#0078D7') 
-                
-                # Update geometry to ensure scrolling coordinates are fresh
-                self.update_idletasks()
-                
-                # Automatically scroll the horizontal thumbnail canvas to the widget
-                x_pos = selected_widget.winfo_x()
-                canvas_width = self.thumb_canvas.winfo_width()
-                inner_width = self.thumb_inner_frame.winfo_width()
-                
-                if inner_width > canvas_width:
-                    # Calculate the fraction needed to bring the thumbnail into view
-                    scroll_fraction = max(0, (x_pos - (canvas_width / 2)) / inner_width)
-                    self.thumb_canvas.xview_moveto(scroll_fraction)
-            
-            # --- MEDIA DISPLAY LOGIC ---
-            if file_type == 'image':
-                self.display_media(path, is_video=False)
+                widget.config(relief='flat', bg=self.style.lookup('TFrame', 'background'))
+            return
+
+        # Primary selection for the main preview window
+        primary_iid = sel[0]
+        if primary_iid != self.last_selected_entry:
+            self.last_selected_entry = primary_iid
+            index = int(primary_iid)
+            path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[index]
+            self.display_media(path, is_video=(ftype == 'video'), start_ms=start_ms, end_ms=end_ms)
+
+        # Sync highlighting across the entire strip
+        bg_color = self.style.lookup('TFrame', 'background')
+        for iid, widget in self.thumbnail_widgets.items():
+            if iid in sel:
+                widget.config(relief='solid', bg='#0078D7') # Active highlight
             else:
-                # scene_time and scene_end are in milliseconds
-                self.display_media(path, is_video=True, start_ms=scene_time, end_ms=scene_end)
+                widget.config(relief='flat', bg=bg_color)
+
+        if primary_iid in self.thumbnail_widgets:
+            self._scroll_thumb_to_view(self.thumbnail_widgets[primary_iid])
 
     def on_result_double_click(self, event: tk.Event):
         """Handle double-click on a search result to open the file."""
@@ -2111,6 +2123,61 @@ class SceneScoutApp(TkinterDnD.Tk):
         
         # Open the file using the system's default application
         self.open_current_file()
+
+    def on_results_right_click(self, event: tk.Event):
+        """Triggered by Treeview right-click. Fixes the AttributeError."""
+        iid = self.results_tree.identify_row(event.y)
+        if iid:
+            if iid not in self.results_tree.selection():
+                self.results_tree.selection_set(iid)
+            self._post_results_context_menu(event)
+
+    def _on_thumb_right_click(self, event, tree_iid):
+        """Triggered by Thumbnail right-click."""
+        if tree_iid not in self.results_tree.selection():
+            self.results_tree.selection_set(tree_iid)
+        self._post_results_context_menu(event)
+
+    def _post_results_context_menu(self, event):
+        """Unified context menu for both Treeview and Thumbnails."""
+        selection = self.results_tree.selection()
+        if not selection:
+            return
+
+        menu = tk.Menu(self, tearoff=0)
+        num_selected = len(selection)
+
+        # Handle Multi-Scene Export Logic
+        exportable = [
+            int(iid) for iid in selection
+            if self.search_results[int(iid)][2] == 'video'
+            and self.search_results[int(iid)][5] is not None
+        ]
+
+        if exportable:
+            label = "Export Scene..." if len(exportable) == 1 else f"Export {len(exportable)} Scenes..."
+            menu.add_command(label=label, command=self.open_export_dialog)
+            menu.add_separator()
+
+        # Shared Actions
+        if num_selected == 1:
+            idx = int(selection[0])
+            path = self.search_results[idx][0]
+            menu.add_command(label='Open File', command=self.open_current_file)
+            menu.add_command(label='Copy Path', command=lambda p=path: self.clipboard_append(p))
+            menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
+            menu.add_separator()
+            menu.add_command(label='Search for Similar', command=self.search_for_similar_preview_frame)
+        else:
+            menu.add_command(label=f'Copy {num_selected} Paths', command=self._copy_multiple_paths)
+
+        menu.post(event.x_root, event.y_root)
+
+    def _copy_multiple_paths(self):
+        """Helper to copy multiple paths to clipboard."""
+        paths = [self.search_results[int(iid)][0] for iid in self.results_tree.selection()]
+        self.clipboard_clear()
+        self.clipboard_append("\n".join(paths))
 
     def _render_preview_image_on_canvas(self):
         if not self.original_image:
@@ -2333,80 +2400,71 @@ class SceneScoutApp(TkinterDnD.Tk):
         if not self.current_display_path:
             return
 
-        sel = self.results_tree.selection()
-        menu = tk.Menu(self, tearoff=0)
+        self._post_results_context_menu(event)
 
-        if sel:
-            index = int(sel[0])
-            file_type = self.search_results[index][2]
-            start_ms = self.search_results[index][5]
-            end_ms = self.search_results[index][6]
-
-            if file_type == 'video' and start_ms is not None and end_ms is not None:
-                menu.add_command(label='Export Scene...',
-                               command=lambda: self.open_export_dialog_for_index(index))
-                menu.add_separator()
-
-        menu.add_command(label='Copy Path', command=lambda path=self.current_display_path: self.clipboard_append(path))
-        menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
-        menu.add_separator()
-        menu.add_command(label='Search for Similar', command=self.search_for_similar_preview_frame)
-        menu.post(event.x_root, event.y_root)
-
-    def on_results_right_click(self, event: tk.Event):
-        # right-click on a treeview row
-        iid = self.results_tree.identify_row(event.y)
-        if not iid:
-            return
-        # select the row under cursor
-        self.results_tree.selection_set(iid)
-        index = int(iid)
-        path = self.search_results[index][0]
-        file_type = self.search_results[index][2]
-        start_ms = self.search_results[index][5]
-        end_ms = self.search_results[index][6]
-        self.current_display_path = path
-        menu = tk.Menu(self, tearoff=0)
-
-        if file_type == 'video' and start_ms is not None and end_ms is not None:
-            menu.add_command(label='Export Scene...',
-                           command=lambda: self.open_export_dialog_for_index(index))
-            menu.add_separator()
-
-        menu.add_command(label='Copy Path', command=lambda p=path: self.clipboard_append(p))
-        menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
-        menu.add_command(label='Open File', command=self.open_current_file)
-        menu.post(event.x_root, event.y_root)
+    def _on_thumb_right_click(self, event, tree_iid):
+        if tree_iid not in self.results_tree.selection():
+            self.results_tree.selection_set(tree_iid)
+        self._post_results_context_menu(event)
 
     def on_selection_change(self, event: tk.Event):
-        """Handle treeview selection change to update export button state."""
+        """Handle selection change to update export button and trigger highlights."""
         sel = self.results_tree.selection()
         if not sel:
-            self.export_btn.config(state='disabled')
+            self.export_btn.config(state='disabled', text='Export Scene...')
             return
 
-        index = int(sel[0])
-        if index < len(self.search_results):
-            file_type = self.search_results[index][2]
-            start_ms = self.search_results[index][5]
-            end_ms = self.search_results[index][6]
-
-            if file_type == 'video' and start_ms is not None and end_ms is not None:
-                self.export_btn.config(state='normal')
+        # Update the Export Button text/state for bulk tasks
+        if len(sel) > 1:
+            exportable = [
+                i for i in sel
+                if int(i) < len(self.search_results)
+                and self.search_results[int(i)][2] == 'video'
+                and self.search_results[int(i)][5] is not None
+            ]
+            if exportable:
+                self.export_btn.config(state='normal', text=f'Export {len(exportable)} Scenes...')
             else:
-                self.export_btn.config(state='disabled')
+                self.export_btn.config(state='disabled', text='Export Scene...')
+            # REMOVED THE RETURN HERE to allow highlights to update
         else:
-            self.export_btn.config(state='disabled')
+            index = int(sel[0])
+            self.export_btn.config(text='Export Scene...')
+            # Standard single-select logic
+            if index < len(self.search_results):
+                if self.search_results[index][2] == 'video' and self.search_results[index][5] is not None:
+                    self.export_btn.config(state='normal')
+                else:
+                    self.export_btn.config(state='disabled')
 
-        # Call the original on_result_select to display media
+        # This call now runs for both single and multi-select
         self.on_result_select(event)
 
     def open_export_dialog(self):
-        """Open export dialog for the currently selected scene."""
+        """Open export dialog for the currently selected scene(s)."""
         sel = self.results_tree.selection()
         if not sel:
             return
-        # sel[0] is the tree iid, which we use as the index
+        # if the user has multiple scenes selected
+        if len(sel) > 1:
+            scenes = []
+            for iid in sel: # go through each scene and run the same export logic on each one
+                index = int(iid)
+                if index >= len(self.search_results):
+                    continue
+                path = self.search_results[index][0]
+                start_ms = self.search_results[index][5]
+                end_ms = self.search_results[index][6]
+                file_type = self.search_results[index][2]
+                if file_type == 'video' and start_ms is not None and end_ms is not None:
+                    scenes.append((path, start_ms, end_ms))
+            if scenes:
+                self._stop_video_loop()
+                from exporters.bulk_exporter import BulkExportDialog
+                dialog = BulkExportDialog(self, scenes)
+                self.wait_window(dialog)
+            return
+
         self.open_export_dialog_for_index(int(sel[0]))
 
     def open_export_dialog_for_index(self, index: int):
@@ -2428,8 +2486,8 @@ class SceneScoutApp(TkinterDnD.Tk):
         else:
             self._stop_video_loop()
 
-        from exporter import SceneExportDialog
-        dialog = SceneExportDialog(self, path, start_ms, end_ms)
+        from exporters.single_exporter import SingleExportDialog
+        dialog = SingleExportDialog(self, path, start_ms, end_ms)
         
         # 3. Yield the event loop until the export dialog is closed/destroyed
         self.wait_window(dialog)
