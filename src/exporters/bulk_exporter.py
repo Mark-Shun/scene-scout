@@ -27,7 +27,6 @@ class BulkExportDialog(BaseExporter):
         self.metadata_by_scene: list[Dict[str, Any]] = []
         self.planned_outputs: list[str] = []
 
-        self._init_naming_vars()
         self.output_dir_var.set(self._generate_default_output_dir())
         self.title(f'Bulk Export — {len(scenes)} Scene(s)')
         self._build_ui()
@@ -47,8 +46,7 @@ class BulkExportDialog(BaseExporter):
             )
 
     def _build_ui(self):
-        main = ttk.Frame(self, padding='10')
-        main.pack(fill='both', expand=True)
+        main = self._setup_scrollable_container()
 
         self._build_container_section(main)
         self._build_mode_section(main)
@@ -63,22 +61,6 @@ class BulkExportDialog(BaseExporter):
         v_path, s_ms, e_ms = self.scenes[0] if self.scenes else ('video.mp4', 0, 10000)
         meta = self.metadata_by_scene[0] if self.metadata_by_scene else {}
         return meta, v_path, s_ms, e_ms
-
-    def _build_container_section(self, parent):
-        frame = ttk.LabelFrame(parent, text='Container', padding='10')
-        frame.pack(fill='x', pady=(0, 10))
-
-        ttk.Label(frame, text='Format:').grid(row=0, column=0, sticky='w', pady=2)
-
-        self.container_combo = ttk.Combobox(
-            frame,
-            textvariable=self.container_var,
-            values=list(self.CONTAINERS.keys()),
-            state='readonly',
-            width=20
-        )
-        self.container_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
-        self.container_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_preview_display())
 
     def _start_metadata_analysis(self):
         """Initializes the background thread for scene analysis."""
@@ -143,7 +125,6 @@ class BulkExportDialog(BaseExporter):
             maximum=100
         ).pack(fill='x', pady=(2, 8))
 
-        self.status_var = tk.StringVar(self, value='Ready')
         ttk.Label(frame, textvariable=self.status_var, wraplength=500).pack(anchor='w')
 
         self.keyframe_info_var = tk.StringVar(self, value=self._get_keyframe_info())
@@ -289,42 +270,38 @@ class BulkExportDialog(BaseExporter):
 
     def _export_task(self):
         total = len(self.scenes)
-        self.failed_exports = [] # Reset for new run
+        self.failed_exports = []
 
         for idx, (video_path, start_ms, end_ms) in enumerate(self.scenes):
             if self.cancelled:
-                self.after(0, self._on_export_cancelled)
-                return
+                break
 
             self.current_scene_idx = idx
             output_path = self.planned_outputs[idx]
             self.current_output_path = output_path
 
-            # Update UI labels for the current scene
-            self.after(0, lambda i=idx, t=total, vp=video_path: 
+            self.after(0, lambda i=idx, t=total, vp=video_path:
                     self.scene_label_var.set(f'Exporting {i+1}/{total}: {os.path.basename(vp)}'))
-            
+
             try:
-                # Ensure sub-folders exist for this scene
-                try:
-                    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                except Exception as folder_err:
-                    raise RuntimeError(f"Failed to create output folder: {folder_err}")
-
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
                 cmd = self._build_ffmpeg_command(idx, video_path, start_ms, end_ms, output_path)
-                self._run_ffmpeg(cmd, idx, total, end_ms - start_ms)
-                
-                # If successful, add to completion list
-                self.completed_outputs.append(output_path)
-                
-            except Exception as e:
-                # Log the error and continue to the next scene
-                error_msg = str(e)
-                print(f"Error exporting scene {idx + 1}: {error_msg}")
-                self.failed_exports.append((idx, error_msg))
-                continue # Do continue the process, but give feedback about the failed export
 
-        # Once the loop finishes, call the completion handler
+                def bulk_progress(_ms, _p):
+                    overall = ((idx + (_p / 100.0)) / total) * 100.0
+                    self._update_progress(_p, overall, f"Exporting {idx+1}/{total}...")
+
+                res = self._run_ffmpeg_base(cmd, end_ms - start_ms, bulk_progress)
+                if res == "success":
+                    self.completed_outputs.append(output_path)
+                else:
+                    self.failed_exports.append((idx, res))
+
+            except Exception as e:
+                print(f"Error exporting scene {idx + 1}: {e}")
+                self.failed_exports.append((idx, str(e)))
+                continue
+
         self.after(0, self._on_export_complete)
 
     def _build_ffmpeg_command(self, scene_idx: int, video_path: str, start_ms: int, end_ms: int, output_path: str) -> list:
@@ -354,65 +331,6 @@ class BulkExportDialog(BaseExporter):
 
         return cmd
 
-    def _run_ffmpeg(self, cmd: list, scene_idx: int, total_scenes: int, duration_ms: int):
-        creation_flags = 0
-        if sys.platform == 'win32':
-            creation_flags = subprocess.CREATE_NO_WINDOW
-
-        self.process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=creation_flags,
-            bufsize=1,
-            universal_newlines=True
-        )
-
-        process = self.process
-        time_regex = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
-        stderr_lines = []
-
-        assert process.stderr is not None
-        for line in process.stderr:
-            stderr_lines.append(line)
-
-            if self.cancelled:
-                process.terminate()
-                process.wait()
-                return
-
-            match = time_regex.search(line)
-            if match:
-                current_ms = self._parse_time_to_ms(match.group(1))
-                scene_progress = min(100.0, (current_ms / duration_ms) * 100.0) if duration_ms else 0.0
-                overall_progress = ((scene_idx + (scene_progress / 100.0)) / total_scenes) * 100.0
-                status = (
-                    f'Exporting... {self._format_ms(current_ms)} / '
-                    f'{self._format_ms(duration_ms)}'
-                )
-
-                self.after(
-                    0,
-                    lambda sp=scene_progress, op=overall_progress, s=status:
-                        self._update_progress(sp, op, s)
-                )
-
-        process.wait()
-
-        if process.returncode != 0 and not self.cancelled:
-            stderr_output = ''.join(stderr_lines[-80:])
-            raise RuntimeError(
-                f'FFmpeg exited with code {process.returncode}\n\n{stderr_output}'
-            )
-
-        if not self.cancelled:
-            completed_overall = ((scene_idx + 1) / total_scenes) * 100.0
-            self.after(
-                0,
-                lambda op=completed_overall:
-                    self._update_progress(100.0, op, 'Scene complete.')
-            )
-
     def _update_progress(self, scene_progress: float, overall_progress: float, status: str):
         self.scene_progress_var.set(scene_progress)
         self.overall_progress_var.set(overall_progress)
@@ -427,10 +345,10 @@ class BulkExportDialog(BaseExporter):
     def _on_export_complete(self):
         success_count = len(self.completed_outputs)
         fail_count = len(self.failed_exports)
-        
+
         self.scene_progress_var.set(100)
         self.overall_progress_var.set(100)
-        
+
         if fail_count == 0:
             self.status_var.set('Bulk export complete!')
             msg = f'Successfully exported all {success_count} scene(s).'
@@ -442,44 +360,12 @@ class BulkExportDialog(BaseExporter):
         messagebox.showinfo('Bulk Export Results', f'{msg}\n\nFolder: {output_dir}', parent=self)
 
         if self.open_folder_var.get():
-            try:
-                if sys.platform == 'win32':
-                    subprocess.run(['explorer', output_dir])
-                elif sys.platform == 'darwin':
-                    subprocess.run(['open', output_dir])
-                else:
-                    subprocess.run(['xdg-open', output_dir])
-            except Exception as e:
-                print(f'Failed to open output directory: {e}')
+            self._open_target_explorer(output_dir)
 
         self.destroy()
 
-    def _on_export_error(self, error_msg: str):
-        self.status_var.set('Bulk export failed!')
-        messagebox.showerror('Export Error', error_msg, parent=self)
-        self.export_btn.config(state='normal')
-        self.cancel_btn.config(state='normal')
-
-    def _on_export_cancelled(self):
-        self.status_var.set('Bulk export cancelled.')
-
-        if self.current_output_path and os.path.exists(self.current_output_path):
-            try:
-                os.remove(self.current_output_path)
-            except Exception:
-                pass
-
-        self.export_btn.config(state='normal')
-        self.cancel_btn.config(state='normal')
-
     def _on_cancel(self):
-        if self.process and self.process.poll() is None:
-            self.cancelled = True
-            self.status_var.set('Cancelling...')
-            self.cancel_btn.config(state='disabled')
-        elif self.export_thread and self.export_thread.is_alive():
-            self.cancelled = True
-            self.status_var.set('Cancelling...')
-            self.cancel_btn.config(state='disabled')
-        else:
-            self.destroy()
+        self.cancelled = True
+        if self.process:
+            self.process.terminate()
+        self.destroy()

@@ -57,9 +57,6 @@ class BaseExporter(tk.Toplevel):
         super().__init__(parent)
 
         self.parent = parent
-        self.process: Optional[subprocess.Popen] = None
-        self.export_thread = None
-        self.cancelled = False
 
         gui_utils.apply_window_icon(self, getattr(parent, 'app_icon', None))
 
@@ -73,6 +70,7 @@ class BaseExporter(tk.Toplevel):
             self.style.theme_use(parent_style.theme_use())
 
         self.config = config.load_config()
+        self._init_common_vars()
 
     def _get_core_ffmpeg_args(self, metadata: dict) -> list:
         """Returns encoding, audio, mapping, and sync arguments."""
@@ -88,25 +86,18 @@ class BaseExporter(tk.Toplevel):
         args.extend(['-avoid_negative_ts', 'make_zero', '-y'])
         return args
 
-    def _setup_scrollable_container(self):
-        """Creates a scrollable area for the dialog content."""
-        self.main_canvas = tk.Canvas(self, highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.main_canvas.yview)
-        
-        self.scrollable_frame = ttk.Frame(self.main_canvas, padding="10")
-        
-        self.canvas_window = self.main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        
-        self.main_canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.scrollable_frame.bind("<Configure>", lambda e: self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all")))
-        self.main_canvas.bind("<Configure>", lambda e: self.main_canvas.itemconfig(self.canvas_window, width=e.width))
-        
-        self.main_canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-        
-        self.main_canvas.bind_all("<MouseWheel>", lambda e: self.main_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-        
-        return self.scrollable_frame
+    def _init_common_vars(self):
+        """Initializes all shared state variables to prevent AttributeErrors."""
+        self.cancelled = False
+        self.process: Optional[subprocess.Popen] = None
+        self.export_thread = None
+
+        self.status_var = tk.StringVar(self, value='Ready')
+        self.progress_var = tk.DoubleVar(self, value=0.0)
+        self.template_var = tk.StringVar(self, value=self.config.get('naming_template', '{source-name}_scene_{time-start}'))
+        self.container_var = tk.StringVar(self, value=self.config.get('export_container', 'MP4 (.mp4)'))
+        self.output_path_var = tk.StringVar(self)
+        self.output_dir_var = tk.StringVar(self)
 
     def _build_mode_section(self, parent):
         frame = ttk.LabelFrame(parent, text='Export Mode', padding='10')
@@ -253,6 +244,22 @@ class BaseExporter(tk.Toplevel):
             width=20
         )
         self.audio_bitrate_combo.grid(row=2, column=1, sticky='w', padx=(10, 0), pady=2)
+
+    def _build_container_section(self, parent):
+        frame = ttk.LabelFrame(parent, text='Container', padding='10')
+        frame.pack(fill='x', pady=(0, 10))
+
+        ttk.Label(frame, text='Format:').grid(row=0, column=0, sticky='w', pady=2)
+
+        self.container_combo = ttk.Combobox(
+            frame,
+            textvariable=self.container_var,
+            values=list(self.CONTAINERS.keys()),
+            state='readonly',
+            width=20
+        )
+        self.container_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
+        self.container_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_preview_display())
 
     def _build_button_section(self, parent, export_text='Export'):
         frame = ttk.Frame(parent)
@@ -416,17 +423,25 @@ class BaseExporter(tk.Toplevel):
         sanitized = re.sub(r'[*?:"<>|]', "_", result)
         return os.path.normpath(sanitized)
 
-    def _init_naming_vars(self):
-        """Initialize shared naming variables used by both exporters."""
-        self.template_var = tk.StringVar(self, value=self.config.get('naming_template', '{source-name}_scene_{time-start}'))
-        self.container_var = tk.StringVar(self, value=self.config.get('export_container', 'MP4 (.mp4)'))
-        self.output_path_var = tk.StringVar(self)
-        self.output_dir_var = tk.StringVar(self)
-
     def _setup_scrollable_container(self):
-        main = ttk.Frame(self, padding='10')
-        main.pack(fill='both', expand=True)
-        return main
+        """Creates a scrollable area for the dialog content."""
+        self.main_canvas = tk.Canvas(self, highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.main_canvas.yview)
+
+        self.scrollable_frame = ttk.Frame(self.main_canvas, padding="10")
+
+        self.canvas_window = self.main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
+
+        self.main_canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.scrollable_frame.bind("<Configure>", lambda e: self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all")))
+        self.main_canvas.bind("<Configure>", lambda e: self.main_canvas.itemconfig(self.canvas_window, width=e.width))
+
+        self.main_canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+
+        self.main_canvas.bind_all("<MouseWheel>", lambda e: self.main_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        return self.scrollable_frame
 
     def _build_naming_section(self, parent, is_bulk=False):
         """Merged naming UI for both Single and Bulk dialogs."""
@@ -495,6 +510,63 @@ class BaseExporter(tk.Toplevel):
     def _get_preview_params(self):
         """Override in subclasses to provide scene-specific preview data."""
         return {}, 'video.mp4', 0, 10000
+
+    def _run_ffmpeg_base(self, cmd: list, duration_ms: int, progress_callback):
+        """Universal FFmpeg runner with regex progress parsing.
+        Returns 'success', 'cancelled', or the last 50 lines of stderr on error.
+        """
+        creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+        self.process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=creation_flags, bufsize=1, universal_newlines=True
+        )
+
+        time_regex = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
+        stderr_lines = []
+
+        assert self.process.stderr is not None
+        for line in self.process.stderr:
+            stderr_lines.append(line)
+            if self.cancelled:
+                self.process.terminate()
+                return "cancelled"
+
+            match = time_regex.search(line)
+            if match:
+                current_ms = self._parse_time_to_ms(match.group(1))
+                percent = min(100.0, (current_ms / duration_ms) * 100.0) if duration_ms else 0.0
+                self.after(0, lambda ms=current_ms, p=percent: progress_callback(ms, p))
+
+        self.process.wait()
+        if self.process.returncode != 0:
+            return "".join(stderr_lines[-50:])
+        return "success"
+
+    def _on_export_error(self, error_msg: str):
+        self.status_var.set('Export failed!')
+        messagebox.showerror('Export Error', error_msg, parent=self)
+        self.export_btn.config(state='normal')
+        self.cancel_btn.config(state='normal')
+
+    def _on_export_cancelled(self):
+        self.status_var.set('Export cancelled.')
+        self.export_btn.config(state='normal')
+        self.cancel_btn.config(state='normal')
+
+    def _open_target_explorer(self, path: str):
+        """Universal platform-aware 'Show in Folder' logic."""
+        abs_path = os.path.abspath(path)
+        try:
+            if sys.platform == 'win32':
+                cmd = ['explorer', '/select,', abs_path] if os.path.isfile(abs_path) else ['explorer', abs_path]
+                subprocess.run(cmd)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', '-R', abs_path])
+            else:
+                folder = abs_path if os.path.isdir(abs_path) else os.path.dirname(abs_path)
+                subprocess.run(['xdg-open', folder])
+        except Exception as e:
+            print(f"Failed to open explorer: {e}")
 
 
 def get_video_info_and_keyframe(video_path: str, target_ms: int) -> Dict[str, Any]:

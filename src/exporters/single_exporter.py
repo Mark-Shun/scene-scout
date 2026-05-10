@@ -22,7 +22,6 @@ class SingleExportDialog(BaseExporter):
         self.duration_ms = end_ms - start_ms
         self.metadata = get_video_info_and_keyframe(self.video_path, self.start_ms)
 
-        self._init_naming_vars()
         self.title('Export Scene')
         self._build_ui()
 
@@ -30,9 +29,9 @@ class SingleExportDialog(BaseExporter):
         self.protocol('WM_DELETE_WINDOW', self._on_cancel)
 
     def _build_ui(self):
-        main = ttk.Frame(self, padding='10')
-        main.pack(fill='both', expand=True)
+        main = self._setup_scrollable_container()
 
+        self._build_container_section(main)
         self._build_mode_section(main)
         self._build_naming_section(main, is_bulk=False)
         self._build_video_options(main)
@@ -49,11 +48,9 @@ class SingleExportDialog(BaseExporter):
         frame = ttk.Frame(parent)
         frame.pack(fill='x', pady=(0, 10))
 
-        self.progress_var = tk.DoubleVar(self, value=0.0)
         self.progress_bar = ttk.Progressbar(frame, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill='x', pady=(0, 5))
 
-        self.status_var = tk.StringVar(self, value='Ready')
         ttk.Label(frame, textvariable=self.status_var).pack(anchor='w')
 
         self.keyframe_info_var = tk.StringVar(self, value=self._get_keyframe_info())
@@ -126,7 +123,12 @@ class SingleExportDialog(BaseExporter):
     def _export_task(self):
         try:
             cmd = self._build_ffmpeg_command()
-            self._run_ffmpeg(cmd)
+            result = self._run_ffmpeg_base(cmd, self.duration_ms, self._update_progress)
+
+            if result == "success":
+                self.after(0, self._on_export_complete)
+            elif result != "cancelled":
+                self.after(0, lambda e=result: self._on_export_error(e))
         except Exception as e:
             self.after(0, lambda err=str(e): self._on_export_error(err))
 
@@ -155,58 +157,9 @@ class SingleExportDialog(BaseExporter):
 
         return cmd
 
-    def _run_ffmpeg(self, cmd: list):
-        creation_flags = 0
-        if sys.platform == 'win32':
-            creation_flags = subprocess.CREATE_NO_WINDOW
-
-        self.process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=creation_flags,
-            bufsize=1,
-            universal_newlines=True
-        )
-
-        process = self.process
-        time_regex = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
-        stderr_lines = []
-
-        assert process.stderr is not None
-        for line in process.stderr:
-            stderr_lines.append(line)
-
-            if self.cancelled:
-                process.terminate()
-                process.wait()
-                self.after(0, self._on_export_cancelled)
-                return
-
-            match = time_regex.search(line)
-            if match:
-                current_ms = self._parse_time_to_ms(match.group(1))
-                progress = min(100.0, (current_ms / self.duration_ms) * 100.0) if self.duration_ms else 0.0
-                status = (
-                    f'Exporting... {self._format_ms(current_ms)} / '
-                    f'{self._format_ms(self.duration_ms)}'
-                )
-                self.after(0, lambda p=progress, s=status: self._update_progress(p, s))
-
-        process.wait()
-
-        if process.returncode == 0 and not self.cancelled:
-            self.after(0, self._on_export_complete)
-        elif not self.cancelled:
-            stderr_output = ''.join(stderr_lines[-80:])
-            self.after(
-                0,
-                lambda err=f'FFmpeg exited with code {process.returncode}\n\n{stderr_output}':
-                    self._on_export_error(err)
-            )
-
-    def _update_progress(self, progress: float, status: str):
-        self.progress_var.set(progress)
+    def _update_progress(self, _current_ms: int, percent: float):
+        status = f'Exporting... {self._format_ms(_current_ms)} / {self._format_ms(self.duration_ms)}'
+        self.progress_var.set(percent)
         self.status_var.set(status)
 
     def _check_export_progress(self):
@@ -228,44 +181,12 @@ class SingleExportDialog(BaseExporter):
         )
 
         if self.open_folder_var.get():
-            output_abs = os.path.abspath(output_path)
-            folder = os.path.dirname(output_abs)
-
-            try:
-                if sys.platform == 'win32':
-                    subprocess.run(['explorer', '/select,', output_abs])
-                elif sys.platform == 'darwin':
-                    subprocess.run(['open', '-R', output_abs])
-                else:
-                    subprocess.run(['xdg-open', folder])
-            except Exception as e:
-                print(f'Failed to open output directory: {e}')
+            self._open_target_explorer(output_path)
 
         self.destroy()
 
-    def _on_export_error(self, error_msg: str):
-        self.status_var.set('Export failed!')
-        messagebox.showerror('Export Error', error_msg, parent=self)
-        self.export_btn.config(state='normal')
-        self.cancel_btn.config(state='normal')
-
-    def _on_export_cancelled(self):
-        self.status_var.set('Export cancelled.')
-
-        output_path = self.output_path_var.get()
-        if os.path.exists(output_path):
-            try:
-                os.remove(output_path)
-            except Exception:
-                pass
-
-        self.export_btn.config(state='normal')
-        self.cancel_btn.config(state='normal')
-
     def _on_cancel(self):
-        if self.process and self.process.poll() is None:
-            self.cancelled = True
-            self.status_var.set('Cancelling...')
-            self.cancel_btn.config(state='disabled')
-        else:
-            self.destroy()
+        self.cancelled = True
+        if self.process:
+            self.process.terminate()
+        self.destroy()
