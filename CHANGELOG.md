@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-05-10
+
+### Added
+- **Bulk Scene Export**: Export multiple scenes at once via GUI (Bulk Export Dialog) and CLI interactive shell (`export <1,2,5-8> <output_folder>`) (Thanks @crptk)
+- **Export Naming Templates**: Customizable filename patterns with tags (`{source-name}`, `{scene-id}`, `{time-start}`, `{time-end}`, etc.)
+- **CLI Export Options**: New `--crf`, `--video-codec`, `--audio-mode`, `--audio-codec`, `--audio-bitrate`, `--resolution` flags for headless scene export
+
+### Changed
+- **Export codebase refactored**: Centralized FFmpeg runner, naming UI, and shared state into `BaseExporter` base class, eliminating ~225 lines of duplication across single and bulk export dialogs
+
 ## [1.1.2] - 2026-05-07
 
 An important fix for GPU utilization and nice to have features

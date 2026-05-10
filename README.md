@@ -235,10 +235,17 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 - `--cleanup`: Remove orphaned embeddings
 - `--silent`: Suppress all non-essential output including progress bars (ideal for automation)
 - `--output FILE`: Write JSON output to file instead of stdout
-- `--export-scene PATH`: Path of the video to export a scene from
 - `--start MS`: Start time of the scene in milliseconds
 - `--end MS`: End time of the scene in milliseconds
-- `--out PATH`: Output file path for the exported video
+
+##### CLI Scene Export Options
+- `--export-scene PATH`: Path of the video to export a scene from
+- `--crf N`: Quality (0-51, lower=better, default: 23)
+- `--video-codec {H.264 (libx264),H.265 (libx265),AV1 (libsvtav1),VP9 (libvpx-vp9),ProRes 422 (prores_ks)}`: Video codec for export
+- `--audio-mode {copy,encode,disable}`: Audio mode for export
+- `--audio-codec CODEC`: Audio codec for export (e.g. `AAC (aac)`, `MP3 (libmp3lame)`)
+- `--audio-bitrate BITRATE`: Audio bitrate (e.g. `128k`, `192k`, `256k`, `320k`)
+- `--resolution RES`: Output resolution (e.g. `1080p`, `720p`, `480p`, or `Custom 1920x1080`)
 
 #### CLI Exit Codes
 - `0`: Success
@@ -259,7 +266,7 @@ When in REPL mode (`--interactive`), use these commands:
 - `db clear`: Clear all databases
 - `v`: Check the target database for missing or moved video files
 - `rl <ID> <PATH>`: Update the file path of a database entry
-- `ex <index> <output>`: Export a scene from last search results
+- `ex <indices> <output>`: Export scene(s) from last search results (e.g. `ex 1,2,5-8 ./exports/` for bulk)
 - `rs <query>`: Rescore last search results with a new text query
 - `update` / `u`: View full patch notes from latest release
 - `vars`: List all editable shell variables
