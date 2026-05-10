@@ -26,9 +26,10 @@ class BulkExportDialog(BaseExporter):
         self.planned_outputs: list[str] = []
 
         self.title(f'Bulk Export — {len(scenes)} Scene(s)')
-
-        self._extract_metadata()
         self._build_ui()
+
+        self.export_btn.config(state='disabled')
+        self._start_metadata_analysis() # Threaded analysis
 
         gui_utils.center_window(self, 540, 960)
         self.protocol('WM_DELETE_WINDOW', self._on_cancel)
@@ -100,6 +101,40 @@ class BulkExportDialog(BaseExporter):
         )
         self.container_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
         self.container_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_filename_note())
+
+    def _start_metadata_analysis(self):
+        """Initializes the background thread for scene analysis."""
+        self.status_var.set("Analyzing video files...")
+        thread = threading.Thread(target=self._threaded_metadata_task, daemon=True)
+        thread.start()
+
+    def _threaded_metadata_task(self):
+        """Background task to extract metadata for all scenes."""
+        temp_metadata = []
+        total = len(self.scenes)
+        
+        for i, (video_path, start_ms, _end_ms) in enumerate(self.scenes):
+            if self.cancelled:
+                return
+
+            # Update status on main thread
+            msg = f"Analyzing scene {i+1}/{total}: {os.path.basename(video_path)}"
+            self.after(0, lambda m=msg: self.status_var.set(m))
+            
+            # Perform the heavy lifting
+            meta = get_video_info_and_keyframe(video_path, start_ms)
+            temp_metadata.append(meta)
+
+        # Finalize on the main thread
+        self.after(0, lambda: self._on_metadata_finished(temp_metadata))
+
+    def _on_metadata_finished(self, metadata_list):
+        """Callback when analysis is complete to re-enable the UI."""
+        self.metadata_by_scene = metadata_list
+        self.export_btn.config(state='normal')
+        self.status_var.set("Ready to export")
+        # Refresh the keyframe info for the first scene
+        self.keyframe_info_var.set(self._get_keyframe_info())
 
     def _build_progress_section(self, parent):
         frame = ttk.LabelFrame(parent, text='Progress', padding='10')
