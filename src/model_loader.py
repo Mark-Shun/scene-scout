@@ -45,10 +45,10 @@ def get_compute_device(device_choice=None):
         # Volta (7.0), Turing (7.5), and newer have Tensor Cores for fast FP16.
         if major < 7:
             dtype = torch.float32
-            msg = f"Older NVIDIA GPU ({device_name}) detected. Using Float32 for compatibility."
+            msg = f"NVIDIA GPU ({device_name})."
         else:
             dtype = torch.float16
-            msg = f"Modern NVIDIA GPU ({device_name}) detected. Using Float16 for performance."
+            msg = f"NVIDIA GPU ({device_name})."
             
         return 'cuda', msg, torch.device('cuda'), dtype
     if hasattr(torch, 'xpu') and torch.xpu.is_available():
