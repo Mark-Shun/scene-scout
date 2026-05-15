@@ -365,6 +365,47 @@ body::before {
   z-index: 1;
 }
 
+.footer .support-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  background: #f45d22;
+  color: #fff;
+  padding: 0.7rem 1.5rem;
+  border-radius: 12px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  position: relative;
+  box-shadow: 0 4px 15px rgba(244, 93, 34, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  overflow: hidden;
+  margin-top: 1.2rem;
+}
+
+.footer .support-btn::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.35) 0%, transparent 100%);
+  border-radius: 12px 12px 0 0;
+}
+
+.footer .support-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 25px rgba(244, 93, 34, 0.4);
+  color: #fff;
+}
+
+.footer .support-btn i {
+  position: relative;
+  z-index: 1;
+}
+
 /* Section Styles */
 .section {
   padding: 4.5rem 3rem;
@@ -1107,6 +1148,10 @@ body::before {
   color: var(--text-muted);
   font-size: 0.8rem;
   max-width: 1050px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
 }
 
 .footer a {
