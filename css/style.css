@@ -425,6 +425,19 @@ body::before {
   max-width: 500px;
 }
 
+.video-container {
+  position: relative;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+}
+
+.video-container iframe {
+  display: block;
+  border-radius: 12px;
+}
+
 /* Features Grid */
 .features-grid {
   display: grid;
