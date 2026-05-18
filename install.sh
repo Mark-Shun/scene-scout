@@ -130,6 +130,8 @@ fi
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     chmod +x "$SCRIPT_DIR/scene-scout.command"
+    # Strip the internet quarantine flag from the launcher if it exists
+    xattr -d com.apple.quarantine "$SCRIPT_DIR/scene-scout.command" 2>/dev/null
     echo "Run via: ./scene-scout.command"
 else
     chmod +x "$SCRIPT_DIR/scene-scout.sh"
