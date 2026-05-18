@@ -1,6 +1,6 @@
 [project]
 name = "scenescout"
-version = "1.2.0"
+version = "1.2.1"
 description = "A tool to search for specific scenes through keywords."
 readme = "README.md"
 requires-python = ">=3.12, <3.14"
@@ -23,12 +23,13 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu       = ["torch==2.11.0"]
+mac-intel = ["torch<=2.2.2 ; sys_platform == 'darwin' and platform_machine == 'x86_64'"]
 cu126     = ["torch==2.11.0 ; sys_platform != 'darwin'"]
 cu130     = ["torch==2.11.0 ; sys_platform != 'darwin'"]
 cu130-trt = ["torch==2.11.0 ; sys_platform != 'darwin'", "torch-tensorrt ; sys_platform != 'darwin'"]
 rocm      = ["torch==2.11.0 ; sys_platform != 'darwin'", "triton-rocm==3.6.0 ; sys_platform == 'linux'"]
 xpu       = ["torch==2.11.0 ; sys_platform != 'darwin'", "triton-xpu==3.7.0 ; sys_platform != 'darwin'"]
-dml       = ["torch==2.4.1", "torch-directml ; sys_platform == 'win32'"]
+dml       = ["torch==2.4.1 ; sys_platform == 'win32'", "torch-directml ; sys_platform == 'win32'"]
 
 [tool.uv]
 environments = [
@@ -40,6 +41,7 @@ package = false
 conflicts = [
   [
     { extra = "cpu" },
+    { extra = "mac-intel" },
     { extra = "cu126" },
     { extra = "cu130" },
     { extra = "cu130-trt" },
@@ -66,6 +68,16 @@ triton-rocm = [
 triton-xpu = [
   { index = "pytorch-xpu", marker = "sys_platform != 'darwin'" },
 ]
+
+tensorrt = { index = "nvidia" }
+tensorrt-cu13 = { index = "nvidia" }
+tensorrt-cu13-libs = { index = "nvidia" }
+tensorrt-cu13-bindings = { index = "nvidia" }
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu130"

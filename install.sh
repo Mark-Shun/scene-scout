@@ -90,27 +90,33 @@ fi
 # 3. Hardware Selection
 echo "------------------------------------------"
 echo "Install options for graphics card acceleration:"
-echo "1) NVIDIA CUDA 13.0 (Linux Only)"
-echo "2) NVIDIA CUDA 12.6 (Linux Only)"
-echo "3) Intel Arc/Xe (XPU)" 
-echo "4) AMD ROCm (Linux Only)"
+
 if [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "5) Apple Silicon / CPU (MPS support)"
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "x86_64" ]; then
+        echo "Intel Mac detected. Automatically selecting compatible CPU fallback..."
+        EXTRA="mac-intel"
+    else
+        echo "Apple Silicon Mac detected. Automatically selecting native MPS support..."
+        EXTRA="cpu"
+    fi
 else
+    echo "1) NVIDIA CUDA 13.0"
+    echo "2) NVIDIA CUDA 12.6"
+    echo "3) Intel Arc/Xe (XPU)" 
+    echo "4) AMD ROCm"
     echo "5) CPU (Slow)"
+    echo "------------------------------------------"
+    read -p "Select an option [1-5]: " user_choice
+    case "$user_choice" in
+        1) EXTRA="cu130" ;;
+        2) EXTRA="cu126" ;;
+        3) EXTRA="xpu" ;;
+        4) EXTRA="rocm" ;;
+        5) EXTRA="cpu" ;;
+        *) echo "Error: Invalid selection."; exit 1 ;;
+    esac
 fi
-echo "------------------------------------------"
-
-read -p "Select an option [1-5]: " user_choice
-
-case "$user_choice" in
-    1) EXTRA="cu130" ;;
-    2) EXTRA="cu126" ;;
-    3) EXTRA="xpu" ;;
-    4) EXTRA="rocm" ;;
-    5) EXTRA="cpu" ;;
-    *) echo "Error: Invalid selection."; exit 1 ;;
-esac
 
 echo "Synchronizing environment with extra: $EXTRA..."
 # uv sync ensures the environment matches pyproject.toml
@@ -130,8 +136,10 @@ fi
 
 if [[ "$OSTYPE" == "darwin"* ]]; then
     chmod +x "$SCRIPT_DIR/scene-scout.command"
-    # Strip the internet quarantine flag from the launcher if it exists
-    xattr -d com.apple.quarantine "$SCRIPT_DIR/scene-scout.command" 2>/dev/null
+    
+    # Strip the quarantine flag recursively from the entire project folder
+    xattr -cr "$SCRIPT_DIR" 2>/dev/null
+    
     echo "Run via: ./scene-scout.command"
 else
     chmod +x "$SCRIPT_DIR/scene-scout.sh"
