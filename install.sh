@@ -121,11 +121,17 @@ if uv sync --extra "$EXTRA" --python 3.12; then
         echo "NOTICE: VLC/Tkinter missing. Only CLI mode is supported."
         echo "You can install these manually if you want to use the GUI."
         echo "Run via: ./scene-scout-cli.sh"
-    else
-        echo "Run via: ./scene-scout.sh"
     fi
     echo "--------------------------------------------------"
 else
     echo "Error: Synchronization failed."
     exit 1
+fi
+
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    chmod +x "$SCRIPT_DIR/scene-scout.command"
+    echo "Run via: ./scene-scout.command"
+else
+    chmod +x "$SCRIPT_DIR/scene-scout.sh"
+    echo "Run via: ./scene-scout.sh"
 fi
