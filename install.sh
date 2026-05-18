@@ -6,9 +6,7 @@ cd "$SCRIPT_DIR" || { echo "Failed to enter directory"; exit 1; }
 
 # --- START UPDATE CHECK ---
 echo "Checking for updates..."
-# Fetch remote tag and strip 'v' prefix if present
 REMOTE_TAG=$(curl -s --connect-timeout 2 https://api.github.com/repos/Mark-Shun/scene-scout/releases/latest | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
-# Read local version from pyproject.toml
 LOCAL_VER=$(grep '^version =' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')
 
 if [ -n "$REMOTE_TAG" ] && [ "$REMOTE_TAG" != "$LOCAL_VER" ]; then
@@ -47,44 +45,89 @@ check_vlc() {
     fi
 }
 
-install_dependencies() {
+check_tcl_tk() {
     if [[ "$OSTYPE" == "darwin"* ]]; then
-        echo "Detected macOS..."
-        if command -v brew >/dev/null 2>&1; then
-            echo "Installing VLC and Tcl/Tk via Homebrew..."
-            brew install --cask vlc && brew install tcl-tk
-        else
-            echo "[!] Homebrew not found. Automated install failed."
-            return 1
+        [ -d "/opt/homebrew/opt/tcl-tk" ] || [ -d "/opt/homebrew/opt/tcl-tk@8" ] || [ -d "/usr/local/opt/tcl-tk@8" ]
+    else
+        command -v wish >/dev/null 2>&1
+    fi
+}
+
+ensure_homebrew() {
+    if [[ "$OSTYPE" == "darwin"* ]] && ! command -v brew >/dev/null 2>&1; then
+        echo "Homebrew not found. Attempting to install automatically..."
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+        
+        if [ -d "/opt/homebrew/bin" ]; then
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+        elif [ -d "/usr/local/bin" ]; then
+            eval "$(/usr/local/bin/brew shellenv)"
         fi
+    fi
+}
+
+install_vlc() {
+    echo "Installing VLC..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        ensure_homebrew
+        brew install --cask vlc
     elif [ -f /etc/os-release ]; then
         . /etc/os-release
         case "$ID" in
-            ubuntu|debian|linuxmint)
-                sudo apt update && sudo apt install -y python3-tk vlc ;;
-            arch|manjaro)
-                sudo pacman -S --needed --noconfirm tk vlc ;;
-            *) return 1 ;;
+            ubuntu|debian|linuxmint) sudo apt update && sudo apt install -y vlc ;;
+            arch|manjaro) sudo pacman -S --needed --noconfirm vlc ;;
+            *) echo "Unsupported Linux distribution for automatic install."; return 1 ;;
         esac
     fi
 }
 
-echo "Checking for VLC..."
-if check_vlc; then
-    echo "VLC is already installed."
-else
+install_tcl_tk() {
+    echo "Installing Tcl/Tk..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        ensure_homebrew
+        ARCH=$(uname -m)
+        if [ "$ARCH" = "x86_64" ]; then
+            brew install tcl-tk@8
+        else
+            brew install tcl-tk
+        fi
+    elif [ -f /etc/os-release ]; then
+        . /etc/os-release
+        case "$ID" in
+            ubuntu|debian|linuxmint) sudo apt update && sudo apt install -y python3-tk ;;
+            arch|manjaro) sudo pacman -S --needed --noconfirm tk ;;
+            *) echo "Unsupported Linux distribution for automatic install."; return 1 ;;
+        esac
+    fi
+}
+
+echo "Checking system GUI dependencies..."
+
+if ! check_vlc; then
     echo "VLC was not found. The GUI requires VLC for video playback."
-    read -p "Attempt to install dependencies automatically? [y/n] " -n 1 -r
+    read -p "Install VLC automatically? [y/n] " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        install_dependencies
-        if ! check_vlc; then
-            echo "[!] Automatic installation failed. Continuing in CLI-only mode."
-            CLI_ONLY=1
-        fi
-    else
-        CLI_ONLY=1
+        install_vlc
     fi
+else
+    echo "VLC is already installed."
+fi
+
+if ! check_tcl_tk; then
+    echo "Tcl/Tk framework was not found. The GUI requires Tcl/Tk to render windows."
+    read -p "Install Tcl/Tk automatically? [y/n] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        install_tcl_tk
+    fi
+else
+    echo "Tcl/Tk framework is already installed."
+fi
+
+if ! check_vlc || ! check_tcl_tk; then
+    echo "[!] Missing critical components. Continuing in CLI-only mode."
+    CLI_ONLY=1
 fi
 
 # 3. Hardware Selection
@@ -119,7 +162,6 @@ else
 fi
 
 echo "Synchronizing environment with extra: $EXTRA..."
-# uv sync ensures the environment matches pyproject.toml
 if uv sync --extra "$EXTRA" --python 3.12; then
     echo "--------------------------------------------------"
     echo "Installation successful."
@@ -134,14 +176,19 @@ else
     exit 1
 fi
 
+# 4. Final Permissions and Cleanup
 if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' 's/\r//' "$SCRIPT_DIR/scene-scout.command" 2>/dev/null
     chmod +x "$SCRIPT_DIR/scene-scout.command"
-    
-    # Strip the quarantine flag recursively from the entire project folder
     xattr -cr "$SCRIPT_DIR" 2>/dev/null
     
-    echo "Run via: ./scene-scout.command"
+    if [ "$CLI_ONLY" -eq 0 ]; then
+        echo "Run via: ./scene-scout.command"
+    fi
 else
     chmod +x "$SCRIPT_DIR/scene-scout.sh"
-    echo "Run via: ./scene-scout.sh"
+    
+    if [ "$CLI_ONLY" -eq 0 ]; then
+        echo "Run via: ./scene-scout.sh"
+    fi
 fi
