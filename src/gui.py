@@ -949,15 +949,17 @@ class SceneScoutApp(QMainWindow):
     # Model loading
     # ======================================================================
 
-    def load_model(self, device_choice=None, use_trt=None):
+    def load_model(self, device_choice=None, use_trt=None, status_callback=None):
         if device_choice is None:
             device_choice = self.device_choice
         if use_trt is None:
             use_trt = self.config.get('use_trt', False)
+        if status_callback is None:
+            status_callback = self.update_status
 
         self.model, self.processor, self.device, self.dtype, self._last_active_device = load_siglip_model(
             device_choice,
-            status_callback=self.update_status,
+            status_callback=status_callback,
             use_trt=use_trt,
         )
 

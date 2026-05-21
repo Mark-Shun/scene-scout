@@ -76,12 +76,22 @@ if __name__ == '__main__':
         splash.show()
         app.processEvents()
 
+        status_label.setText('Loading libraries...')
+        app.processEvents()
+
         from gui import SceneScoutApp
+
+        status_label.setText('Building interface...')
+        app.processEvents()
 
         main_window = SceneScoutApp()
 
         try:
-            main_window.load_model()
+            def splash_status(msg):
+                status_label.setText(msg)
+                app.processEvents()
+
+            main_window.load_model(status_callback=splash_status)
             status_label.setText('Model loaded successfully. Booting layout...')
             app.processEvents()
             main_window.on_model_load_finished()
