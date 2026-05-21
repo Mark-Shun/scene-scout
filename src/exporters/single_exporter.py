@@ -1,15 +1,16 @@
 import os
-import re
 import sys
 import subprocess
-import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (
+    QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
+    QProgressBar, QLineEdit, QFileDialog, QMessageBox, QWidget,
+)
 
 import config
-import gui_utils
-
-from .base_exporter import BaseExporter, get_video_info_and_keyframe, export_video_scene
+from .base_exporter import BaseExporter, get_video_info_and_keyframe
+from workers import FFmpegWorker
 
 
 class SingleExportDialog(BaseExporter):
@@ -21,95 +22,76 @@ class SingleExportDialog(BaseExporter):
         self.end_ms = end_ms
         self.duration_ms = end_ms - start_ms
         self.metadata = get_video_info_and_keyframe(self.video_path, self.start_ms)
+        self._ffmpeg_worker = None
 
-        self.title('Export Scene')
+        self.setWindowTitle('Export Scene')
+        self.setMinimumWidth(500)
 
         self._build_ui()
 
-        gui_utils.center_window(self, 500, 680)
-        self.protocol('WM_DELETE_WINDOW', self._on_cancel)
-
     def _build_ui(self):
-        main = ttk.Frame(self, padding='10')
-        main.pack(fill='both', expand=True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
 
-        self._build_output_section(main)
-        self._build_mode_section(main)
-        self._build_video_options(main)
-        self._build_audio_options(main)
-        self._build_progress_section(main)
-        self._build_button_section(main, export_text='Export')
+        self._build_output_section(layout)
+        self._build_mode_section(layout)
+        self._build_video_options(layout)
+        self._build_audio_options(layout)
+        self._build_progress_section(layout)
+        self._build_button_section(layout, export_text='Export')
         self._update_widget_states()
 
-    def _build_output_section(self, parent):
-        frame = ttk.LabelFrame(parent, text='Output', padding='10')
-        frame.pack(fill='x', pady=(0, 10))
+    def _build_output_section(self, layout):
+        group = QGroupBox('Output')
+        group_layout = QVBoxLayout(group)
+        path_row = QHBoxLayout()
 
-        self.output_path_var = tk.StringVar(self, value=self._generate_default_output())
+        self._output_path_edit = QLineEdit(self._generate_default_output())
+        path_row.addWidget(self._output_path_edit)
 
-        path_frame = ttk.Frame(frame)
-        path_frame.pack(fill='x')
+        browse_btn = QPushButton('Browse...')
+        browse_btn.clicked.connect(self._browse_output)
+        path_row.addWidget(browse_btn)
+        group_layout.addLayout(path_row)
+        layout.addWidget(group)
 
-        ttk.Entry(path_frame, textvariable=self.output_path_var).pack(
-            side='left',
-            fill='x',
-            expand=True
-        )
-        ttk.Button(path_frame, text='Browse...', command=self._browse_output).pack(
-            side='left',
-            padx=(5, 0)
-        )
+    def _build_progress_section(self, layout):
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setMaximum(100)
+        layout.addWidget(self._progress_bar)
 
-    def _build_progress_section(self, parent):
-        frame = ttk.Frame(parent)
-        frame.pack(fill='x', pady=(0, 10))
+        self._status_label = QLabel('Ready')
+        layout.addWidget(self._status_label)
 
-        self.progress_var = tk.DoubleVar(self, value=0.0)
-        self.progress_bar = ttk.Progressbar(frame, variable=self.progress_var, maximum=100)
-        self.progress_bar.pack(fill='x', pady=(0, 5))
-
-        self.status_var = tk.StringVar(self, value='Ready')
-        ttk.Label(frame, textvariable=self.status_var).pack(anchor='w')
-
-        self.keyframe_info_var = tk.StringVar(self, value=self._get_keyframe_info())
-        self.keyframe_label = ttk.Label(frame, textvariable=self.keyframe_info_var, font=('', 8))
-        self.keyframe_label.pack(anchor='w')
+        self._keyframe_info_label = QLabel(self._get_keyframe_info())
+        self._keyframe_info_label.setStyleSheet('font-size: 8pt;')
+        layout.addWidget(self._keyframe_info_label)
 
     def _generate_default_output(self) -> str:
         base = os.path.splitext(os.path.basename(self.video_path))[0]
         start_sec = self.start_ms / 1000.0
         end_sec = self.end_ms / 1000.0
-
         return os.path.join(
             os.path.dirname(self.video_path),
-            f'{base}_scene_{start_sec:.1f}s-{end_sec:.1f}s.mp4'
+            f'{base}_scene_{start_sec:.1f}s-{end_sec:.1f}s.mp4',
         )
 
     def _browse_output(self):
-        initial = self.output_path_var.get()
-        path = filedialog.asksaveasfilename(
-            title='Export Scene As',
-            initialfile=os.path.basename(initial),
-            initialdir=os.path.dirname(initial),
-            defaultextension='.mp4',
-            filetypes=[
-                ('MP4 Video', '*.mp4'),
-                ('Matroska Video', '*.mkv'),
-                ('WebM Video', '*.webm'),
-                ('All Files', '*.*')
-            ]
+        initial = self._output_path_edit.text()
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Export Scene As',
+            initial,
+            'MP4 Video (*.mp4);;Matroska Video (*.mkv);;WebM Video (*.webm);;All Files (*.*)',
         )
-
         if path:
-            self.output_path_var.set(path)
+            self._output_path_edit.setText(path)
 
     def _get_keyframe_info(self) -> str:
-        if self.mode_var.get() == 'copy':
+        if self._mode_copy.isChecked():
             return (
                 f"Note: Stream Copy snaps to keyframe at "
                 f"{self._format_ms(self.metadata['keyframe_ms'])}, timing may not be exact"
             )
-
         return f'Exact frame accuracy: {self._format_ms(self.start_ms)}'
 
     def _save_settings(self):
@@ -117,142 +99,66 @@ class SingleExportDialog(BaseExporter):
         config.save_config(self.config)
 
     def _start_export(self):
-        output_path = self.output_path_var.get()
-
+        output_path = self._output_path_edit.text()
         if not output_path:
-            messagebox.showerror('Error', 'Please specify an output path.', parent=self)
+            QMessageBox.critical(self, 'Error', 'Please specify an output path.')
             return
 
         if os.path.exists(output_path):
-            if not messagebox.askyesno(
-                'Overwrite?',
+            reply = QMessageBox.question(
+                self, 'Overwrite?',
                 f'{os.path.basename(output_path)} already exists. Overwrite?',
-                parent=self
-            ):
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
                 return
 
         self._save_settings()
 
-        self.export_btn.config(state='disabled')
-        self.cancel_btn.config(text='Cancel', state='normal')
+        self._export_btn.setEnabled(False)
+        self._cancel_btn.setText('Cancel')
+        self._cancel_btn.setEnabled(True)
         self.cancelled = False
 
-        self.progress_var.set(0)
-        self.status_var.set('Starting export...')
+        self._progress_bar.setValue(0)
+        self._status_label.setText('Starting export...')
 
-        self.export_thread = threading.Thread(target=self._export_task, daemon=True)
-        self.export_thread.start()
-
-        self.after(100, self._check_export_progress)
-
-    def _export_task(self):
-        try:
-            cmd = self._build_ffmpeg_command()
-            self._run_ffmpeg(cmd)
-        except Exception as e:
-            self.after(0, lambda err=str(e): self._on_export_error(err))
+        cmd = self._build_ffmpeg_command()
+        self._ffmpeg_worker = FFmpegWorker(cmd, self.duration_ms)
+        self._ffmpeg_worker.progress_updated.connect(self._update_progress, type=Qt.QueuedConnection)
+        self._ffmpeg_worker.export_finished.connect(self._on_export_complete, type=Qt.QueuedConnection)
+        self._ffmpeg_worker.error.connect(self._on_export_error, type=Qt.QueuedConnection)
+        self._ffmpeg_worker.start()
 
     def _build_ffmpeg_command(self) -> list:
         cmd = [self._get_ffmpeg_path()]
-
-        if self.mode_var.get() == 'copy':
-            # Stream copy: Fast seek directly to the keyframe
+        if self._mode_copy.isChecked():
             start_sec = self.metadata['keyframe_ms'] / 1000.0
             cmd.extend(['-ss', str(start_sec), '-i', self.video_path, '-c', 'copy'])
         else:
-            # Re-encode: Fast seek followed by accurate decode
             start_sec = self.start_ms / 1000.0
             buffer_sec = 10.0
             fast_seek = max(0.0, start_sec - buffer_sec)
             exact_seek = start_sec - fast_seek
-
             cmd.extend(['-ss', str(fast_seek), '-i', self.video_path, '-ss', str(exact_seek)])
-            
-            # Inject core encoding arguments from the base class
             cmd.extend(self._get_core_ffmpeg_args(self.metadata))
-
-        # Add output-specific parameters
         duration_sec = self.duration_ms / 1000.0
-        cmd.extend(['-t', str(duration_sec), self.output_path_var.get()])
-
+        cmd.extend(['-t', str(duration_sec), self._output_path_edit.text()])
         return cmd
 
-    def _run_ffmpeg(self, cmd: list):
-        creation_flags = 0
-        if sys.platform == 'win32':
-            creation_flags = subprocess.CREATE_NO_WINDOW
-
-        self.process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=creation_flags,
-            bufsize=1,
-            universal_newlines=True
-        )
-
-        process = self.process
-        time_regex = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
-        stderr_lines = []
-
-        assert process.stderr is not None
-        for line in process.stderr:
-            stderr_lines.append(line)
-
-            if self.cancelled:
-                process.terminate()
-                process.wait()
-                self.after(0, self._on_export_cancelled)
-                return
-
-            match = time_regex.search(line)
-            if match:
-                current_ms = self._parse_time_to_ms(match.group(1))
-                progress = min(100.0, (current_ms / self.duration_ms) * 100.0) if self.duration_ms else 0.0
-                status = (
-                    f'Exporting... {self._format_ms(current_ms)} / '
-                    f'{self._format_ms(self.duration_ms)}'
-                )
-                self.after(0, lambda p=progress, s=status: self._update_progress(p, s))
-
-        process.wait()
-
-        if process.returncode == 0 and not self.cancelled:
-            self.after(0, self._on_export_complete)
-        elif not self.cancelled:
-            stderr_output = ''.join(stderr_lines[-80:])
-            self.after(
-                0,
-                lambda err=f'FFmpeg exited with code {process.returncode}\n\n{stderr_output}':
-                    self._on_export_error(err)
-            )
-
     def _update_progress(self, progress: float, status: str):
-        self.progress_var.set(progress)
-        self.status_var.set(status)
-
-    def _check_export_progress(self):
-        if self.export_thread and self.export_thread.is_alive():
-            self.after(100, self._check_export_progress)
-        else:
-            self.export_btn.config(state='normal')
+        self._progress_bar.setValue(int(progress))
+        self._status_label.setText(status)
 
     def _on_export_complete(self):
-        self.progress_var.set(100)
-        self.status_var.set('Export complete!')
+        self._progress_bar.setValue(100)
+        self._status_label.setText('Export complete!')
 
-        output_path = self.output_path_var.get()
+        output_path = self._output_path_edit.text()
 
-        messagebox.showinfo(
-            'Success',
-            f'Scene exported successfully to:\n{output_path}',
-            parent=self
-        )
-
-        if self.open_folder_var.get():
+        if self._open_folder_check.isChecked():
             output_abs = os.path.abspath(output_path)
             folder = os.path.dirname(output_abs)
-
             try:
                 if sys.platform == 'win32':
                     subprocess.run(['explorer', '/select,', output_abs])
@@ -263,31 +169,23 @@ class SingleExportDialog(BaseExporter):
             except Exception as e:
                 print(f'Failed to open output directory: {e}')
 
-        self.destroy()
+        self._ffmpeg_worker = None
+        self.accept()
 
     def _on_export_error(self, error_msg: str):
-        self.status_var.set('Export failed!')
-        messagebox.showerror('Export Error', error_msg, parent=self)
-        self.export_btn.config(state='normal')
-        self.cancel_btn.config(state='normal')
-
-    def _on_export_cancelled(self):
-        self.status_var.set('Export cancelled.')
-
-        output_path = self.output_path_var.get()
-        if os.path.exists(output_path):
-            try:
-                os.remove(output_path)
-            except Exception:
-                pass
-
-        self.export_btn.config(state='normal')
-        self.cancel_btn.config(state='normal')
+        self._status_label.setText('Export failed!')
+        QMessageBox.critical(self, 'Export Error', error_msg)
+        self._export_btn.setEnabled(True)
+        self._cancel_btn.setEnabled(True)
+        self._ffmpeg_worker = None
 
     def _on_cancel(self):
-        if self.process and self.process.poll() is None:
-            self.cancelled = True
-            self.status_var.set('Cancelling...')
-            self.cancel_btn.config(state='disabled')
+        if self._ffmpeg_worker and self._ffmpeg_worker.isRunning():
+            self._status_label.setText('Cancelling...')
+            self._cancel_btn.setEnabled(False)
+            self._ffmpeg_worker.cancel()
         else:
-            self.destroy()
+            self.reject()
+
+
+

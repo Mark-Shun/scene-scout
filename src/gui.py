@@ -1,24 +1,33 @@
 import os
 import io
 import sys
-import threading
-import tkinter as tk
+import gc
 import subprocess
 import webbrowser
-import sqlite3
-import gc
-from model_loader import load_siglip_model
-from tkinter import filedialog, messagebox, ttk, simpledialog
-from typing import Callable, List, Optional, Tuple
-from ttkthemes import ThemedStyle
-from tkinterdnd2 import DND_FILES, TkinterDnD
 from pathlib import Path
+from typing import Optional, List
 
-import av
+from PySide6.QtCore import Qt, QTimer, QEvent, Signal, Slot, QSize, QAbstractTableModel, QSortFilterProxyModel, QModelIndex, QItemSelectionModel
+from PySide6.QtGui import QIcon, QPixmap, QAction, QClipboard
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
+    QSplitter, QMessageBox, QFileDialog, QInputDialog,
+    QProgressBar, QLabel, QPushButton, QDialog,
+    QFrame, QScrollArea, QGridLayout, QComboBox, QSpinBox,
+    QCheckBox, QRadioButton, QButtonGroup, QLineEdit,
+    QGroupBox, QTableView, QHeaderView, QStackedWidget,
+    QMenu, QSizePolicy, QAbstractItemView,
+    QProgressDialog, QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem
+)
 import numpy as np
 import torch
 
-from gui_utils import ToolTip
+import config
+import gui_utils
+from workers import (
+    SignalBridge, ModelLoadWorker, IndexWorker, SearchWorker,
+    RescoreWorker, CombineDBWorker, VerifyPathsWorker, CleanupWorker,
+)
 
 try:
     import torch_directml
@@ -26,7 +35,7 @@ except ImportError:
     torch_directml = None
 
 try:
-    import intel_extension_for_pytorch as ipex # Required for Intel XPU
+    import intel_extension_for_pytorch as ipex
 except ImportError:
     ipex = None
 
@@ -38,105 +47,190 @@ except Exception:
     print('A VLC installation is needed for the GUI. Please install VLC before starting Scene Scout.', file=sys.stderr)
     sys.exit(1)
 
-from PIL import Image, ImageTk
-from model_loader import get_compute_device
-from database import init_db, db_is_empty, cleanup_orphaned_entries, search_scenes
-from processing import index_files, get_query_embedding
-import config
-import gui_utils
+from PIL import Image
+from model_loader import load_siglip_model, get_compute_device, TRT_AVAILABLE
+from database import init_db, db_is_empty
 
-def show_splash():
-    splash = tk.Tk()
-    splash.overrideredirect(True)
-    
-    # Load and resize logo
-    img = Image.open(config.text_logo)
-    logo_w, logo_h = img.size
-    scale = 400 / logo_w
-    new_w, new_h = int(logo_w * scale), int(logo_h * scale)
-    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    tk_img = ImageTk.PhotoImage(img, master=splash)
-    
-    # Image Label
-    label = ttk.Label(splash, image=tk_img)
-    label.image = tk_img
-    label.pack()
 
-    # Attach to splash object so it can be referenced later
-    splash.status_label = ttk.Label(splash, text="Initializing...", font=("Arial", 10), anchor="center")
-    splash.status_label.pack(fill='x', pady=10)
-    
-    # Calculate center position including the new label height
-    splash.update_idletasks()
-    w, h = splash.winfo_reqwidth(), splash.winfo_reqheight()
-    sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
-    x = (sw - w) // 2
-    y = (sh - h) // 2
-    splash.geometry(f"{w}x{h}+{x}+{y}")
-    
-    splash.lift()
-    return splash
+# ---------------------------------------------------------------------------
+# Drag-and-Drop Zone
+# ---------------------------------------------------------------------------
 
-class SceneScoutApp(TkinterDnD.Tk):
+class DropZoneFrame(QFrame):
+    files_dropped = Signal(list)
 
-    def __init__(self, splash_ref=None):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(60)
+        self.setObjectName('DropZoneFrame')
+        self.setStyleSheet("""
+            DropZoneFrame#DropZoneFrame {
+                border: 2px dashed rgba(128, 128, 128, 0.5);
+                border-radius: 5px;
+                background-color: rgba(128, 128, 128, 0.08);
+            }
+        """)
+        layout = QVBoxLayout(self)
+        self._label = QLabel(
+            "Drag & Drop files/folders onto the GUI\n"
+            "or click the buttons below to add to queue"
+        )
+        self._label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._label)
+
+        self.click_enabled = True
+
+    def mousePressEvent(self, event):
+        if self.click_enabled:
+            self.files_dropped.emit([])
+        super().mousePressEvent(event)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        paths = [url.toLocalFile() for url in event.mimeData().urls()]
+        if paths:
+            self.files_dropped.emit(paths)
+
+
+# ---------------------------------------------------------------------------
+# Search Results Table Model
+# ---------------------------------------------------------------------------
+
+class SearchResultsModel(QAbstractTableModel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data = []
+        self._headers = ["Filename", "Scene", "Time", "Source", "Score", "Rescore"]
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._data)
+
+    def columnCount(self, parent=QModelIndex()):
+        return len(self._headers)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row, col = index.row(), index.column()
+        if row >= len(self._data) or col >= len(self._headers):
+            return None
+        entry = self._data[row]
+        if role == Qt.DisplayRole:
+            return entry[col]
+        if role == Qt.UserRole:
+            return entry[col]
+        if role == Qt.ToolTipRole:
+            if col == 0:
+                return entry[0]
+            return entry[col]
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            return self._headers[section]
+        return None
+
+    def update_data(self, new_data):
+        self.beginResetModel()
+        self._data = new_data
+        self.endResetModel()
+
+
+class SearchSortProxy(QSortFilterProxyModel):
+    def lessThan(self, left, right):
+        if left.column() in (1, 4, 5):
+            left_val = left.data(Qt.UserRole)
+            right_val = right.data(Qt.UserRole)
+            if left_val is not None and right_val is not None:
+                try:
+                    return float(left_val) < float(right_val)
+                except (ValueError, TypeError):
+                    pass
+        return super().lessThan(left, right)
+
+
+# ---------------------------------------------------------------------------
+# Indexing Progress Dialog
+# ---------------------------------------------------------------------------
+
+class IndexProgressDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Processing Media')
+        self.setMinimumWidth(500)
+        self.setModal(True)
+        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+
+        self.status_label = QLabel('Initializing...')
+        self.status_label.setStyleSheet('font-weight: bold; font-size: 14px;')
+        layout.addWidget(self.status_label)
+
+        self.file_label = QLabel('Starting up...')
+        self.file_label.setStyleSheet('color: gray;')
+        self.file_label.setWordWrap(True)
+        layout.addWidget(self.file_label)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        layout.addWidget(self.progress_bar)
+
+        self.count_label = QLabel('0 / 0')
+        self.count_label.setAlignment(Qt.AlignRight)
+        layout.addWidget(self.count_label)
+
+        self.cancel_btn = QPushButton('Cancel Processing')
+        self.cancel_btn.setMinimumWidth(180)
+        self.cancel_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        layout.addWidget(self.cancel_btn, alignment=Qt.AlignCenter)
+
+
+# ---------------------------------------------------------------------------
+# Main Application Window
+# ---------------------------------------------------------------------------
+
+class SceneScoutApp(QMainWindow):
+    vlc_end_reached = Signal()
+
+    def __init__(self):
         super().__init__()
-        self.withdraw()
         self.is_active = True
         self._is_background_task_running = False
-        self.title('Scene Scout')
-        self.splash_ref = splash_ref
+        self.setWindowTitle('Scene Scout')
+        self.resize(1200, 800)
 
-        self.app_icon = gui_utils.load_app_icon(self, config.big_logo)
+        app_icon = gui_utils.load_app_icon(config.big_logo)
+        self.setWindowIcon(app_icon)
 
-        # 1. Load configuration and sync global state
+        # Config
         self.config = config.load_config()
         config.SCENE_PLAYBACK = self.config['scene_playback']
 
-        # GPU offload
+        # GPU standby
         self._is_in_standby = False
-        self.gpu_standby_var = tk.BooleanVar(master=self, value=self.config.get('gpu_standby', True))
         self._idle_counter = 0
-        self._idle_after_id = None
+        self._idle_timer = None
 
-        # 2. INITIALIZE TRACKING VARIABLES IMMEDIATELY
-        # This prevents the AttributeError if update_status is called early
-        self.status_var = tk.StringVar(master=self, value='Initializing...')
-        
-        # 3. Setup window geometry and themes
-        screen_width = (self.winfo_screenwidth()) - 200
-        screen_height = (self.winfo_screenheight()) - 200
-        self.geometry(f"{screen_width}x{screen_height}+0+0")
-        
-        self.style = ThemedStyle(self)
-        self.current_theme = self.config['theme']
-        self.style.theme_use(self.current_theme)
-        self.theme_var = tk.StringVar(master=self, value=self.current_theme)
-
-        # 4. Initialize Config-linked UI Variables
-        self.generate_thumbnails_var = tk.BooleanVar(master=self, value=self.config['generate_thumbnails'])
-        self.use_trt_var = tk.BooleanVar(master=self, value=self.config['use_trt'])
-        self.use_vlc_open_var = tk.BooleanVar(master=self, value=self.config['use_vlc_open'])
-        
-        # 5. Initialize Hardware/Model Variables
+        # Device detection
         saved_device = self.config.get('device')
         device_str, device_msg, _, _ = get_compute_device(saved_device)
         self.device_msg = device_msg
-        self.device_var = tk.StringVar(master=self, value=device_str)
-        
-        from model_loader import TRT_AVAILABLE
+        self.device_choice = device_str
         self.show_trt_option = (device_str == 'cuda' and TRT_AVAILABLE)
 
-        # 6. Search and index variables
-        self.top_k_var = tk.IntVar(master=self, value=self.config['top_k'])
-        self.input_batch_size = tk.IntVar(master=self, value=self.config['batch_size'])
-        self.fast_detect_var = tk.BooleanVar(master=self, value=self.config['fast_detect'])
-        self.max_patches_var = tk.IntVar(master=self, value=self.config['max_patches'])
-        self.queue_status_var = tk.StringVar(master=self, value='[0] items in queue')
-
-        # 7. Internal state setup
+        # Internal state
         self.model = None
         self.processor = None
+        self.device = None
+        self.dtype = None
+        self._last_active_device = None
         self.active_databases: List[str] = []
         self.primary_db: Optional[str] = None
         self.db_manager_dlg = None
@@ -146,426 +240,590 @@ class SceneScoutApp(TkinterDnD.Tk):
         self.last_selected_entry = None
         self.current_sort_col = 'score'
         self.current_sort_reverse = True
-        self.canvas_scale = 1.0
-        self.canvas_offset_x = 0
-        self.canvas_offset_y = 0
+        self.original_image = None
+        self.current_display_path = None
+        self.current_media = None
 
+        # VLC setup
         vlc_args = config.get_vlc_args()
         self.vlc_instance = vlc.Instance(*vlc_args)
         self.player = self.vlc_instance.media_player_new()
+        self.vlc_end_reached.connect(self._vlc_loop_restart, Qt.QueuedConnection)
 
-        # 8. Run UI construction
-        self.setup_widgets()
-        
-        self.drop_target_register(DND_FILES)
-        self.dnd_bind('<<Drop>>', self.on_handle_drop)
+        # ---- Build the UI ----
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
+        self.splitter = QSplitter(Qt.Horizontal)
+        main_layout.addWidget(self.splitter)
+
+        # Left panel (scrollable controls)
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setFrameShape(QFrame.NoFrame)
+        self.left_panel = QWidget()
+        self.left_scroll.setWidget(self.left_panel)
+        self.splitter.addWidget(self.left_scroll)
+
+        # Right panel (results + preview)
+        self.right_panel = QWidget()
+        self.splitter.addWidget(self.right_panel)
+
+        self.splitter.setSizes([340, 860])
+
+        self.setup_left_panel()
+        self.setup_right_panel()
+
+        # Worker / signal bridge
+        self._signal_bridge = SignalBridge()
+        self._current_worker = None
+        self._index_worker = None
+
+        # Accept drops on main window for global handling
+        self.setAcceptDrops(True)
+
+        # Status bar permanent widgets (must init before load_saved_paths)
+        self._statusbar_db_label = QLabel()
+        self._statusbar_db_label.setStyleSheet('padding: 0 8px; font-weight: bold;')
+        self.statusBar().addPermanentWidget(self._statusbar_db_label)
+
+        self._statusbar_count_label = QLabel()
+        self._statusbar_count_label.setStyleSheet('padding: 0 8px;')
+        self.statusBar().addPermanentWidget(self._statusbar_count_label)
+
+        # Load saved databases
         self.load_saved_paths()
-        self.set_controls_enabled(False)
-        
-        # Periodic check of inactivity
-        self.bind_all("<Any-KeyPress>", self.reset_idle_timer)
-        self.bind_all("<Any-Button>", self.reset_idle_timer)
-        self.bind("<Unmap>", self._on_minimized)
-        self.bind("<Map>", self._on_restored)
+
+        # GPU standby periodic check
         self.check_idle_and_state()
 
-        # When closing the app, run the on_closing logic
-        self.protocol("WM_DELETE_WINDOW", self._on_closing)
+    # ======================================================================
+    # Drag-and-Drop (global handler)
+    # ======================================================================
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
 
-    def setup_widgets(self):
-        # Main Layout Containers
-        mainframe = ttk.Frame(self, padding='10')
-        mainframe.pack(fill='both', expand=True)
-        
-        main_paned = ttk.PanedWindow(mainframe, orient='horizontal')
-        main_paned.pack(fill='both', expand=True)
+    def dropEvent(self, event):
+        paths = [url.toLocalFile() for url in event.mimeData().urls()]
+        if not paths:
+            return
+        db_paths = [p for p in paths if p.lower().endswith('.db')]
+        if db_paths:
+            self._add_databases(db_paths)
+        for path in paths:
+            if path.lower().endswith(config.IMAGE_EXTENSIONS):
+                self.query_image_path = path
+                if hasattr(self, '_query_image_label') and self._query_image_label:
+                    self._query_image_label.setText(os.path.basename(path))
+                self.update_status(f"Query image set via drop: {os.path.basename(path)}")
+                break
+        media_paths = [p for p in paths if not p.lower().endswith('.db') and (
+            os.path.isdir(p) or p.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS)
+        )]
+        if media_paths:
+            self._add_paths_to_queue(media_paths)
 
-        # --- LEFT SIDE: Scrollable Controls Pane ---
-        controls_pane = ttk.Frame(main_paned)
-        main_paned.add(controls_pane, weight=0)
+    # ======================================================================
+    # Close
+    # ======================================================================
 
-        self.canvas = tk.Canvas(controls_pane, highlightthickness=0, width=320)
-        scrollbar = ttk.Scrollbar(controls_pane, orient="vertical", command=self.canvas.yview)
-        self.scrollable_controls = ttk.Frame(self.canvas, padding="10")
-        
-        window_id = self.canvas.create_window((0, 0), window=self.scrollable_controls, anchor="nw")
-        self.canvas.configure(yscrollcommand=scrollbar.set)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+    def closeEvent(self, event):
+        self.is_active = False
+        if self._idle_timer:
+            self._idle_timer.stop()
+        if self._current_worker and self._current_worker.isRunning():
+            self._current_worker.requestInterruption()
+            self._current_worker.wait(2000)
+        self._stop_video_loop()
+        event.accept()
 
-        def _on_frame_configure(event):
-            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+    # ======================================================================
+    # Left Panel Construction
+    # ======================================================================
 
-        def _on_canvas_configure(event):
-            self.canvas.itemconfig(window_id, width=event.width)
+    def setup_left_panel(self):
+        layout = QVBoxLayout(self.left_panel)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(5)
 
-        def _on_mousewheel(event):
-            # Prevent scrolling if the event originates from a popup window
-            if hasattr(event.widget, 'winfo_toplevel') and event.widget.winfo_toplevel() == self:
-                self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        # ---- Database Section ----
+        db_group = QGroupBox("Database")
+        db_layout = QVBoxLayout(db_group)
 
-        # Use Enter/Leave to prevent this from highjacking the whole app
-        self.canvas.bind('<Enter>', lambda e: self.canvas.bind_all("<MouseWheel>", _on_mousewheel))
-        self.canvas.bind('<Leave>', lambda e: self.canvas.unbind_all("<MouseWheel>"))
+        self._db_target_label = QLabel('No database loaded')
+        self._db_target_label.setWordWrap(True)
+        self._db_target_label.setStyleSheet('font-weight: bold;')
+        db_layout.addWidget(self._db_target_label)
 
-        self.scrollable_controls.bind("<Configure>", _on_frame_configure)
-        self.canvas.bind("<Configure>", _on_canvas_configure)
-        self.canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        self._db_search_label = QLabel('')
+        self._db_search_label.setWordWrap(True)
+        db_layout.addWidget(self._db_search_label)
 
-        # Database Section
-        db_frame = ttk.LabelFrame(self.scrollable_controls, text='Database', padding=5)
-        db_frame.pack(fill='x', pady=5)
-        
-        self.db_target_label = ttk.Label(db_frame, text='No database loaded', wraplength=280, font=('', 9, 'bold'))
-        self.db_target_label.pack(anchor='w')
-        
-        self.db_search_label = ttk.Label(db_frame, text='', wraplength=280, font=('', 9))
-        self.db_search_label.pack(anchor='w')
-        
-        ttk.Separator(db_frame, orient='horizontal').pack(fill='x', pady=5)
-        
-        manage_db_button = ttk.Button(db_frame, text='Manage Databases...', command=self.open_db_manager)
-        manage_db_button.pack(fill='x', pady=2)
-        ToolTip(manage_db_button, 'Open the database manager to view, add, remove, and configure databases.')
-        
-        db_btn_frame = ttk.Frame(db_frame)
-        db_btn_frame.pack(fill='x', pady=2)
-        add_db_button = ttk.Button(db_btn_frame, text='Add Existing...', command=self.browse_existing_database)
-        add_db_button.pack(side='left', expand=True, fill='x', padx=(0, 2))
-        ToolTip(add_db_button, 'Add existing Scene Scout database (.db) files to the search list.')
-        create_db_button = ttk.Button(db_btn_frame, text='Create New...', command=self.browse_database)
-        create_db_button.pack(side='left', expand=True, fill='x', padx=(2, 0))
-        ToolTip(create_db_button, 'Create a new database for indexing media files.')
+        manage_btn = QPushButton('Manage Databases...')
+        manage_btn.clicked.connect(self.open_db_manager)
+        manage_btn.setToolTip('Open the database manager to view, add, remove, and configure databases.')
+        db_layout.addWidget(manage_btn)
 
-        # Media Queue Section
-        queue_frame = ttk.LabelFrame(self.scrollable_controls, text='Media Queue', padding=5)
-        queue_frame.pack(fill='x', pady=5)
-        
-        # Drag-and-Drop Area
-        self.drop_area = ttk.Frame(queue_frame, height=60, relief='solid', borderwidth=2)
-        self.drop_area.pack(fill='x', pady=(0, 5))
-        self.drop_area.pack_propagate(False)
-        drop_label = ttk.Label(self.drop_area, text='Drag & Drop files/folders onto the GUI\nor click the buttons below to add to queue', 
-                               anchor='center', justify='center')
-        drop_label.pack(expand=True, fill='both')
-        
-        # Bind click and drop events to the drag-and-drop area
-        self.drop_area.bind('<Button-1>', lambda e: self.browse_files_dialog())
-        self.drop_area.drop_target_register(DND_FILES)
-        self.drop_area.dnd_bind('<<Drop>>', self.on_queue_drop)
-        
-        # Queue Status Label
-        ttk.Label(queue_frame, textvariable=self.queue_status_var, font=('', 9, 'bold')).pack(fill='x', pady=(0, 5))
-        
-        # Buttons Frame
-        btn_frame = ttk.Frame(queue_frame)
-        btn_frame.pack(fill='x', pady=2)
-        
-        add_folder_btn = ttk.Button(btn_frame, text='Add Folder(s)', command=self.add_folder_to_queue)
-        add_folder_btn.pack(side='left', expand=True, fill='x', padx=(0, 2))
-        ToolTip(add_folder_btn, 'Add a directory to the index queue. Recursive by default.')
-        
-        add_file_btn = ttk.Button(btn_frame, text='Add File(s)', command=self.add_files_to_queue)
-        add_file_btn.pack(side='left', expand=True, fill='x', padx=(2, 0))
-        ToolTip(add_file_btn, 'Add individual media files to the index queue.')
-        
-        # Inspect Queue Button
-        inspect_btn = ttk.Button(queue_frame, text='Inspect Queue...', command=self.open_queue_manager)
-        inspect_btn.pack(fill='x', pady=(5, 3))
-        ToolTip(inspect_btn, 'Open the queue manager to view, modify, or remove queued items.')
-        
-        # Process Button
-        self.index_button = ttk.Button(queue_frame, text='Process Media', command=self.threaded_index, state='disabled')
-        self.index_button.pack(fill='x', pady=3)
-        ToolTip(self.index_button, 'Process all files in the queue and update the scene database.')
+        db_btn_row = QHBoxLayout()
+        add_existing_btn = QPushButton('Add Existing...')
+        add_existing_btn.clicked.connect(self.browse_existing_database)
+        add_existing_btn.setToolTip('Add existing Scene Scout database (.db) files to the search list.')
+        db_btn_row.addWidget(add_existing_btn)
 
-        # Search Query Section
-        query_frame = ttk.LabelFrame(self.scrollable_controls, text='Search Query', padding=5)
-        query_frame.pack(fill='x', pady=5)
-        ttk.Label(query_frame, text='Text:').pack(anchor='w')
-        self.query_text_var = tk.StringVar(master=self)
-        self.query_text_entry = ttk.Entry(query_frame, textvariable=self.query_text_var)
-        self.query_text_entry.pack(fill='x', pady=(0, 5))
-        ToolTip(self.query_text_entry, 'Enter natural language text to search for matching scenes.')
-        self.query_text_entry.bind('<Return>', lambda e: self.threaded_search())
-        
-        self.query_image_var = tk.StringVar(master=self, value='No query image')
-        ttk.Label(query_frame, textvariable=self.query_image_var, wraplength=250).pack(anchor='w')
-        
-        btn_frame = ttk.Frame(query_frame)
-        btn_frame.pack(fill='x', pady=2)
-        load_query_button = ttk.Button(btn_frame, text='Load...', command=self.browse_query_image)
-        load_query_button.pack(side='left', expand=True, fill='x')
-        ToolTip(load_query_button, 'Load an image to use as the search query.')
-        clear_query_button = ttk.Button(btn_frame, text='Clear', command=self.clear_query_image)
-        clear_query_button.pack(side='left', expand=True, fill='x')
-        ToolTip(clear_query_button, 'Clear the current query image from the search form.')
-        self.search_button = ttk.Button(query_frame, text='Search Scene', command=self.threaded_search, state='disabled')
-        self.search_button.pack(fill='x', pady=3)
-        ToolTip(self.search_button, 'Run the search using the current text and/or image query.')
+        create_btn = QPushButton('Create New...')
+        create_btn.clicked.connect(self.browse_database)
+        create_btn.setToolTip('Create a new database for indexing media files.')
+        db_btn_row.addWidget(create_btn)
+        db_layout.addLayout(db_btn_row)
 
-        # Options Section
-        options_frame = ttk.LabelFrame(self.scrollable_controls, text='Options', padding=5)
-        options_frame.pack(fill='x', pady=5)
+        layout.addWidget(db_group)
 
-        # Compute Device Section
-        ttk.Label(options_frame, text='Compute Device:').pack(anchor='w', pady=(5, 0))
+        # ---- Media Queue Section ----
+        queue_group = QGroupBox("Media Queue")
+        queue_layout = QVBoxLayout(queue_group)
+
+        self._drop_zone = DropZoneFrame()
+        self._drop_zone.files_dropped.connect(self._on_dropzone_drop)
+        self._drop_zone.click_enabled = True
+        queue_layout.addWidget(self._drop_zone)
+
+        self._queue_status_label = QLabel('[0] items in queue')
+        self._queue_status_label.setStyleSheet('font-weight: bold;')
+        queue_layout.addWidget(self._queue_status_label)
+
+        queue_btn_row = QHBoxLayout()
+        add_folder_btn = QPushButton('Add Folder(s)')
+        add_folder_btn.clicked.connect(self.add_folder_to_queue)
+        add_folder_btn.setToolTip('Add a directory to the index queue. Recursive by default.')
+        queue_btn_row.addWidget(add_folder_btn)
+
+        add_file_btn = QPushButton('Add File(s)')
+        add_file_btn.clicked.connect(self.add_files_to_queue)
+        add_file_btn.setToolTip('Add individual media files to the index queue.')
+        queue_btn_row.addWidget(add_file_btn)
+        queue_layout.addLayout(queue_btn_row)
+
+        inspect_btn = QPushButton('Inspect Queue...')
+        inspect_btn.clicked.connect(self.open_queue_manager)
+        inspect_btn.setToolTip('Open the queue manager to view, modify, or remove queued items.')
+        queue_layout.addWidget(inspect_btn)
+
+        self._index_button = QPushButton('Process Media')
+        self._index_button.clicked.connect(self.threaded_index)
+        self._index_button.setToolTip('Process all files in the queue and update the scene database.')
+        self._index_button.setEnabled(False)
+        queue_layout.addWidget(self._index_button)
+
+        layout.addWidget(queue_group)
+
+        # ---- Search Query Section ----
+        query_group = QGroupBox("Search Query")
+        query_layout = QVBoxLayout(query_group)
+
+        query_layout.addWidget(QLabel('Text:'))
+        self._query_text_edit = QLineEdit()
+        self._query_text_edit.setPlaceholderText('Enter natural language text to search for matching scenes.')
+        self._query_text_edit.returnPressed.connect(self.threaded_search)
+        query_layout.addWidget(self._query_text_edit)
+
+        self._query_image_label = QLabel('No query image')
+        self._query_image_label.setWordWrap(True)
+        query_layout.addWidget(self._query_image_label)
+
+        query_btn_row = QHBoxLayout()
+        load_query_btn = QPushButton('Load...')
+        load_query_btn.clicked.connect(self.browse_query_image)
+        load_query_btn.setToolTip('Load an image to use as the search query.')
+        query_btn_row.addWidget(load_query_btn)
+
+        clear_query_btn = QPushButton('Clear')
+        clear_query_btn.clicked.connect(self.clear_query_image)
+        clear_query_btn.setToolTip('Clear the current query image from the search form.')
+        query_btn_row.addWidget(clear_query_btn)
+        query_layout.addLayout(query_btn_row)
+
+        self._search_button = QPushButton('Search Scene')
+        self._search_button.clicked.connect(self.threaded_search)
+        self._search_button.setToolTip('Run the search using the current text and/or image query.')
+        self._search_button.setEnabled(False)
+        query_layout.addWidget(self._search_button)
+
+        layout.addWidget(query_group)
+
+        # ---- Options Section ----
+        options_group = QGroupBox("Options")
+        opts_layout = QVBoxLayout(options_group)
+
+        opts_layout.addWidget(QLabel('Compute Device:'))
         device_options = ['cpu']
-        
-        # Check for CUDA (NVIDIA/AMD via ROCm)
-        if torch.cuda.is_available(): 
+        if torch.cuda.is_available():
             device_options.append('cuda')
-            
-        # Check for DirectML (Windows AMD/Intel)
-        if torch_directml is not None and torch_directml.is_available(): 
+        if torch_directml is not None and torch_directml.is_available():
             device_options.append('dml')
-            
-        # Check for Intel Extension for PyTorch (Intel Arc/Integrated XPU)
         if ipex is not None and hasattr(torch, 'xpu') and torch.xpu.is_available():
             device_options.append('xpu')
-
-        # Check for Apple Silicon (MPS)
         if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             device_options.append('mps')
 
-        self.device_combobox = ttk.Combobox(
-            options_frame, 
-            textvariable=self.device_var, 
-            values=device_options, 
-            state='readonly'
-        )
-        self.device_combobox.pack(fill='x')
+        self._device_combobox = QComboBox()
+        self._device_combobox.addItems(device_options)
+        idx = self._device_combobox.findText(self.device_choice)
+        if idx >= 0:
+            self._device_combobox.setCurrentIndex(idx)
+        self._device_combobox.currentTextChanged.connect(self._on_device_changed)
+        opts_layout.addWidget(self._device_combobox)
 
-        # Save config when selection changes
-        self.device_combobox.bind("<<ComboboxSelected>>", 
-            lambda e: self.save_config_key('device', self.device_var.get()))
-        self.device_combobox.pack(fill='x')
+        device_msg_label = QLabel(f'Auto-detected: {self.device_msg}')
+        device_msg_label.setStyleSheet('font-style: italic; font-size: 8pt;')
+        opts_layout.addWidget(device_msg_label)
 
-        self.device_var.trace_add('write', lambda *args: self._update_standby_ui_state())
-        self._update_standby_ui_state()
-
-        ttk.Label(options_frame, text=f'Auto-detected: {self.device_msg}', font=('', 8, 'italic')).pack(anchor='w')
-
-        # Add TRT Toggle if hardware supports it
         if self.show_trt_option:
-            self.trt_check = ttk.Checkbutton(
-                options_frame,
-                text='Use TensorRT Acceleration', 
-                variable=self.use_trt_var,
-                command=self.save_trt_preference
-            )
-            self.trt_check.pack(anchor='w', pady=(5, 0))
-        
-        ttk.Label(options_frame, text='Detection method:').pack(anchor='w', pady=(5, 0))
-        detect_method_frame = ttk.Frame(options_frame)
-        detect_method_frame.pack(fill='x', pady=5)
-        self.fast_radio = ttk.Radiobutton(detect_method_frame, text='Fast', variable=self.fast_detect_var, 
-                value=True, style='Toolbutton',
-                command=lambda: self.save_config_key('fast_detect', True))
-        self.fast_radio.pack(side='left', expand=True, fill='x', padx=(0, 2))
-        ToolTip(self.fast_radio, 'Fast: Use video metadata to extract scenes.')
+            self._trt_check = QCheckBox('Use TensorRT Acceleration')
+            self._trt_check.setChecked(self.config.get('use_trt', False))
+            self._trt_check.toggled.connect(self.save_trt_preference)
+            opts_layout.addWidget(self._trt_check)
 
-        self.accurate_radio = ttk.Radiobutton(detect_method_frame, text='Accurate', variable=self.fast_detect_var, 
-                        value=False, style='Toolbutton',
-                        command=lambda: self.save_config_key('fast_detect', False))
-        self.accurate_radio.pack(side='left', expand=True, fill='x', padx=(2, 0))
-        ToolTip(self.accurate_radio, 'Accurate: Process video to detect scenes.')
+        opts_layout.addWidget(QLabel('Detection method:'))
+        detect_frame = QFrame()
+        detect_layout = QHBoxLayout(detect_frame)
+        detect_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Max Patches
-        ttk.Label(options_frame, text='Max patches:').pack(anchor='w', pady=(5, 0))
-        max_patches_spinbox = ttk.Spinbox(options_frame, from_=128, to=1024, increment=128, 
-                    textvariable=self.max_patches_var,
-                    command=lambda: self.save_config_key('max_patches', self.max_patches_var.get()))
-        max_patches_spinbox.pack(fill='x')
-        ToolTip(max_patches_spinbox, 'Number of patches to evaluate per scene; higher values may improve accuracy but increase runtime.')
+        self._fast_radio = QRadioButton('Fast')
+        self._fast_radio.setChecked(self.config.get('fast_detect', True))
+        self._fast_radio.toggled.connect(lambda checked: self._on_detect_method_changed(checked))
 
-        # Results (top_k)
-        ttk.Label(options_frame, text='Results:').pack(anchor='w', pady=(5, 0))
-        top_k_spinbox = ttk.Spinbox(options_frame, from_=1, to=100, 
-                    textvariable=self.top_k_var,
-                    command=lambda: self.save_config_key('top_k', self.top_k_var.get()))
-        top_k_spinbox.pack(fill='x')
-        ToolTip(top_k_spinbox, 'How many matching scenes to return for each search.')
+        self._accurate_radio = QRadioButton('Accurate')
+        self._accurate_radio.setChecked(not self.config.get('fast_detect', True))
 
-        # Batch Size
-        ttk.Label(options_frame, text='Scene embed batch size:').pack(anchor='w', pady=(5, 0))
-        batch_size_spinbox = ttk.Spinbox(options_frame, from_=8, to=160, 
-                    textvariable=self.input_batch_size,
-                    command=lambda: self.save_config_key('batch_size', self.input_batch_size.get()))
-        batch_size_spinbox.pack(fill='x')
-        ToolTip(batch_size_spinbox, 'Number of images processed at once when computing scene embeddings.')
+        detect_layout.addWidget(self._fast_radio)
+        detect_layout.addWidget(self._accurate_radio)
+        opts_layout.addWidget(detect_frame)
 
-        # VLC Open Preference
-        self.vlc_open_check = ttk.Checkbutton(
-            options_frame, 
-            text='Open video in VLC', 
-            variable=self.use_vlc_open_var,
-            command=lambda: self.save_config_key('use_vlc_open', self.use_vlc_open_var.get())
-        )
-        self.vlc_open_check.pack(anchor='w', pady=(5, 0))
+        opts_layout.addWidget(QLabel('Max patches:'))
+        self._max_patches_spin = QSpinBox()
+        self._max_patches_spin.setRange(128, 1024)
+        self._max_patches_spin.setSingleStep(128)
+        self._max_patches_spin.setValue(self.config.get('max_patches', 256))
+        self._max_patches_spin.valueChanged.connect(lambda v: self.save_config_key('max_patches', v))
+        self._max_patches_spin.setToolTip('Number of patches to evaluate per scene; higher values may improve accuracy but increase runtime.')
+        opts_layout.addWidget(self._max_patches_spin)
 
-        # Thumbnail Toggle
-        self.thumb_check = ttk.Checkbutton(
-            options_frame, 
-            text='Generate Thumbnails (increases DB size)', 
-            variable=self.generate_thumbnails_var,
-            command=lambda: self.save_config_key('generate_thumbnails', self.generate_thumbnails_var.get())
-        )
-        self.thumb_check.pack(anchor='w', pady=(5, 0))
+        opts_layout.addWidget(QLabel('Results:'))
+        self._top_k_spin = QSpinBox()
+        self._top_k_spin.setRange(1, 100)
+        self._top_k_spin.setValue(self.config.get('top_k', 20))
+        self._top_k_spin.valueChanged.connect(lambda v: self.save_config_key('top_k', v))
+        self._top_k_spin.setToolTip('How many matching scenes to return for each search.')
+        opts_layout.addWidget(self._top_k_spin)
 
-        # GPU Standby Toggle
-        self.standby_check = ttk.Checkbutton(options_frame, text='GPU Standby when minimized', variable=self.gpu_standby_var, command=self._on_standby_toggle_changed)
-        self.standby_check.pack(anchor='w', pady=(5, 0))
-        ToolTip(self.standby_check, 'Offload model to CPU when minimized or idle to free VRAM.')
+        opts_layout.addWidget(QLabel('Scene embed batch size:'))
+        self._batch_size_spin = QSpinBox()
+        self._batch_size_spin.setRange(8, 160)
+        self._batch_size_spin.setValue(self.config.get('batch_size', 16))
+        self._batch_size_spin.valueChanged.connect(lambda v: self.save_config_key('batch_size', v))
+        self._batch_size_spin.setToolTip('Number of images processed at once when computing scene embeddings.')
+        opts_layout.addWidget(self._batch_size_spin)
 
-        self.device_var.trace_add('write', lambda *args: self._update_standby_ui_state())
+        self._vlc_open_check = QCheckBox('Open video in VLC')
+        self._vlc_open_check.setChecked(self.config.get('use_vlc_open', True))
+        self._vlc_open_check.toggled.connect(lambda v: self.save_config_key('use_vlc_open', v))
+        opts_layout.addWidget(self._vlc_open_check)
 
-        self._update_standby_ui_state()
+        self._thumb_check = QCheckBox('Generate Thumbnails (increases DB size)')
+        self._thumb_check.setChecked(self.config.get('generate_thumbnails', True))
+        self._thumb_check.toggled.connect(lambda v: self.save_config_key('generate_thumbnails', v))
+        opts_layout.addWidget(self._thumb_check)
 
-        # Disable if current device is CPU
-        if self.device_var.get() == 'cpu':
-            self.standby_check.config(state='disabled')
-        
-        # Theme frame
-        theme_frame = ttk.Frame(options_frame)
-        theme_frame.pack(fill='x', pady=5)
-        self.theme_combobox = ttk.Combobox(theme_frame, textvariable=self.theme_var, values=sorted(self.style.theme_names()), state='readonly')
-        self.theme_combobox.pack(side='left', fill='x', expand=True)
-        apply_theme_button = ttk.Button(theme_frame, text='Apply', command=self.apply_theme)
-        apply_theme_button.pack(side='left', padx=(5, 0))
-        ToolTip(apply_theme_button, 'Apply the selected GUI theme immediately.')
+        self._standby_check = QCheckBox('GPU Standby when minimized')
+        self._standby_check.setChecked(self.config.get('gpu_standby', True))
+        self._standby_check.toggled.connect(self._on_standby_toggle_changed)
+        self._standby_check.setToolTip('Offload model to CPU when minimized or idle to free VRAM.')
+        opts_layout.addWidget(self._standby_check)
 
-        # Additional actions Section
-        actions_frame = ttk.LabelFrame(self.scrollable_controls, text='Additional Actions', padding=5)
-        actions_frame.pack(fill='x', pady=10)
-        
-        self.load_model_button = ttk.Button(actions_frame, text='Load Model', command=self.threaded_load_model)
-        self.load_model_button.pack(fill='x', pady=3)
-        ToolTip(self.load_model_button, 'Load or reload the model used for scene search.')
-        
-        cleanup_button = ttk.Button(actions_frame, text='Cleanup Database', command=self.cleanup_database)
-        cleanup_button.pack(fill='x', pady=3)
-        ToolTip(cleanup_button, 'Remove orphaned or invalid database entries.')
+        if self.device_choice == 'cpu':
+            self._standby_check.setEnabled(False)
 
-        # Info Section
-        info_frame = ttk.LabelFrame(self.scrollable_controls, text='Info', padding=5)
-        info_frame.pack(fill='x', pady=(0,10))
-        about_button = ttk.Button(info_frame, text='About', command=self.open_about_dialog)
-        about_button.pack(fill='x')
-        ToolTip(about_button, 'Open the about dialog with project and version information.')
+        theme_frame = QFrame()
+        theme_layout = QHBoxLayout(theme_frame)
+        theme_layout.setContentsMargins(0, 0, 0, 0)
+        self._theme_combobox = QComboBox()
+        saved_theme = self.config.get('theme', 'dark_teal.xml')
+        default_index = 0
+        for idx, filename in enumerate(self._get_available_themes()):
+            display_name = filename.split('.')[0].replace('_', ' ').title()
+            self._theme_combobox.addItem(display_name, userData=filename)
+            if filename == saved_theme:
+                default_index = idx
+        self._theme_combobox.setCurrentIndex(default_index)
+        theme_layout.addWidget(self._theme_combobox)
 
-        # Status Label
-        ttk.Label(self.scrollable_controls, textvariable=self.status_var, wraplength=280).pack(side='bottom', fill='x', pady=10)       
+        apply_theme_btn = QPushButton('Apply')
+        apply_theme_btn.clicked.connect(self.apply_theme)
+        theme_layout.addWidget(apply_theme_btn)
+        opts_layout.addWidget(theme_frame)
 
-        # --- RIGHT SIDE: Results and Preview ---
-        results_frame = ttk.LabelFrame(main_paned, text='Results', padding='10')
-        main_paned.add(results_frame, weight=1)
-        
-        paned_window = ttk.PanedWindow(results_frame, orient='horizontal')
-        paned_window.pack(fill='both', expand=True)
-        
-        list_frame = ttk.Frame(paned_window)
-        self.stats_label = ttk.Label(list_frame, text='No search performed')
-        self.stats_label.pack(anchor='w')
-        
-        rescore_frame = ttk.Frame(list_frame)
-        rescore_frame.pack(fill='x', pady=5)
-        self.rescore_button = ttk.Button(rescore_frame, text='Rescore...', command=self.open_rescore_dialog, state='disabled')
-        self.rescore_button.pack(side='left')
-        ToolTip(self.rescore_button, 'Open rescore dialog to adjust scene result rankings.')
-        self.clear_rescore_button = ttk.Button(rescore_frame, text='Clear Rescore', command=self.clear_rescore, state='disabled')
-        self.clear_rescore_button.pack(side='left', padx=5)
-        ToolTip(self.clear_rescore_button, 'Clear any custom rescore adjustments from results.')
-        
-        self.results_tree = ttk.Treeview(list_frame, columns=('filename','scene','time','source','score','rescore'), show='headings', selectmode='extended') # changed selectmode to extended to allow for ctrl + click, shift + click
-        for col, width in zip(['filename', 'scene', 'time', 'source', 'score', 'rescore'], [300, 80, 150, 140, 80, 80]):
-            self.results_tree.heading(col, text=col.capitalize(), command=lambda c=col: self.sort_treeview(c))
-            self.results_tree.column(col, width=width, anchor='center' if col not in ('filename', 'source') else 'w')
-        
-        self.results_tree.pack(side='left', fill='both', expand=True)
-        list_scrollbar = ttk.Scrollbar(list_frame, orient='vertical', command=self.results_tree.yview)
-        list_scrollbar.pack(side='right', fill='y')
-        self.results_tree.config(yscrollcommand=list_scrollbar.set)
-        self.results_tree.bind('<<TreeviewSelect>>', self.on_selection_change)
-        self.results_tree.bind('<Double-1>', self.on_result_double_click)
-        self.results_tree.bind('<Button-3>', self.on_results_right_click)
-        
-        paned_window.add(list_frame, weight=1)
+        layout.addWidget(options_group)
 
-        preview_frame = ttk.Frame(paned_window)
+        # ---- Additional Actions ----
+        actions_group = QGroupBox("Additional Actions")
+        actions_layout = QVBoxLayout(actions_group)
+
+        self._load_model_button = QPushButton('Load Model')
+        self._load_model_button.clicked.connect(self.threaded_load_model)
+        actions_layout.addWidget(self._load_model_button)
+
+        cleanup_btn = QPushButton('Cleanup Database')
+        cleanup_btn.clicked.connect(self.cleanup_database)
+        actions_layout.addWidget(cleanup_btn)
+
+        layout.addWidget(actions_group)
+
+        # ---- Info ----
+        info_group = QGroupBox("Info")
+        info_layout = QVBoxLayout(info_group)
+        about_btn = QPushButton('About')
+        about_btn.clicked.connect(self.open_about_dialog)
+        info_layout.addWidget(about_btn)
+        layout.addWidget(info_group)
+
+        # ---- Status ----
+        self._status_label = QLabel('Initializing...')
+        self._status_label.setWordWrap(True)
+        self._status_label.setStyleSheet('padding: 5px;')
+        layout.addWidget(self._status_label)
+
+        layout.addStretch()
+
+    def _get_available_themes(self):
+        return [
+            "dark_teal.xml",
+            "dark_amber.xml",
+            "dark_blue.xml",
+            "dark_cyan.xml",
+            "dark_lightgreen.xml",
+            "dark_pink.xml",
+            "dark_purple.xml",
+            "dark_red.xml",
+            "light_teal.xml",
+            "light_amber.xml",
+            "light_blue.xml",
+            "light_cyan.xml",
+            "light_pink.xml",
+            "light_purple.xml",
+        ]
+
+    # ======================================================================
+    # Right Panel Construction
+    # ======================================================================
+
+    def setup_right_panel(self):
+        layout = QVBoxLayout(self.right_panel)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        right_splitter = QSplitter(Qt.Vertical)
+
+        # ---- Results Section ----
+        results_container = QWidget()
+        results_layout = QVBoxLayout(results_container)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._stats_label = QLabel('No search performed')
+        results_layout.addWidget(self._stats_label)
+
+        rescore_frame = QFrame()
+        rescore_row = QHBoxLayout(rescore_frame)
+        rescore_row.setContentsMargins(0, 0, 0, 0)
+
+        self._rescore_button = QPushButton('Rescore...')
+        self._rescore_button.clicked.connect(self.open_rescore_dialog)
+        self._rescore_button.setEnabled(False)
+        rescore_row.addWidget(self._rescore_button)
+
+        self._clear_rescore_button = QPushButton('Clear Rescore')
+        self._clear_rescore_button.clicked.connect(self.clear_rescore)
+        self._clear_rescore_button.setEnabled(False)
+        rescore_row.addWidget(self._clear_rescore_button)
+
+        rescore_row.addStretch()
+        results_layout.addWidget(rescore_frame)
+
+        self.results_model = SearchResultsModel(self)
+        self.results_proxy = SearchSortProxy(self)
+        self.results_proxy.setSourceModel(self.results_model)
+
+        self._results_table = QTableView()
+        self._results_table.setModel(self.results_proxy)
+        self._results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._results_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._results_table.setSortingEnabled(True)
+        self._results_table.setAlternatingRowColors(True)
+        self._results_table.verticalHeader().hide()
+        self._results_table.horizontalHeader().setStretchLastSection(True)
+        self._results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+
+        self._results_table.selectionModel().selectionChanged.connect(self._on_selection_changed)
+        self._results_table.doubleClicked.connect(self._on_result_double_click)
+
+        self._results_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._results_table.customContextMenuRequested.connect(self._show_context_menu)
+
+        results_layout.addWidget(self._results_table)
+        right_splitter.addWidget(results_container)
+
+        # ---- Preview Section ----
+        preview_container = QWidget()
+        preview_layout = QVBoxLayout(preview_container)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+
         playback_state = 'On' if config.SCENE_PLAYBACK else 'Off'
-        self._playback_toggle_btn = ttk.Button(preview_frame, text=f'Toggle preview playback ({playback_state})', command=self.toggle_preview_playback)
-        self._playback_toggle_btn.pack(fill='x', pady=(0,5))
-        ToolTip(self._playback_toggle_btn, 'Toggle video preview playback on or off for selected results.')
-        
-        self.preview_image_canvas = tk.Canvas(preview_frame, bg='gray')
-        self.preview_image_canvas.pack(fill='both', expand=True)
+        self._playback_toggle_btn = QPushButton(f'Toggle preview playback ({playback_state})')
+        self._playback_toggle_btn.clicked.connect(self.toggle_preview_playback)
+        preview_layout.addWidget(self._playback_toggle_btn)
 
-        self.preview_image_canvas.bind('<Button-1>', self.on_canvas_click)
-        self.preview_image_canvas.bind('<B1-Motion>', self.on_canvas_drag)
-        self.preview_image_canvas.bind('<MouseWheel>', self.on_canvas_zoom)
-        self.preview_image_canvas.bind('<Double-1>', self.on_canvas_double_click)
-        self.preview_image_canvas.bind('<Button-3>', self.on_canvas_right_click)
+        self._preview_stack = QStackedWidget()
 
-        self.video_container = ttk.Frame(self.preview_image_canvas)
-        self.video_container.pack(fill='both', expand=True)
+        # Page 0: Static image preview
+        self._preview_scroll = QScrollArea()
+        self._preview_scroll.setWidgetResizable(True)
+        self._preview_scroll.setFrameShape(QFrame.NoFrame)
+        self._preview_image_label = QLabel()
+        self._preview_image_label.setAlignment(Qt.AlignCenter)
+        self._preview_image_label.setStyleSheet("background-color: #555;")
+        self._preview_scroll.setWidget(self._preview_image_label)
+        self._preview_stack.addWidget(self._preview_scroll)
 
-        self.export_btn = ttk.Button(preview_frame, text='Export Scene...', state='disabled', command=self.open_export_dialog)
-        self.export_btn.pack(fill='x', padx=5, pady=(5, 0))
-        ToolTip(self.export_btn, 'Export the selected scene as a video file.')
+        # Page 1: VLC video container
+        self._video_container = QFrame()
+        self._video_container.setStyleSheet("background-color: black;")
+        self._preview_stack.addWidget(self._video_container)
 
-        self.thumb_outer_frame = ttk.Frame(preview_frame, height=330) 
-        self.thumb_outer_frame.pack(fill='x', side='bottom', pady=(5,0))
-        self.thumb_outer_frame.pack_propagate(False)
+        self._preview_stack.setCurrentIndex(0)
+        self._preview_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Scrollable canvas for the vertical strip
-        self.thumb_canvas = tk.Canvas(self.thumb_outer_frame, height=300, highlightthickness=0)
-        self.thumb_scrollbar = ttk.Scrollbar(self.thumb_outer_frame, orient='horizontal', command=self.thumb_canvas.xview)
-        
-        self.thumb_canvas.configure(xscrollcommand=self.thumb_scrollbar.set)
+        # ---- Horizontal Splitter: Preview | Thumbnails ----
+        media_splitter = QSplitter(Qt.Horizontal)
+        media_splitter.addWidget(self._preview_stack)
 
-        self.thumb_inner_frame = ttk.Frame(self.thumb_canvas)
-        self.thumb_canvas.create_window((0, 0), window=self.thumb_inner_frame, anchor='nw')
+        self._thumb_list = QListWidget()
+        self._thumb_list.setViewMode(QListWidget.IconMode)
+        self._thumb_list.setResizeMode(QListWidget.Adjust)
+        self._thumb_list.setFlow(QListWidget.LeftToRight)
+        self._thumb_list.setWordWrap(True)
+        self._thumb_list.setIconSize(QSize(120, 68))
+        self._thumb_list.setSpacing(4)
+        self._thumb_list.setFrameShape(QFrame.NoFrame)
+        self._thumb_list.itemClicked.connect(self._on_thumbnail_click)
+        self._thumb_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        media_splitter.addWidget(self._thumb_list)
 
-        # Auto-update the scroll region when thumbnails are added
-        self.thumb_inner_frame.bind('<Configure>', lambda e: self.thumb_canvas.configure(scrollregion=self.thumb_canvas.bbox('all')))
-        
-        self.thumb_canvas.pack(side='top', fill='x', expand=True)
-        self.thumb_scrollbar.pack(side='bottom', fill='x')
+        media_splitter.setSizes([400, 400])
+        preview_layout.addWidget(media_splitter)
 
-        def _on_thumb_mousewheel(event):
-            # Scrolls horizontally since the thumbnail bar is horizontal
-            # Prevent scrolling if the event originates from a popup window
-            if hasattr(event.widget, 'winfo_toplevel') and event.widget.winfo_toplevel() == self:
-                self.thumb_canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+        self._export_btn = QPushButton('Export Scene...')
+        self._export_btn.setEnabled(False)
+        self._export_btn.clicked.connect(self.open_export_dialog)
+        preview_layout.addWidget(self._export_btn)
 
-        self.thumb_canvas.bind('<Enter>', lambda e: self.thumb_canvas.bind_all("<MouseWheel>", _on_thumb_mousewheel))
-        self.thumb_canvas.bind('<Leave>', lambda e: self.thumb_canvas.unbind_all("<MouseWheel>"))
-        
-        # Persistent storage to prevent Python's garbage collector from deleting the images
-        self.thumbnail_references = []
-        self.thumbnail_widgets = {}
+        right_splitter.addWidget(preview_container)
+        right_splitter.setSizes([400, 400])
 
-        paned_window.add(preview_frame, weight=1)
+        layout.addWidget(right_splitter)
+
+    # ======================================================================
+    # Drop zone callback
+    # ======================================================================
+
+    def _on_dropzone_drop(self, paths):
+        if not paths:
+            self.browse_files_dialog()
+            return
+        self._add_paths_to_queue(paths)
+
+    # ======================================================================
+    # Database section update
+    # ======================================================================
 
     def _update_db_section(self):
         if self.primary_db:
             target_name = os.path.basename(self.primary_db)
-            self.db_target_label.config(text=f'\u2605 {target_name}')
+            self._db_target_label.setText(f'\u2605 {target_name}')
+            self._statusbar_db_label.setText(f'DB: {target_name}')
         else:
-            self.db_target_label.config(text='No target database set')
-        
+            self._db_target_label.setText('No target database set')
+            self._statusbar_db_label.setText('DB: none')
+
         search_count = len(self.active_databases)
         if search_count > 0:
             extra = search_count - 1 if self.primary_db in self.active_databases else search_count
             if extra > 0:
-                self.db_search_label.config(text=f'+ {extra} additional search database(s)')
+                self._db_search_label.setText(f'+ {extra} additional search database(s)')
             else:
-                self.db_search_label.config(text='')
+                self._db_search_label.setText('')
         else:
-            self.db_search_label.config(text='')
+            self._db_search_label.setText('')
+
+    # ======================================================================
+    # Worker thread management
+    # ======================================================================
+
+    def _connect_worker(self, worker, bridge: SignalBridge):
+        from PySide6.QtCore import Qt as QtCoreEnum
+        q = QtCoreEnum.QueuedConnection
+        worker.signals.status_updated.connect(bridge.relay_status, type=q)
+        worker.signals.progress_updated.connect(bridge.relay_progress, type=q)
+        worker.signals.finished.connect(bridge.relay_finished, type=q)
+        worker.signals.error.connect(bridge.relay_error, type=q)
+
+    def _run_worker(self, worker, bridge: SignalBridge):
+        if not getattr(self, 'is_active', True):
+            return
+        self._connect_worker(worker, bridge)
+        self._current_worker = worker
+        worker.start()
+
+    # ======================================================================
+    # Status updates
+    # ======================================================================
+
+    @Slot(str)
+    def update_status(self, message: str):
+        if hasattr(self, '_status_label') and self._status_label:
+            self._status_label.setText(message)
+        if hasattr(self, 'statusBar'):
+            self.statusBar().showMessage(message, 5000)
+
+    def force_update_status(self, message: str):
+        self.update_status(message)
+        QApplication.processEvents()
+
+    # ======================================================================
+    # Config / database persistence
+    # ======================================================================
+
+    def save_config_key(self, key, value):
+        self.config[key] = value
+        config.save_config(self.config)
+
+    def save_trt_preference(self, checked: bool):
+        self.config['use_trt'] = checked
+        config.save_config(self.config)
+
+    def save_db_config(self):
+        self.config['active_databases'] = self.active_databases
+        self.config['primary_database'] = self.primary_db if self.primary_db else ''
+        config.save_config(self.config)
+
+    def _on_device_changed(self, device: str):
+        self.device_choice = device
+        self.save_config_key('device', device)
+        self._update_standby_ui_state()
+
+    def _on_detect_method_changed(self, fast_mode: bool):
+        self.save_config_key('fast_detect', fast_mode)
 
     def _add_databases(self, paths):
         added = []
@@ -573,7 +831,7 @@ class SceneScoutApp(TkinterDnD.Tk):
             abs_path = str(Path(path).resolve())
             if abs_path not in self.active_databases:
                 self.active_databases.append(abs_path)
-                init_db(abs_path, self.handle_migration_callback) 
+                init_db(abs_path, self.handle_migration_callback)
                 added.append(abs_path)
         if added:
             if not self.primary_db:
@@ -582,468 +840,16 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.save_db_config()
             self._update_button_states()
             self.update_status(f'Added {len(added)} database(s).')
-            if self.db_manager_dlg and self.db_manager_dlg.winfo_exists():
+            if self.db_manager_dlg and hasattr(self.db_manager_dlg, 'isVisible') and self.db_manager_dlg.isVisible():
                 self.db_manager_dlg.refresh()
         self.verify_database_paths()
 
-    def save_db_config(self):
-        self.config['active_databases'] = self.active_databases
-        self.config['primary_database'] = self.primary_db if self.primary_db else ''
-        config.save_config(self.config)
-
-    def open_db_manager(self):
-        from database import get_db_stats
-        
-        dlg = tk.Toplevel(self)
-        self.db_manager_dlg = dlg
-        gui_utils.apply_window_icon(dlg, self.app_icon)
-        dlg.title('Database Manager')
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.minsize(700, 450)
-        gui_utils.center_window(dlg, 700, 450)
-
-        main_frame = ttk.Frame(dlg, padding=10)
-        main_frame.pack(fill='both', expand=True)
-
-        tree_frame = ttk.Frame(main_frame)
-        tree_frame.pack(fill='both', expand=True, pady=(0, 10))
-
-        columns = ('target', 'name', 'path', 'scenes', 'videos', 'images')
-        tree = ttk.Treeview(tree_frame, columns=columns, show='headings',
-                           selectmode='extended', height=10)
-        tree.heading('target', text='')
-        tree.heading('name', text='Name')
-        tree.heading('path', text='Path')
-        tree.heading('scenes', text='Scenes')
-        tree.heading('videos', text='Videos')
-        tree.heading('images', text='Images')
-
-        tree.column('target', width=30, anchor='center')
-        tree.column('name', width=160, anchor='w')
-        tree.column('path', width=300, anchor='w')
-        tree.column('scenes', width=60, anchor='center')
-        tree.column('videos', width=60, anchor='center')
-        tree.column('images', width=60, anchor='center')
-
-        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tree.xview)
-        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        tree.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
-        tree_frame.grid_rowconfigure(0, weight=1)
-        tree_frame.grid_columnconfigure(0, weight=1)
-
-        item_to_db = {}
-
-        def refresh_tree():
-            for item in tree.get_children():
-                tree.delete(item)
-            item_to_db.clear()
-            total_scenes = 0
-            for db_path in self.active_databases:
-                stats = get_db_stats(db_path)
-                total_scenes += stats['scene_count']
-                marker = '\u2605' if db_path == self.primary_db else ''
-                iid = tree.insert('', 'end', values=(
-                    marker,
-                    os.path.basename(db_path),
-                    db_path,
-                    stats['scene_count'],
-                    stats['video_count'],
-                    stats['image_count']
-                ))
-                item_to_db[iid] = db_path
-            update_status(total_scenes)
-
-        dlg.refresh = refresh_tree
-
-        def update_status(total_scenes=0):
-            count = len(self.active_databases)
-            text = f'{count} database(s) | {total_scenes:,} scenes total'
-            status_var.set(text)
-
-        status_var = tk.StringVar(master=dlg)
-        ttk.Label(main_frame, textvariable=status_var, font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0, 5))
-
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill='x', pady=5)
-
-        def add_existing():
-            paths = filedialog.askopenfilenames(title='Select Database Files', filetypes=[('SQLite Database', '*.db')])
-            if paths:
-                self._add_databases(paths)
-                refresh_tree()
-
-        def create_new():
-            path = filedialog.asksaveasfilename(title='Create New Database', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
-            if path:
-                abs_path = str(Path(path).resolve())
-                init_db(abs_path, self.handle_migration_callback)
-                self.active_databases.append(abs_path)
-                if not self.primary_db:
-                    self.primary_db = abs_path
-                self.save_db_config()
-                refresh_tree()
-
-        def set_target():
-            sel = tree.selection()
-            if not sel:
-                messagebox.showwarning('Warning', 'No database selected.')
-                return
-            db_path = item_to_db.get(sel[0])
-            if db_path:
-                self.primary_db = db_path
-                self.save_db_config()
-                refresh_tree()
-                self._update_db_section()
-                self._update_button_states()
-                self.update_queue_status()
-
-        def remove_selected():
-            selected_items = tree.selection()
-            if not selected_items:
-                messagebox.showwarning('Warning', 'No database selected.')
-                return
-            
-            current_idx = tree.index(selected_items[0])
-            
-            if messagebox.askyesno('Confirm', f'Remove {len(selected_items)} selected database(s)?'):
-                for item in selected_items:
-                    db_path = item_to_db.get(item)
-                    if db_path:
-                        if db_path in self.active_databases:
-                            self.active_databases.remove(db_path)
-                        if self.primary_db == db_path:
-                            self.primary_db = self.active_databases[0] if self.active_databases else None
-                
-                self.save_db_config()
-                refresh_tree()
-                
-                children = tree.get_children()
-                if children:
-                    new_idx = min(current_idx, len(children) - 1)
-                    tree.selection_set(children[new_idx])
-                    tree.focus(children[new_idx])
-                    tree.see(children[new_idx])
-                
-                self._update_db_section()
-                self._update_button_states()
-                self.update_queue_status()
-
-        add_existing_btn = ttk.Button(btn_frame, text='Add Existing...', command=add_existing)
-        add_existing_btn.pack(side='left', padx=(0, 5))
-        ToolTip(add_existing_btn, 'Add existing Scene Scout database (.db) files to the search list.')
-        
-        create_new_btn = ttk.Button(btn_frame, text='Create New...', command=create_new)
-        create_new_btn.pack(side='left', padx=5)
-        ToolTip(create_new_btn, 'Create a new empty database and add it to the list.')
-        
-        set_target_btn = ttk.Button(btn_frame, text='Set Target', command=set_target)
-        set_target_btn.pack(side='left', padx=5)
-        ToolTip(set_target_btn, 'Set the selected database as the indexing/queue target.')
-        
-        remove_btn = ttk.Button(btn_frame, text='Remove', command=remove_selected)
-        remove_btn.pack(side='left', padx=5)
-        ToolTip(remove_btn, 'Remove the selected database from the search list.')
-        
-        def combine_all_databases():
-            if not self.active_databases:
-                messagebox.showwarning('Warning', 'No active databases to combine.')
-                return
-            
-            out_path = filedialog.asksaveasfilename(
-                title='Save Combined Database', 
-                filetypes=[('SQLite Database', '*.db')], 
-                defaultextension='.db'
-            )
-            
-            if out_path:
-                dlg.destroy()
-                self.threaded_task(self._combine_task, out_path)
-
-        combine_btn = ttk.Button(btn_frame, text='Combine All...', command=combine_all_databases)
-        combine_btn.pack(side='left', padx=5)
-        ToolTip(combine_btn, 'Merge all databases in the list into a single new file.')
-        
-        refresh_btn = ttk.Button(btn_frame, text='Refresh', command=refresh_tree)
-        refresh_btn.pack(side='left', padx=5)
-        ToolTip(refresh_btn, 'Re-query all databases for updated scene/video/image counts.')
-
-        def on_double_click(event):
-            item = tree.identify_row(event.y)
-            if item:
-                db_path = item_to_db.get(item)
-                if db_path:
-                    self.primary_db = db_path
-                    self.save_db_config()
-                    refresh_tree()
-                    self._update_db_section()
-                    self._update_button_states()
-                    self.update_queue_status()
-
-        tree.bind('<Double-1>', on_double_click)
-
-        def show_context_menu(event):
-            item = tree.identify_row(event.y)
-            if not item:
-                return
-            if item not in tree.selection():
-                tree.selection_set(item)
-            menu = tk.Menu(tree, tearoff=0)
-            menu.add_command(label='Set as Target', command=set_target)
-            menu.add_separator()
-            menu.add_command(label=f'Remove ({len(tree.selection())})', command=remove_selected)
-            menu.post(event.x_root, event.y_root)
-
-        tree.bind('<Button-3>', show_context_menu)
-
-        dlg.bind('<Delete>', lambda e: remove_selected())
-
-        refresh_tree()
-
-        ttk.Button(main_frame, text='Close', command=dlg.destroy).pack(pady=(10, 0))
-
-        def on_destroy():
-            self.db_manager_dlg = None
-            dlg.destroy()
-
-        dlg.protocol('WM_DELETE_WINDOW', on_destroy)
-
-    def _update_button_states(self):
-        has_search_dbs = len(self.active_databases) > 0
-        has_target = self.primary_db is not None
-        model_loaded = self.model is not None
-        
-        if hasattr(self, 'search_button'):
-            self.search_button.config(state='normal' if (has_search_dbs and model_loaded) else 'disabled')
-        if hasattr(self, 'index_button'):
-            self.index_button.config(state='normal' if has_target else 'disabled')
-        if hasattr(self, 'load_model_button'):
-            self.load_model_button.config(state='normal')
-        if hasattr(self, 'rescore_button'):
-            self.rescore_button.config(state='disabled')
-        if hasattr(self, 'clear_rescore_button'):
-            self.clear_rescore_button.config(state='disabled')
-        if hasattr(self, 'query_text_entry'):
-            self.query_text_entry.config(state='normal' if (has_search_dbs and model_loaded) else 'disabled')
-
-    def _on_closing(self):
-        """Cleanup resources before destroying the window."""
-        self.is_active = False
-        if self._idle_after_id:
-            self.after_cancel(self._idle_after_id)
-        self._stop_video_loop()
-        self.destroy()
-
-    def on_handle_drop(self, event):
-        paths = self.tk.splitlist(event.data)
-        if not paths:
-            return
-        
-        db_paths = [p for p in paths if p.lower().endswith('.db')]
-        if db_paths:
-            self._add_databases(db_paths)
-        
-        for path in paths:
-            if path.lower().endswith(config.IMAGE_EXTENSIONS):
-                self.query_image_path = path
-                self.query_image_var.set(os.path.basename(path))
-                self.update_status(f"Query image set via drop: {os.path.basename(path)}")
-                break
-        
-        media_paths = [p for p in paths if not p.lower().endswith('.db') and 
-                        (os.path.isdir(p) or p.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS))]
-        if media_paths:
-            self._add_paths_to_queue(media_paths)
-
-    def threaded_task(self, target_func: Callable, *args):
-        # Only spawn a thread if GUI is actively running
-        if getattr(self, 'is_active', True):
-            thread = threading.Thread(target=target_func, args=args, daemon=True)
-            thread.start()
-
-    def verify_database_paths(self):
-        self.threaded_task(self._verify_paths_task)
-
-    def _verify_paths_task(self):
-        from database import get_all_processed_videos
-
-        missing_files = []
-        for db_path in self.active_databases:
-            videos = get_all_processed_videos(db_path)
-            for video_id, filepath in videos:
-                if not os.path.exists(filepath):
-                    missing_files.append((db_path, video_id, filepath))
-
-        if missing_files:
-            self.after(0, lambda: self.show_missing_files_dialog(missing_files))
-
-    def show_missing_files_dialog(self, missing_files: list):
-        if hasattr(self, 'missing_files_dlg') and self.missing_files_dlg and self.missing_files_dlg.winfo_exists():
-            return
-
-        dlg = tk.Toplevel(self)
-        self.missing_files_dlg = dlg
-        gui_utils.apply_window_icon(dlg, self.app_icon)
-        dlg.title("Missing Files Detected")
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.minsize(750, 400)
-        gui_utils.center_window(dlg, 750, 400)
-
-        main_frame = ttk.Frame(dlg, padding=15)
-        main_frame.pack(fill='both', expand=True)
-
-        ttk.Label(main_frame, text=f"Found {len(missing_files)} missing video file(s). They may have been moved, renamed, or deleted on your drive.", font=('', 10)).pack(anchor='w', pady=(0, 10))
-
-        tree_frame = ttk.Frame(main_frame)
-        tree_frame.pack(fill='both', expand=True, pady=(0, 10))
-
-        columns = ('db', 'filename', 'path')
-        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', selectmode='extended')
-        tree.heading('db', text='Database')
-        tree.heading('filename', text='File Name')
-        tree.heading('path', text='Missing Path')
-
-        tree.column('db', width=120, anchor='w')
-        tree.column('filename', width=200, anchor='w')
-        tree.column('path', width=400, anchor='w')
-
-        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tree.xview)
-        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        tree.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
-        tree_frame.grid_rowconfigure(0, weight=1)
-        tree_frame.grid_columnconfigure(0, weight=1)
-
-        item_data_map = {}
-
-        for db_path, video_id, filepath in missing_files:
-            iid = tree.insert('', 'end', values=(os.path.basename(db_path), os.path.basename(filepath), filepath))
-            item_data_map[iid] = (db_path, video_id)
-
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill='x')
-
-        def locate_selected():
-            selected = tree.selection()
-            if not selected:
-                messagebox.showwarning("Notice", "Please select a file to locate.")
-                return
-
-            from database import update_video_filepath
-            import config
-
-            for iid in selected:
-                db_path, video_id = item_data_map[iid]
-                old_path = tree.item(iid)['values'][2]
-
-                new_path = filedialog.askopenfilename(
-                    parent=dlg,
-                    title=f"Locate: {os.path.basename(old_path)}",
-                    filetypes=[('Video Files', ' '.join(f'*{ext}' for ext in config.VIDEO_EXTENSIONS))]
-                )
-
-                if new_path:
-                    success = update_video_filepath(db_path, video_id, new_path)
-                    if success:
-                        tree.delete(iid)
-                        del item_data_map[iid]
-                    else:
-                        messagebox.showerror("Conflict", f"The path '{new_path}' is already indexed in this database. Please remove this orphaned entry instead.")
-
-            if not tree.get_children():
-                dlg.destroy()
-
-        def remove_selected():
-            selected = tree.selection()
-            if not selected:
-                messagebox.showwarning("Notice", "Please select an entry to remove.")
-                return
-
-            if not messagebox.askyesno("Confirm", "Remove the selected entries and all their associated scene data? This cannot be undone."):
-                return
-
-            from database import delete_video_record
-
-            for iid in selected:
-                db_path, video_id = item_data_map[iid]
-                if delete_video_record(db_path, video_id):
-                    tree.delete(iid)
-                    del item_data_map[iid]
-
-            if self.search_results:
-                self.search_results.clear()
-                self._update_listview()
-                self.stats_label.config(text="Search cleared due to database modifications.")
-
-            if not tree.get_children():
-                dlg.destroy()
-
-        locate_btn = ttk.Button(btn_frame, text="Locate Selected...", command=locate_selected)
-        locate_btn.pack(side='left', padx=(0, 5))
-        gui_utils.ToolTip(locate_btn, "Browse your computer to reconnect the selected entry to its new file location.")
-
-        remove_btn = ttk.Button(btn_frame, text="Remove Selected", command=remove_selected)
-        remove_btn.pack(side='left', padx=5)
-        gui_utils.ToolTip(remove_btn, "Permanently delete the video entry and its scenes from the database.")
-
-        close_btn = ttk.Button(btn_frame, text="Ignore", command=dlg.destroy)
-        close_btn.pack(side='right')
-
-    def set_controls_enabled(self, enabled: bool):
-        state = 'normal' if enabled else 'disabled'
-        for name in ['load_model_button', 'index_button', 'search_button', 'rescore_button', 'clear_rescore_button', 'query_text_entry']:
-            widget = getattr(self, name, None)
-            if widget:
-                try:
-                    widget.config(state=state)
-                except Exception:
-                    pass
-    
-    def save_config_key(self, key, value):
-        """Updates internal config and persists to disk."""
-        self.config[key] = value
-        config.save_config(self.config)
-
-    def save_trt_preference(self):
-        """Save the TensorRT preference to the GUI config file."""
-        self.config['use_trt'] = self.use_trt_var.get()
-        config.save_config(self.config)
-
-    def update_status(self, message: str):
-        """Thread-safe wrapper to schedule UI updates on the main thread."""
-        self.after(0, self._update_status_ui, message)
-
-    def _update_status_ui(self, message: str):
-        """Actual UI update logic that runs safely on the main loop."""
-        self.status_var.set(message)
-        if self.splash_ref and self.splash_ref.winfo_exists():
-            if hasattr(self.splash_ref, 'status_label'):
-                try:
-                    self.splash_ref.status_label.config(text=message)
-                    self.splash_ref.update()
-                except (tk.TclError, AttributeError):
-                    pass
-        self.update_idletasks()
-
-    def force_update_status(self, message: str):
-        """Forces an immediate UI redraw before a blocking operation (like DB migrations)."""
-        self._update_status_ui(message)
-        self.update() # Force Tkinter to process all pending draw events instantly
-
     def load_saved_paths(self):
-        from database import add_to_queue, queue_count
-        
+        from database import queue_count
+
         active_dbs = self.config.get('active_databases', [])
         saved_primary = self.config.get('primary_database', '')
-        
+
         valid_dbs = []
         missing_count = 0
         for db_path in active_dbs:
@@ -1053,52 +859,49 @@ class SceneScoutApp(TkinterDnD.Tk):
                     valid_dbs.append(abs_path)
             else:
                 missing_count += 1
-        
+
         self.active_databases = valid_dbs
-        
+
         if saved_primary and saved_primary in valid_dbs:
             self.primary_db = saved_primary
         elif valid_dbs:
             self.primary_db = valid_dbs[0]
         else:
             self.primary_db = None
-        
+
         if missing_count > 0:
             self.update_status(f'{missing_count} database(s) not found and removed from list.')
         elif valid_dbs:
             primary_name = os.path.basename(self.primary_db) if self.primary_db else 'None'
             self.update_status(f'Loaded {len(valid_dbs)} database(s). Target: {primary_name}')
-        
+
         for db_path in self.active_databases:
             init_db(db_path, self.handle_migration_callback)
-        
+
         self._update_db_section()
         self.update_queue_status()
         self._update_button_states()
         self.verify_database_paths()
 
     def update_queue_status(self):
-        if not self.primary_db:
-            self.queue_status_var.set('[0] items in queue (no target database)')
-            self.index_button.config(state='disabled')
-            return
         from database import queue_count
-        count = queue_count(self.primary_db)
-        self.queue_status_var.set(f'[{count}] items in queue')
-        self.index_button.config(state='normal' if count > 0 else 'disabled')
-
-    def on_queue_drop(self, event):
-        """Handle drops on the dedicated drag-and-drop area."""
-        paths = self.tk.splitlist(event.data)
-        if not paths:
+        if not self.primary_db:
+            status_text = '[0] items in queue (no target database)'
+            if hasattr(self, '_queue_status_label') and self._queue_status_label:
+                self._queue_status_label.setText(status_text)
+            self._index_button.setEnabled(False)
             return
-        self._add_paths_to_queue(paths)
+        count = queue_count(self.primary_db)
+        status_text = f'[{count}] items in queue'
+        if hasattr(self, '_queue_status_label') and self._queue_status_label:
+            self._queue_status_label.setText(status_text)
+        self._index_button.setEnabled(count > 0)
 
     def _add_paths_to_queue(self, paths):
         if not self.primary_db:
-            messagebox.showerror('Error', 'Please select a target database first.')
+            QMessageBox.critical(self, 'Error', 'Please select a target database first.')
             return
-        from database import add_to_queue, queue_count
+        from database import add_to_queue
         added = 0
         for path in paths:
             if os.path.exists(path) and not path.lower().endswith('.db'):
@@ -1110,255 +913,272 @@ class SceneScoutApp(TkinterDnD.Tk):
         if added > 0:
             self.update_queue_status()
             self.update_status(f'Added {added} item(s) to queue.')
-            if self.queue_manager_dlg and self.queue_manager_dlg.winfo_exists():
+            if self.queue_manager_dlg and hasattr(self.queue_manager_dlg, 'isVisible') and self.queue_manager_dlg.isVisible():
                 self.queue_manager_dlg.refresh()
         elif paths:
             self.update_status('No valid media files or directories dropped.')
 
-    def browse_files_dialog(self):
-        if not self.primary_db:
-            messagebox.showerror('Error', 'Please select a target database first.')
-            return
-        path = filedialog.askopenfilename(
-            title='Select Media Files',
-            filetypes=[('Media Files', ' '.join(f'*{ext}' for ext in config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS))],
-            multiple=True
+    # ======================================================================
+    # Button state management
+    # ======================================================================
+
+    def set_controls_enabled(self, enabled: bool):
+        if hasattr(self, '_load_model_button'):
+            self._load_model_button.setEnabled(enabled)
+        if hasattr(self, '_device_combobox'):
+            self._device_combobox.setEnabled(enabled)
+        if hasattr(self, '_theme_combobox'):
+            self._theme_combobox.setEnabled(enabled)
+        if hasattr(self, '_standby_check'):
+            self._standby_check.setEnabled(enabled and self.device_choice != 'cpu')
+        self._update_button_states()
+
+    def _update_button_states(self):
+        has_search_dbs = len(self.active_databases) > 0
+        has_target = self.primary_db is not None
+        model_loaded = self.model is not None
+
+        if hasattr(self, '_search_button') and self._search_button:
+            self._search_button.setEnabled(has_search_dbs and model_loaded)
+        if hasattr(self, '_index_button') and self._index_button:
+            self._index_button.setEnabled(has_target)
+        if hasattr(self, '_query_text_edit') and self._query_text_edit:
+            self._query_text_edit.setEnabled(has_search_dbs and model_loaded)
+
+    # ======================================================================
+    # Model loading
+    # ======================================================================
+
+    def load_model(self, device_choice=None, use_trt=None):
+        if device_choice is None:
+            device_choice = self.device_choice
+        if use_trt is None:
+            use_trt = self.config.get('use_trt', False)
+
+        self.model, self.processor, self.device, self.dtype, self._last_active_device = load_siglip_model(
+            device_choice,
+            status_callback=self.update_status,
+            use_trt=use_trt,
         )
-        if path:
-            self._add_paths_to_queue(path)
 
-    def add_folder_to_queue(self):
+    def threaded_load_model(self):
+        self.update_status(f'Loading model: {config.DEFAULT_MODEL}...')
+
+        bridge = self._active_bridge = SignalBridge()
+        bridge.set_callbacks(
+            status=self.update_status,
+            finished=lambda result: self._on_model_worker_done(result),
+            error=lambda msg: (
+                QMessageBox.critical(self, 'Model Error', msg),
+                self.update_status('Error loading model.'),
+            ),
+        )
+        worker = ModelLoadWorker(self.device_choice, self.config.get('use_trt', False))
+        self._run_worker(worker, bridge)
+
+    def _on_model_worker_done(self, result):
+        model, processor, device, dtype, last_active = result
+        self.model = model
+        self.processor = processor
+        self.device = device
+        self._last_active_device = last_active
+        self.on_model_load_finished()
+
+    def on_model_load_finished(self):
+        self._is_background_task_running = False
+        if hasattr(self, '_last_active_device'):
+            self.device_choice = self._last_active_device
+        self.update_status(f'Model loaded on {str(self.device).upper()}. Ready!')
+        self.set_controls_enabled(True)
+        if hasattr(self, '_load_model_button') and self._load_model_button:
+            self._load_model_button.setText('Reload Model')
+
+    # ======================================================================
+    # Indexing
+    # ======================================================================
+
+    def threaded_index(self):
         if not self.primary_db:
-            messagebox.showerror('Error', 'Please select a target database first.')
+            QMessageBox.critical(self, 'Error', 'Please select a target database first.')
             return
-        path = filedialog.askdirectory(title='Select Folder to Add to Queue')
-        if path:
-            self._add_paths_to_queue([path])
-
-    def add_files_to_queue(self):
-        """Add individual files to the index queue."""
-        self.browse_files_dialog()
-
-    def open_queue_manager(self):
-        if not self.primary_db:
-            messagebox.showerror('Error', 'Please select a target database first.')
+        from database import queue_count
+        if queue_count(self.primary_db) == 0:
+            QMessageBox.critical(self, 'Error', 'Please add files or folders to the queue before indexing.')
             return
+        self._is_background_task_running = True
+        self.ensure_model_active()
+        self._stop_video_loop()
 
-        from database import get_queue, remove_from_queue, clear_queue, update_queue_recursive, queue_count
+        self._index_dialog = IndexProgressDialog(self)
+        self._index_dialog.cancel_btn.clicked.connect(self.cancel_indexing)
+        self._index_dialog.show()
 
-        dlg = tk.Toplevel(self)
-        self.queue_manager_dlg = dlg
-        gui_utils.apply_window_icon(dlg, self.app_icon)
-        dlg.title('Queue Manager')
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.minsize(900, 500)
+        bridge = self._active_bridge = SignalBridge()
+        bridge.set_callbacks(
+            progress=self._update_index_progress,
+            finished=lambda result: self._on_index_finished(result),
+            error=lambda msg: (
+                self._index_dialog.close(),
+                QMessageBox.critical(self, 'Indexing Error', msg),
+                print('Indexing Error', msg),
+            ),
+        )
+        worker = IndexWorker(
+            self.device, self.processor, self.model, self.primary_db,
+            batch_size=self.config.get('batch_size', 16),
+            generate_thumbnails=self.config.get('generate_thumbnails', True),
+            max_num_patches=self.config.get('max_patches', 256),
+            fast_scene_detect=self.config.get('fast_detect', True),
+        )
+        self._index_worker = worker
+        self._run_worker(worker, bridge)
+        self.update_status('Indexing in progress...')
 
-        # Center window
-        gui_utils.center_window(dlg, 900, 500)
+    def cancel_indexing(self):
+        if hasattr(self, '_index_worker') and self._index_worker and self._index_worker.isRunning():
+            self._index_worker.requestInterruption()
+        if hasattr(self, '_index_dialog') and self._index_dialog:
+            self._index_dialog.status_label.setText('Cancelling...')
+            self._index_dialog.cancel_btn.setEnabled(False)
 
-        main_frame = ttk.Frame(dlg, padding=10)
-        main_frame.pack(fill='both', expand=True)
+    def _update_index_progress(self, data):
+        if not hasattr(self, '_index_dialog') or not self._index_dialog:
+            return
+        if isinstance(data, dict):
+            curr = data.get('current', 0)
+            total = data.get('total', 0)
+            fname = data.get('file', 'Initializing...')
+            self._index_dialog.progress_bar.setMaximum(total)
+            self._index_dialog.progress_bar.setValue(curr)
+            self._index_dialog.file_label.setText(f'Current file: {fname}')
+            self._index_dialog.count_label.setText(f'{curr} / {total}')
+            if curr > 0:
+                self._index_dialog.status_label.setText('Processing Media...')
+        elif isinstance(data, str):
+            self._index_dialog.status_label.setText(data)
 
-        tree_frame = ttk.Frame(main_frame)
-        tree_frame.pack(fill='both', expand=True, pady=(0, 10))
-
-        columns = ('type', 'name', 'path', 'recursive')
-        tree = ttk.Treeview(tree_frame, columns=columns, show='headings', 
-                           selectmode='extended', height=15)
-        tree.heading('type', text='Type')
-        tree.heading('name', text='Name')
-        tree.heading('path', text='Full Path')
-        tree.heading('recursive', text='Recursive')
-    
-        tree.column('type', width=60, anchor='center')
-        tree.column('name', width=150, anchor='w')
-        tree.column('path', width=350, anchor='w')
-        tree.column('recursive', width=70, anchor='center')
-
-        vsb = ttk.Scrollbar(tree_frame, orient='vertical', command=tree.yview)
-        hsb = ttk.Scrollbar(tree_frame, orient='horizontal', command=tree.xview)
-        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        tree.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        hsb.grid(row=1, column=0, sticky='ew')
-        tree_frame.grid_rowconfigure(0, weight=1)
-        tree_frame.grid_columnconfigure(0, weight=1)
-
-        item_to_queue_id = {}
-
-        def refresh_tree():
-            for item in tree.get_children():
-                tree.delete(item)
-            item_to_queue_id.clear()
-            queue_items = get_queue(self.primary_db)
-            missing_count = 0
-            for qid, path, is_directory, recursive in queue_items:
-                item_type = 'Folder' if is_directory else 'File'
-                name = os.path.basename(path) or path
-                if is_directory:
-                    rec_text = 'Yes' if recursive else 'No'
-                else:
-                    rec_text = '-'
-                exists = os.path.exists(path)
-                if not exists:
-                    name = f'[MISSING] {name}'
-                    missing_count += 1
-                iid = tree.insert('', 'end', values=(item_type, name, path, rec_text),
-                                  tags=('missing' if not exists else ''))
-                item_to_queue_id[iid] = qid
-            tree.tag_configure('missing', foreground='gray')
-            update_status_label(missing_count)
-
-        dlg.refresh = refresh_tree
-
-        def update_status_label(missing=0):
-            count = queue_count(self.primary_db)
-            text = f'{count} item(s) in queue'
-            if missing > 0:
-                text += f' ({missing} missing)'
-            status_var.set(text)
-
-        status_var = tk.StringVar(master=self)
-        ttk.Label(main_frame, textvariable=status_var, font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0, 5))
-
-        btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill='x', pady=5)
-
-        def remove_selected():
-            selected = tree.selection()
-            if not selected:
-                messagebox.showwarning('Warning', 'No items selected.')
-                return
-            
-            current_idx = tree.index(selected[0])
-
-            if messagebox.askyesno('Confirm', 'Remove %d selected item(s)?' % len(selected)):
-                for iid in selected:
-                    qid = item_to_queue_id.get(iid)
-                    if qid:
-                        remove_from_queue(self.primary_db, qid)
-                refresh_tree()
-                self.update_queue_status()
-                
-                children = tree.get_children()
-                if children:
-                    new_idx = min(current_idx, len(children) - 1)
-                    tree.selection_set(children[new_idx])
-                    tree.focus(children[new_idx])
-                    tree.see(children[new_idx])
-
-        def clear_all():
-            if messagebox.askyesno('Confirm', 'Clear all items from the queue?'):
+    def _on_index_finished(self, result: str = 'completed'):
+        self._is_background_task_running = False
+        if hasattr(self, '_index_dialog') and self._index_dialog:
+            self._index_dialog.close()
+            self._index_dialog = None
+        if result == 'cancelled':
+            self.update_status('Indexing cancelled.')
+            QMessageBox.information(self, 'Cancelled', 'Indexing was cancelled.')
+        else:
+            if self.primary_db:
+                from database import clear_queue
                 clear_queue(self.primary_db)
-                refresh_tree()
                 self.update_queue_status()
+            self.update_status('Indexing complete!')
+            QMessageBox.information(self, 'Complete', 'Indexing has finished.')
+        self._update_button_states()
 
-        def toggle_recursive_for_selected(recursive_val):
-            selected = tree.selection()
-            if not selected:
+    # ======================================================================
+    # Search
+    # ======================================================================
+
+    def threaded_search(self):
+        if not self.active_databases:
+            QMessageBox.critical(self, 'Error', 'Please add at least one database to search.')
+            return
+        assert self.active_databases, "No active databases"
+        if db_is_empty(self.active_databases[0]):
+            all_empty = all(db_is_empty(db) for db in self.active_databases)
+            if all_empty:
+                QMessageBox.warning(self, 'Warning', 'All active databases appear to be empty. Please index files before searching.')
                 return
-            for iid in selected:
-                qid = item_to_queue_id.get(iid)
-                if qid:
-                    values = tree.item(iid)['values']
-                    if values and values[0] == 'Folder':
-                        update_queue_recursive(self.primary_db, qid, recursive_val)
-            refresh_tree()
+        query_text = ''
+        if hasattr(self, '_query_text_edit') and self._query_text_edit:
+            query_text = self._query_text_edit.text()
+        if not query_text and (not self.query_image_path):
+            QMessageBox.warning(self, 'Warning', 'Please enter text or select an image to search.')
+            return
+        self._is_background_task_running = True
+        self.ensure_model_active()
+        self._stop_video_loop()
+        self.update_status('Searching...')
 
-        def clean_missing():
-            selected = [iid for iid in tree.get_children()
-                        if '[MISSING]' in str(tree.item(iid)['values'][1])]
-            if not selected:
-                messagebox.showinfo('Info', 'No missing items in queue.')
-                return
-            if messagebox.askyesno('Confirm', 'Remove %d missing item(s)?' % len(selected)):
-                for iid in selected:
-                    qid = item_to_queue_id.get(iid)
-                    if qid:
-                        remove_from_queue(self.primary_db, qid)
-                refresh_tree()
-                self.update_queue_status()
+        bridge = self._active_bridge = SignalBridge()
+        bridge.set_callbacks(
+            finished=lambda results: self._on_search_finished(results),
+            error=lambda msg: (
+                QMessageBox.critical(self, 'Search Error', msg),
+                print('Search Error', msg),
+            ),
+        )
+        worker = SearchWorker(
+            query_text, self.query_image_path,
+            self.device, self.processor, self.model,
+            self.active_databases, self.config.get('top_k', 20), self.config.get('max_patches', 256),
+        )
+        self._index_worker = worker
+        self._run_worker(worker, bridge)
 
-        remove_btn = ttk.Button(btn_frame, text='Remove Selected', command=remove_selected)
-        remove_btn.pack(side='left', padx=(0, 5))
-        ToolTip(remove_btn, 'Remove selected items from the queue')
+    def _on_search_finished(self, results):
+        self._is_background_task_running = False
+        self.search_results = [
+            (path, score, 'video', None, scene_idx, start_time, end_time, thumb_bytes, source_db)
+            for path, scene_idx, start_time, end_time, thumb_bytes, score, source_db in results
+        ]
+        self._update_listview()
+        self.update_status(f'Found {len(results)} results.')
+        self._rescore_button.setEnabled(len(results) > 0)
 
-        clear_btn = ttk.Button(btn_frame, text='Clear Queue', command=clear_all)
-        clear_btn.pack(side='left', padx=5)
-        ToolTip(clear_btn, 'Remove all items from the queue')
+    # ======================================================================
+    # Rescore
+    # ======================================================================
 
-        clean_btn = ttk.Button(btn_frame, text='Clean Missing', command=clean_missing)
-        clean_btn.pack(side='left', padx=5)
-        ToolTip(clean_btn, 'Remove all items marked as [MISSING] from the queue')
+    def open_rescore_dialog(self):
+        query_text, ok = QInputDialog.getText(self, 'Rescore', 'Enter new text query to rescore results:')
+        if not ok or not query_text:
+            return
+        assert self.primary_db is not None
+        self._is_background_task_running = True
+        self.update_status(f"Rescoring with: '{query_text}'...")
 
-        rec_on_btn = ttk.Button(btn_frame, text='Set Recursive ON',
-                                command=lambda: toggle_recursive_for_selected(True))
-        rec_on_btn.pack(side='left', padx=5)
-        ToolTip(rec_on_btn, 'Enable recursive scanning for selected folders')
+        bridge = self._active_bridge = SignalBridge()
+        bridge.set_callbacks(
+            finished=lambda results: self._on_rescore_finished(results),
+            error=lambda msg: (
+                QMessageBox.critical(self, 'Rescore Error', msg),
+            ),
+        )
+        worker = RescoreWorker(
+            self.search_results, query_text, self.primary_db,
+            self.device, self.processor, self.model,
+        )
+        self._run_worker(worker, bridge)
 
-        rec_off_btn = ttk.Button(btn_frame, text='Set Recursive OFF',
-                                 command=lambda: toggle_recursive_for_selected(False))
-        rec_off_btn.pack(side='left', padx=5)
-        ToolTip(rec_off_btn, 'Disable recursive scanning for selected folders')
+    def _on_rescore_finished(self, updated_results):
+        self._is_background_task_running = False
+        self.search_results = updated_results
+        self._update_listview()
+        self.update_status('Rescore complete.')
+        self._clear_rescore_button.setEnabled(True)
 
-        def show_context_menu(event):
-            item = tree.identify_row(event.y)
-            if not item:
-                return
-            menu = tk.Menu(tree, tearoff=0)
-            selected = tree.selection()
-            if item not in selected:
-                tree.selection_set(item)
-                selected = [item]
-        
-            menu.add_command(label='Remove Selected', command=remove_selected)
-        
-            has_folder = any(tree.item(i)['values'][0] == 'Folder' for i in selected)
-            if has_folder:
-                menu.add_separator()
-                menu.add_command(label='Set Recursive ON', 
-                             command=lambda: toggle_recursive_for_selected(True))
-                menu.add_command(label='Set Recursive OFF', 
-                             command=lambda: toggle_recursive_for_selected(False))
-        
-            menu.post(event.x_root, event.y_root)
+    def clear_rescore(self):
+        self.search_results = [
+            (path, score, ftype, None, scene_idx, scene_time, scene_end, thumb_bytes, source_db)
+            for path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes, source_db
+            in self.search_results
+        ]
+        self._update_listview()
+        self.update_status('Rescore cleared.')
+        self._clear_rescore_button.setEnabled(False)
 
-        tree.bind('<Button-3>', show_context_menu)
-
-        def on_key_press(event):
-            if event.keysym in ('Delete', 'BackSpace'):
-                remove_selected()
-
-        dlg.bind('<KeyPress>', on_key_press)
-
-        def on_tree_click(event):
-            item = tree.identify_row(event.y)
-            column = tree.identify_column(event.x)
-            if item and column == '#4':
-                qid = item_to_queue_id.get(item)
-                values = tree.item(item)['values']
-                if qid and values and values[0] == 'Folder':
-                    new_rec = not (values[3] == 'Yes')
-                    update_queue_recursive(self.primary_db, qid, new_rec)
-                    refresh_tree()
-
-        tree.bind('<ButtonRelease-1>', on_tree_click)
-
-        refresh_tree()
-
-        ttk.Button(main_frame, text='Close', command=dlg.destroy).pack(pady=(10, 0))
-
-        def on_destroy():
-            self.queue_manager_dlg = None
-            dlg.destroy()
-
-        dlg.protocol('WM_DELETE_WINDOW', on_destroy)
+    # ======================================================================
+    # File dialogs
+    # ======================================================================
 
     def browse_database(self):
-        path = filedialog.asksaveasfilename(parent=self, title='Create New Database File', initialdir='', filetypes=[('SQLite Database', '*.db')], defaultextension='.db')
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Create New Database File', '',
+            'SQLite Database (*.db)',
+        )
         if path:
+            if not path.endswith('.db'):
+                path += '.db'
             abs_path = str(Path(path).resolve())
             init_db(abs_path, self.force_update_status)
             self.active_databases.append(abs_path)
@@ -1370,521 +1190,255 @@ class SceneScoutApp(TkinterDnD.Tk):
             self.update_status(f'Database created and set as target: {os.path.basename(path)}')
 
     def browse_existing_database(self):
-        paths = filedialog.askopenfilenames(parent=self, title='Select Existing Database Files', initialdir='', filetypes=[('SQLite Database', '*.db')])
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, 'Select Existing Database Files', '',
+            'SQLite Database (*.db)',
+        )
         if paths:
             self._add_databases(paths)
 
     def browse_query_image(self):
-        path = filedialog.askopenfilename(parent=self, filetypes=[('Images', ' '.join((f'*{ext}' for ext in config.IMAGE_EXTENSIONS)))])
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Select Query Image', '',
+            'Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)',
+        )
         if path:
             self.query_image_path = path
-            self.query_image_var.set(os.path.basename(path))
+            if hasattr(self, '_query_image_label') and self._query_image_label:
+                self._query_image_label.setText(os.path.basename(path))
 
     def clear_query_image(self):
         self.query_image_path = None
-        self.query_image_var.set('No query image')
+        if hasattr(self, '_query_image_label') and self._query_image_label:
+            self._query_image_label.setText('No query image')
 
-    def open_about_dialog(self):
-        dlg = tk.Toplevel(self)
-        gui_utils.apply_window_icon(dlg, self.app_icon)
-        gui_utils.center_window(dlg, 450, 380)
-        dlg.title('About Scene Scout')
-        dlg.transient(self)
-        dlg.resizable(False, False)
-        dlg.grab_set()
-
-        main_frame = ttk.Frame(dlg, padding=20)
-        main_frame.pack(fill='both', expand=True)
-
-        # --- Header: Icon + Title + Version ---
-        header_frame = ttk.Frame(main_frame)
-        header_frame.pack(fill='x', pady=(0, 15))
-
-        # Resize app icon for dialog
-        icon_size = 48
-        icon_photo = None
-        if self.app_icon and hasattr(self.app_icon, '_PhotoImage__photo'):
-            original_img = Image.open(config.big_logo).resize((icon_size, icon_size), Image.Resampling.LANCZOS)
-            icon_photo = ImageTk.PhotoImage(original_img, master=dlg)
-        elif self.app_icon:
-            original_img = Image.open(config.big_logo).resize((icon_size, icon_size), Image.Resampling.LANCZOS)
-            icon_photo = ImageTk.PhotoImage(original_img, master=dlg)
-
-        if icon_photo:
-            icon_label = ttk.Label(header_frame, image=icon_photo)
-            icon_label.image = icon_photo
-            icon_label.pack(side='left', padx=(0, 12))
-
-        title_frame = ttk.Frame(header_frame)
-        title_frame.pack(side='left', fill='both', expand=True)
-
-        title_label = ttk.Label(title_frame, text='Scene Scout', font=('', 14, 'bold'))
-        title_label.pack(anchor='w')
-
-        # Load version from pyproject.toml
-        version_text = ''
-        try:
-            import toml
-            pyproject_path = config.PROJECT_ROOT / 'pyproject.toml'
-            if pyproject_path.exists():
-                with open(pyproject_path, 'r') as f:
-                    pyproject = toml.load(f)
-                ver = pyproject.get('project', {}).get('version', '')
-                if ver:
-                    version_text = f'v{ver}'
-        except Exception:
-            pass
-
-        if version_text:
-            version_label = ttk.Label(title_frame, text=version_text, font=('', 10))
-            version_label.pack(anchor='w')
-
-        # --- Description Card ---
-        desc_frame = ttk.LabelFrame(main_frame, text='About', padding=12)
-        desc_frame.pack(fill='both', expand=True, pady=(0, 15))
-
-        desc_text = (
-            "Scene Scout is a tool written to help with searching for "
-            "specific scenes using keywords. It is forked and built on "
-            "top of Gabrjiele's project and uses Google's SigLIP 2 model "
-            "for embedding and extracting visual information."
-        )
-        desc_label = ttk.Label(desc_frame, text=desc_text, wraplength=380, justify='left')
-        desc_label.pack(anchor='w')
-
-        # --- Link Pills ---
-        link_frame = ttk.Frame(main_frame)
-        link_frame.pack(fill='x', pady=(0, 15))
-
-        def make_pill(parent, text, url):
-            btn = ttk.Button(parent, text=text, command=lambda: webbrowser.open_new(url))
-            btn.pack(side='left', padx=3)
-
-        make_pill(link_frame, 'Original Source', 'https://github.com/Gabrjiele/siglip2-naflex-search')
-        make_pill(link_frame, 'Logo by Miwo', 'https://4miwo.carrd.co')
-        make_pill(link_frame, 'GitHub Repo', 'https://github.com/Mark-Shun/scene-scout')
-        make_pill(link_frame, 'Codeberg Repo', 'https://codeberg.org/Mark-Shun/scene-scout')
-        make_pill(link_frame, 'Gitlab Repo', 'https://gitlab.com/Mark-Shun/scene-scout')
-
-        # --- Close Button ---
-        close_btn = ttk.Button(main_frame, text='Close', command=dlg.destroy)
-        close_btn.pack(pady=(5, 0))
-
-    def cleanup_database(self):
+    def browse_files_dialog(self):
         if not self.primary_db:
-            messagebox.showerror('Error', 'Please select a target database first.')
+            QMessageBox.critical(self, 'Error', 'Please select a target database first.')
             return
-        if messagebox.askyesno('Confirm', 'Remove entries for deleted files from the database?'):
-            self.threaded_task(self._cleanup_task)
+        all_exts = list(config.IMAGE_EXTENSIONS) + list(config.VIDEO_EXTENSIONS)
+        filter_str = 'Media Files ('
+        filter_str += ' '.join(f'*{e}' for e in all_exts)
+        filter_str += ')'
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, 'Select Media Files', '', filter_str,
+        )
+        if paths:
+            self._add_paths_to_queue(paths)
 
-    def show_migration_popup(self):
-            """Creates a blocking progress popup for database migrations."""
-            # Prevent opening multiple popups if multiple DBs migrate sequentially
-            if hasattr(self, 'migration_popup') and self.migration_popup:
-                return 
-                
-            self.migration_popup = tk.Toplevel(self)
-            import gui_utils
-            gui_utils.apply_window_icon(self.migration_popup, self.app_icon)
-            self.migration_popup.title('Database Migration')
-            self.migration_popup.transient(self)
-            self.migration_popup.grab_set()
-            self.migration_popup.minsize(400, 150)
-            
-            frame = ttk.Frame(self.migration_popup, padding=20)
-            frame.pack(fill='both', expand=True)
-            
-            self.migration_status_var = tk.StringVar(master=self.migration_popup, value='Preparing database migration...')
-            ttk.Label(frame, textvariable=self.migration_status_var, font=('Arial', 10, 'bold'), wraplength=360).pack(pady=(0, 10))
-            
-            self.migration_progress = ttk.Progressbar(frame, mode='indeterminate')
-            self.migration_progress.pack(fill='x', pady=5)
-            self.migration_progress.start(10)
-            
-            gui_utils.center_window(self.migration_popup, 400, 150)
-            
-            # Disable the close button so the user can't interrupt the SQL operation
-            self.migration_popup.protocol('WM_DELETE_WINDOW', lambda: None)
-            self.migration_popup.update()
+    def add_folder_to_queue(self):
+        if not self.primary_db:
+            QMessageBox.critical(self, 'Error', 'Please select a target database first.')
+            return
+        path = QFileDialog.getExistingDirectory(self, 'Select Folder to Add to Queue')
+        if path:
+            self._add_paths_to_queue([path])
 
-    def close_migration_popup(self):
-        """Safely closes the migration popup."""
-        if hasattr(self, 'migration_progress') and self.migration_progress:
-            try:
-                self.migration_progress.stop()
-            except Exception:
-                pass
-                
-        if hasattr(self, 'migration_popup') and self.migration_popup:
-            try:
-                self.migration_popup.grab_release()
-                self.migration_popup.destroy()
-            except Exception:
-                pass
-            self.migration_popup = None
+    def add_files_to_queue(self):
+        self.browse_files_dialog()
 
-    def handle_migration_callback(self, msg: str):
-        """Intelligent callback that handles the popup lifecycle based on the message."""
-        # 1. Update the bottom status bar and splash screen (if it exists)
-        self.force_update_status(msg)
-        
-        # 2. Check the message text to determine popup lifecycle
-        msg_lower = msg.lower()
-        if "migrating database" in msg_lower:
-            # Only show popup if the main window is visible (not during initial boot splash)
-            if self.winfo_viewable():
-                self.show_migration_popup()
-                self.migration_status_var.set(msg)
-                self.migration_popup.update()
-                
-        elif "complete" in msg_lower or "failed" in msg_lower:
-            if hasattr(self, 'migration_popup') and self.migration_popup:
-                self.migration_status_var.set(msg)
-                self.migration_popup.update()
-                # Leave it open for 1 second so the user can read that it finished
-                self.after(1000, self.close_migration_popup)
+    # ======================================================================
+    # Database verification
+    # ======================================================================
 
-    def show_merging_popup(self):
-        """Creates a non-blocking progress popup for the database merge."""
-        self.merge_popup = tk.Toplevel(self)
-        gui_utils.apply_window_icon(self.merge_popup, self.app_icon)
-        self.merge_popup.title('Merging Databases')
-        self.merge_popup.transient(self)
-        self.merge_popup.grab_set()
-        self.merge_popup.minsize(400, 150)
-        
-        frame = ttk.Frame(self.merge_popup, padding=20)
-        frame.pack(fill='both', expand=True)
-        
-        self.merge_status_var = tk.StringVar(master=self.merge_popup, value='Starting merge...')
-        ttk.Label(frame, textvariable=self.merge_status_var, font=('Arial', 10, 'bold')).pack(pady=(0, 10))
-        
-        self.merge_progress = ttk.Progressbar(frame, mode='indeterminate')
-        self.merge_progress.pack(fill='x', pady=5)
-        self.merge_progress.start(10)
-        
-        gui_utils.center_window(self.merge_popup, 400, 150)
-        self.merge_popup.protocol('WM_DELETE_WINDOW', lambda: None)
+    def verify_database_paths(self):
+        bridge = self._active_bridge = SignalBridge()
+        bridge.set_callbacks(
+            finished=lambda missing: (
+                self.show_missing_files_dialog(missing) if missing else None
+            ),
+        )
+        worker = VerifyPathsWorker(self.active_databases)
+        self._run_worker(worker, bridge)
 
-    def update_merge_status(self, message: str):
-        """Thread-safe update for the merge popup label."""
-        if hasattr(self, 'merge_status_var'):
-            self.after(0, lambda: self.merge_status_var.set(message))
-        # Also update the main status bar
-        self.update_status(message)
+    def show_missing_files_dialog(self, missing_files: list):
+        if not missing_files:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f'Missing Files ({len(missing_files)})')
+        dlg.setMinimumSize(500, 400)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
-    def close_merging_popup(self):
-        """Safely closes the merge popup and stops the progress bar."""
-        if hasattr(self, 'merge_progress') and self.merge_progress:
-            try:
-                self.merge_progress.stop()
-            except Exception:
-                pass
-                
-        if hasattr(self, 'merge_popup') and self.merge_popup:
-            try:
-                self.merge_popup.destroy()
-            except Exception:
-                pass
-            self.merge_popup = None
+        layout = QVBoxLayout(dlg)
+        header = QLabel(f'Found {len(missing_files)} missing video file(s).\n'
+                        'They may have been moved, renamed, or deleted.')
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        list_widget = QListWidget()
+        for db_path, video_id, filepath in missing_files:
+            list_widget.addItem(f'{os.path.basename(filepath)}  ({db_path})')
+        layout.addWidget(list_widget)
+
+        hint = QLabel('Use the Database Manager to locate or remove these entries.')
+        layout.addWidget(hint)
+
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn)
+
+        dlg.exec()
+
+    # ======================================================================
+    # Database combine
+    # ======================================================================
 
     def _combine_task(self, out_path: str):
-        from database import combine_databases
-        
-        # 1. Initialize the popup on the main thread
-        self.after(0, self.show_merging_popup)
-        self.after(0, lambda: self.set_controls_enabled(False))
-        
-        try:
-            # 2. Pass the UI update method as the callback
-            combine_databases(self.active_databases, out_path, self.update_merge_status)
-            
-            self.after(0, lambda: self._add_databases([out_path]))
-            self.after(0, lambda: messagebox.showinfo('Success', 'Databases combined successfully.'))
-        except Exception as e:
-            error_msg = str(e)
-            self.after(0, lambda: messagebox.showerror('Merge Error', f'Failed to combine databases: {error_msg}'))
-        finally:
-            # 3. Clean up UI
-            self.after(0, self.close_merging_popup)
-            self.after(0, lambda: self.set_controls_enabled(True))
-            self.update_status('Database merge complete.')
+        self.set_controls_enabled(False)
+        self.show_merging_popup()
 
-    def _cleanup_task(self):
-        assert self.primary_db is not None
-        self.update_status('Cleaning up database...')
-        count = cleanup_orphaned_entries(self.primary_db, self.update_status)
-        self.after(0, lambda: messagebox.showinfo('Complete', f'Removed {count} orphaned embeddings.'))
-        self.update_status('Cleanup complete.')
-
-    def load_model(self, device_choice=None, use_trt=None):
-        """
-        Loads the model. If no arguments are passed, it defaults F
-        to the current UI variables.
-        """
-        # Fallback to the current UI values if nothing is passed
-        if device_choice is None:
-            device_choice = self.device_var.get()
-        if use_trt is None:
-            use_trt = self.use_trt_var.get()
-        
-        # Store results in instance variables (not Tkinter variables)
-        self.model, self.processor, self.device, self.dtype, self._last_active_device = load_siglip_model(
-            device_choice, 
-            status_callback=self.update_status,
-            use_trt=use_trt
+        bridge = self._active_bridge = SignalBridge()
+        bridge.set_callbacks(
+            status=self.update_status,
+            finished=lambda result: (
+                self.close_merging_popup(),
+                self.set_controls_enabled(True),
+                self._add_databases([result]),
+                self.update_status('Database merge complete.'),
+                QMessageBox.information(self, 'Success', 'Databases combined successfully.'),
+            ),
+            error=lambda msg: (
+                self.close_merging_popup(),
+                self.set_controls_enabled(True),
+                QMessageBox.critical(self, 'Merge Error', f'Failed to combine databases: {msg}'),
+            ),
         )
+        worker = CombineDBWorker(self.active_databases, out_path)
+        self._run_worker(worker, bridge)
 
-    def threaded_load_model(self):
-        """Captures UI state on the main thread before starting the background task."""
-        self.load_model_button.config(state='disabled')
-        self.index_button.config(state='disabled')
-        self.search_button.config(state='disabled')
-        
-        # CAPTURE VALUES HERE (Main Thread)
-        device_choice = self.device_var.get()
-        use_trt = self.use_trt_var.get()
-        
-        self.update_status(f'Loading model: {config.DEFAULT_MODEL}...')
-        
-        # Pass the captured values to the task
-        self.threaded_task(self.load_model_task, device_choice, use_trt)
+    # ======================================================================
+    # Migration / merge popups (stubs — Phase 4)
+    # ======================================================================
 
-    def load_model_task(self, device_choice, use_trt):
-        """Background task runner."""
-        self._is_background_task_running = True
-        try:
-            # Pass values through to load_model
-            self.load_model(device_choice=device_choice, use_trt=use_trt)
-            self.after(0, self.on_model_load_finished)
-        except Exception as e:
-            self._is_background_task_running = False
-            self.after(0, lambda: messagebox.showerror('Model Error', f'Failed to load model: {e}'))
-            self.after(0, lambda: self.load_model_button.config(state='normal'))
-            self.after(0, lambda: self.update_status('Error loading model.'))
+    def show_migration_popup(self):
+        dlg = QProgressDialog('Upgrading database schema...', None, 0, 0, self)
+        dlg.setWindowTitle('Database Migration')
+        dlg.setModal(True)
+        dlg.setMinimumWidth(350)
+        self._migration_progress = dlg
+        dlg.show()
 
-    def on_model_load_finished(self):
-        """Updates the GUI once the background loading thread is complete."""
-        self._is_background_task_running = False
-        # Now safely update the Tkinter variable on the main thread
-        if hasattr(self, '_last_active_device') and hasattr(self, 'device_var'):
-            self.device_var.set(self._last_active_device)
+    def close_migration_popup(self):
+        if hasattr(self, '_migration_progress') and self._migration_progress:
+            self._migration_progress.close()
+            self._migration_progress = None
 
-        self.update_status(f'Model loaded on {str(self.device).upper()}. Ready!')
-        self.set_controls_enabled(True)
-        self.load_model_button.config(text='Reload Model')
-        if not self.winfo_viewable():
-            self.deiconify()
+    def handle_migration_callback(self, msg: str):
+        if hasattr(self, '_migration_progress') and self._migration_progress:
+            self._migration_progress.setLabelText(msg)
+        self.force_update_status(msg)
 
-    def threaded_index(self):
-        if not self.primary_db:
-            messagebox.showerror('Error', 'Please select a target database first.')
+    def show_merging_popup(self):
+        dlg = QProgressDialog('Merging databases...', None, 0, 0, self)
+        dlg.setWindowTitle('Merging Databases')
+        dlg.setModal(True)
+        dlg.setMinimumWidth(350)
+        self._merge_progress = dlg
+        dlg.show()
+
+    def close_merging_popup(self):
+        if hasattr(self, '_merge_progress') and self._merge_progress:
+            self._merge_progress.close()
+            self._merge_progress = None
+
+    def update_merge_status(self, message: str):
+        if hasattr(self, '_merge_progress') and self._merge_progress:
+            self._merge_progress.setLabelText(message)
+        self.update_status(message)
+
+    # ======================================================================
+    # GPU standby
+    # ======================================================================
+
+    def toggle_model_standby(self, to_cpu: bool):
+        if self.model is None or self.device.type != 'cuda':
             return
-        from database import queue_count
-        if queue_count(self.primary_db) == 0:
-            messagebox.showerror('Error', 'Please add files or folders to the queue before indexing.')
+        if to_cpu and not self._is_in_standby:
+            self.update_status("Entering Standby: Moving model to CPU...")
+            self.model.to('cpu')
+            torch.cuda.empty_cache()
+            self._is_in_standby = True
+            self.update_status("Standby VRAM Freed")
+        elif not to_cpu and self._is_in_standby:
+            self.update_status("Waking Up: Moving model to GPU...")
+            self.model.to(self.device)
+            self._is_in_standby = False
+            self.update_status("Model Active (GPU)")
+
+    def reset_idle_timer(self):
+        self._idle_counter = 0
+        if self._is_in_standby:
+            self.toggle_model_standby(to_cpu=False)
+
+    def check_idle_and_state(self):
+        if not self.is_active or self._is_background_task_running:
+            self._idle_counter = 0
             return
-        self._is_background_task_running = True
-        self.ensure_model_active()
-        self.index_button.config(state='disabled')
-        self.search_button.config(state='disabled')
-        self._cancel_event = threading.Event()
-        self._stop_video_loop()
-        self.show_indexing_popup()
-        self.update_status('Indexing in progress...')
-        self.threaded_task(self.index_task)
+        self._idle_counter += 1
+        idle_limit = self.config.get('idle_offload_seconds', 300)
+        if self.config.get('gpu_standby', True) and self._idle_counter >= idle_limit:
+            if not self._is_in_standby:
+                self.toggle_model_standby(to_cpu=True)
+        self._idle_timer = QTimer.singleShot(1000, self.check_idle_and_state)
 
-    def show_indexing_popup(self):
-        self.index_popup = tk.Toplevel(self)
-        gui_utils.apply_window_icon(self.index_popup, self.app_icon)
-        self.index_popup.title('Indexing files')
-        self.index_popup.transient(self)
-        self.index_popup.grab_set()
-        self.index_popup.minsize(500, 230)
-        
-        frame = ttk.Frame(self.index_popup, padding=20)
-        frame.pack(fill='both', expand=True)
-        
-        # Label for the current file name
-        self.index_filename_var = tk.StringVar(master=self.index_popup, value='Initializing...')
-        ttk.Label(frame, textvariable=self.index_filename_var, font=('Arial', 10, 'bold'), wraplength=400).pack(pady=(0, 10))
-        
-        # Progress Bar (linked to DoubleVar)
-        self.progress_var = tk.DoubleVar(master=self.index_popup, value=0)
-        self.progress_bar = ttk.Progressbar(frame, variable=self.progress_var, maximum=100)
-        self.progress_bar.pack(fill='x', pady=5)
-        
-        # Status/Stats Label (adds whitespace via pady)
-        self.index_stats_var = tk.StringVar(master=self.index_popup, value='')
-        ttk.Label(frame, textvariable=self.index_stats_var, font=('Arial', 9)).pack(pady=(10, 0))
-        self.index_terminal_info = tk.StringVar(master=self.index_popup, value='Check the terminal for more detailed information.')
-        ttk.Label(frame, textvariable=self.index_terminal_info, font=('Arial', 9)).pack(pady=(10, 15))
-        
-        cancel_button = ttk.Button(frame, text='Cancel', command=self.cancel_indexing)
-        cancel_button.pack()
-        
-        self.index_popup.update_idletasks()
+    def changeEvent(self, event):
+        if event.type() == QEvent.WindowStateChange:
+            if self.windowState() & Qt.WindowMinimized:
+                if self.config.get('gpu_standby', True):
+                    self.toggle_model_standby(to_cpu=True)
+            elif event.oldState() & Qt.WindowMinimized:
+                self.ensure_model_active()
+        super().changeEvent(event)
 
-        width = self.index_popup.winfo_width()
-        height = self.index_popup.winfo_height()
-        x = self.winfo_x() + (self.winfo_width() // 2) - (width // 2)
-        y = self.winfo_y() + (self.winfo_height() // 2) - (height // 2)
-        self.index_popup.geometry(f'{width}x{height}+{x}+{y}')
-        
-        self.index_popup.protocol('WM_DELETE_WINDOW', self.cancel_indexing)
+    def ensure_model_active(self):
+        if self._is_in_standby:
+            self.toggle_model_standby(to_cpu=False)
+        self._idle_counter = 0
 
-    def cancel_indexing(self):
-        if hasattr(self, '_cancel_event') and self._cancel_event is not None:
-            self._cancel_event.set()
-        if hasattr(self, 'index_filename_var'):
-            self.index_filename_var.set('Cancelling...')
-        if hasattr(self, 'index_popup') and self.index_popup:
-            self.index_popup.grab_release()
+    def _update_standby_ui_state(self):
+        if hasattr(self, '_standby_check') and self._standby_check:
+            self._standby_check.setEnabled(self.device_choice != 'cpu')
 
-    def update_gui_progress(self, data):
-        if isinstance(data, dict):
-            curr = data.get('current', 0)
-            total = data.get('total', 1)
-            fname = data.get('file', '')
-            
-            # Calculate percentage for the grey bar
-            percent = (curr / total) * 100
-            
-            # Update the UI on the main thread
-            self.after(0, lambda: self.progress_var.set(percent))
-            self.after(0, lambda: self.index_filename_var.set(f"File: {fname}"))
-            self.after(0, lambda: self.index_stats_var.set(f"Processed {curr} of {total} files"))
-            
-        else:
-            # Fallback for old-style string messages (e.g. "Checking files...")
-            self.after(0, lambda: self.index_filename_var.set(str(data)))
+    def _on_standby_toggle_changed(self, checked: bool):
+        self.save_config_key('gpu_standby', checked)
+        if not checked and self._is_in_standby:
+            self.toggle_model_standby(to_cpu=False)
 
-    def index_task(self):
-        assert self.primary_db is not None
-        try:
-            result = index_files(
-                self.device, self.processor, self.model, self.primary_db,
-                batch_size=self.input_batch_size.get(),
-                generate_thumbnails=self.generate_thumbnails_var.get(),
-                progress_callback=self.update_gui_progress,
-                max_num_patches=self.max_patches_var.get(),
-                fast_scene_detect=self.fast_detect_var.get(),
-                toggle_preview_callback=self.toggle_preview_playback,
-                cancel_event=self._cancel_event
-            )
-            self.after(0, lambda r=result: self.on_index_finished(r))
-        except Exception as e:
-            self.after(0, lambda: self.index_popup.destroy() if hasattr(self, 'index_popup') else None)
-            self.after(0, lambda: messagebox.showerror('Indexing Error', str(e)))
-            print('Indexing Error', str(e))
-        finally:
-            self.after(0, lambda: self.index_button.config(state='normal'))
-            self.after(0, lambda: self.search_button.config(state='normal'))
-
-    def on_index_finished(self, result: str = 'completed'):
-        self._is_background_task_running = False
-        if hasattr(self, 'index_popup') and self.index_popup:
-            self.index_popup.destroy()
-        if result == 'cancelled':
-            self.update_status('Indexing cancelled.')
-            messagebox.showinfo('Cancelled', 'Indexing was cancelled.')
-        else:
-            if self.primary_db:
-                from database import clear_queue
-                clear_queue(self.primary_db)
-                self.update_queue_status()
-            self.update_status('Indexing complete!')
-            messagebox.showinfo('Complete', 'Indexing has finished.')
-
-    def threaded_search(self):
-        if not self.active_databases:
-            messagebox.showerror('Error', 'Please add at least one database to search.')
-            return
-        assert self.active_databases, "No active databases"
-        if db_is_empty(self.active_databases[0]):
-            all_empty = all(db_is_empty(db) for db in self.active_databases)
-            if all_empty:
-                messagebox.showwarning('Warning', 'All active databases appear to be empty. Please index files before searching.')
-                return
-        if not self.query_text_var.get() and (not self.query_image_path):
-            messagebox.showwarning('Warning', 'Please enter text or select an image to search.')
-            return
-        self._is_background_task_running = True
-        self.ensure_model_active()
-        self.search_button.config(state='disabled')
-        self._stop_video_loop()
-        self.update_status('Searching...')
-        self.threaded_task(self.search_task)
-
-    def search_task(self):
-        try:
-            query_embedding = get_query_embedding(self.query_text_var.get(), self.query_image_path, self.device, self.processor, self.model, self.max_patches_var.get())
-            if query_embedding is None:
-                raise ValueError('Could not generate query embedding.')
-            scene_results = search_scenes(query_embedding, self.active_databases, top_k=self.top_k_var.get())
-            self.after(0, self.on_search_finished, scene_results)
-        except Exception as e:
-            self.after(0, lambda e=e: messagebox.showerror('Search Error', str(e)))
-            print('Search Error', str(e))
-        finally:
-            self.after(0, lambda: self.search_button.config(state='normal'))
-
-    def on_search_finished(self, results: List[Tuple[str, int, int, int, bytes, float, str]]):
-        self._is_background_task_running = False
-        self.search_results = [(path, score, 'video', None, scene_idx, start_time, end_time, thumb_bytes, source_db)
-                              for path, scene_idx, start_time, end_time, thumb_bytes, score, source_db in results]
-        self._update_listview()
-        self.update_status(f'Found {len(results)} results.')
-        self.rescore_button.config(state='normal' if results else 'disabled')
-        self.clear_rescore_button.config(state='disabled')
+    # ======================================================================
+    # Search Results — List View
+    # ======================================================================
 
     def _format_ms(self, ms: int) -> str:
         hours = ms // 3600000
         mins = (ms % 3600000) // 60000
         secs = (ms % 60000) // 1000
         milli = ms % 1000
-        
         if hours > 0:
             return f"{hours}:{mins:02d}:{secs:02d}.{milli:03d}"
         return f"{mins}:{secs:02d}.{milli:03d}"
-    
+
     def _update_listview(self, preserve_sort=False):
-        # 1. Clear existing rows and thumbnails
-        for item in self.results_tree.get_children():
-            self.results_tree.delete(item)
-
-        for widget in self.thumb_inner_frame.winfo_children():
-            widget.destroy()
-
-        self.thumbnail_references.clear()
-        self.thumbnail_widgets = {} 
-        visible_thumb_count = 0
-        gc.collect() # Force garbage collection of old data
+        # Clear thumbnails
+        self._clear_thumbnails()
 
         if not self.search_results:
-            self.stats_label.config(text='No results found.')
+            self._stats_label.setText('No results found.')
+            self.results_model.update_data([])
             return
-        
+
         self.last_selected_entry = None
         has_rescore = self.search_results and self.search_results[0][3] is not None
-        
+
         if not preserve_sort:
             self.current_sort_col = 'rescore' if has_rescore else 'score'
             self.current_sort_reverse = True
             sort_key = lambda x: x[3] if has_rescore else x[1]
             self.search_results.sort(key=sort_key, reverse=True)
-            for c in self.results_tree['columns']:
-                base_text = c.capitalize()
-                if c == self.current_sort_col:
-                    self.results_tree.heading(c, text=base_text + " \u25bc")
-                else:
-                    self.results_tree.heading(c, text=base_text)
 
-        # 2. Populate the Treeview and Thumbnail Strip
-        for i, data in enumerate(self.search_results, 1):
+        display_data = []
+        for i, data in enumerate(self.search_results):
             path, score, ftype, rescore, scene_idx, scene_time, scene_end, thumb_bytes, source_db = data
-            tree_id = str(i-1)
-            
+
             filename = os.path.basename(path)
             time_str = ''
             scene_str = ''
@@ -1897,589 +1451,378 @@ class SceneScoutApp(TkinterDnD.Tk):
                 else:
                     time_str = start_str
                 scene_str = str(scene_idx + 1)
-            
-            values = [filename, scene_str, time_str, source_db, f'{score:.4f}', f'{rescore:.4f}' if rescore is not None else '']
-            self.results_tree.insert('', 'end', iid=tree_id, values=values)
+
+            score_str = f'{score:.4f}'
+            rescore_str = f'{rescore:.4f}' if rescore is not None else ''
+
+            display_data.append([filename, scene_str, time_str, source_db, score_str, rescore_str])
 
             if thumb_bytes:
-                img_data = io.BytesIO(thumb_bytes)
-                img = Image.open(img_data)
-                tk_img = ImageTk.PhotoImage(img, master=self)
-                self.thumbnail_references.append(tk_img)
-                
-                thumb_container = tk.Frame(self.thumb_inner_frame, bd=2, relief='flat')
-                row_idx = visible_thumb_count % 3       
-                col_idx = visible_thumb_count // 3      
-                thumb_container.grid(row=row_idx, column=col_idx, padx=2, pady=2)
-                
-                thumb_lbl = ttk.Label(thumb_container, image=tk_img, cursor='hand2')
-                thumb_lbl.pack()
-                thumb_lbl.bind('<Button-1>', lambda e, iid=tree_id: self.on_thumbnail_click(e, iid))
-                thumb_lbl.bind('<Button-3>', lambda e, iid=tree_id: self._on_thumb_right_click(e, iid))
-                
-                self.thumbnail_widgets[tree_id] = thumb_container
-                visible_thumb_count += 1
+                pixmap = QPixmap()
+                pixmap.loadFromData(thumb_bytes)
+                item = QListWidgetItem()
+                item.setIcon(QIcon(pixmap))
+                item.setData(Qt.UserRole, i)
+                item.setSizeHint(QSize(120, 68))
+                self._thumb_list.addItem(item)
+                self._thumbnail_refs.append(item)
 
-        # 3. Update status and auto-select first result
-        scores = [rescore if has_rescore and rescore is not None else score for _, score, _, rescore, _, _, _, _, _ in self.search_results]
+        self.results_model.update_data(display_data)
+
+        # Auto-sort by Score column descending
+        self._results_table.sortByColumn(4, Qt.DescendingOrder)
+
+        # Widen Time column to fit timestamp ranges
+        header = self._results_table.horizontalHeader()
+        header.resizeSection(2, header.sectionSizeHint(2) * 2)
+
+        # Stats
+        scores = [
+            rescore if has_rescore and rescore is not None else score
+            for _, score, _, rescore, _, _, _, _, _ in self.search_results
+        ]
         stats_text = f'Found {len(scores)} results | Max: {max(scores):.3f} | Avg: {np.mean(scores):.3f}'
-        self.stats_label.config(text=stats_text)
-        
-        first = self.results_tree.get_children()
-        if first:
-            self.results_tree.selection_set(first[0])
-            self.on_result_select(None)
+        self._stats_label.setText(stats_text)
+        self._statusbar_count_label.setText(f'{len(scores)} results')
 
-    def sort_treeview(self, col):
-        if not self.search_results:
+        # Auto-select first result
+        if self.results_model.rowCount() > 0:
+            first_index = self.results_proxy.index(0, 0)
+            self._results_table.selectionModel().select(
+                first_index,
+                QItemSelectionModel.Select | QItemSelectionModel.Rows,
+            )
+            self._on_selection_changed()
+
+    def _clear_thumbnails(self):
+        self._thumbnail_refs = []
+        self._thumb_list.clear()
+
+    # ======================================================================
+    # Thumbnail interaction
+    # ======================================================================
+
+    def _on_thumbnail_click(self, item):
+        scene_index = item.data(Qt.UserRole)
+        if scene_index is None:
+            return
+        source_index = self.results_model.index(scene_index, 0)
+        proxy_index = self.results_proxy.mapFromSource(source_index)
+        if proxy_index.isValid():
+            self._results_table.selectionModel().select(
+                proxy_index,
+                QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
+            )
+            self._results_table.scrollTo(proxy_index)
+            self._on_selection_changed()
+
+    def _scroll_thumb_to_view(self, index: int):
+        if index < len(self._thumbnail_refs):
+            item = self._thumbnail_refs[index]
+            self._thumb_list.scrollToItem(item)
+
+    # ======================================================================
+    # Table selection
+    # ======================================================================
+
+    def _on_selection_changed(self):
+        sel_model = self._results_table.selectionModel()
+        indexes = sel_model.selectedRows()
+        if not indexes:
+            self._export_btn.setEnabled(False)
+            self._export_btn.setText('Export Scene...')
             return
 
-        if self.current_sort_col == col:
-            self.current_sort_reverse = not self.current_sort_reverse
-        else:
-            self.current_sort_col = col
-            self.current_sort_reverse = col in ('score', 'rescore')
-
-        def get_sort_key(item):
-            if col == 'filename':
-                return os.path.basename(item[0]).lower()
-            elif col == 'scene':
-                return item[4] if item[4] is not None else -1
-            elif col == 'time':
-                return item[5] if item[5] is not None else -1
-            elif col == 'source':
-                return item[8].lower() if item[8] else ""
-            elif col == 'rescore':
-                return item[3] if item[3] is not None else item[1]
-            else:
-                return item[1]
-
-        self.search_results.sort(key=get_sort_key, reverse=self.current_sort_reverse)
-        self._update_listview(preserve_sort=True)
-
-        for c in self.results_tree['columns']:
-            base_text = c.capitalize()
-            if c == self.current_sort_col:
-                arrow = " \u25bc" if self.current_sort_reverse else " \u25b2"
-                self.results_tree.heading(c, text=base_text + arrow)
-            else:
-                self.results_tree.heading(c, text=base_text)
-
-    def on_thumbnail_click(self, event, tree_iid: str):
-        """Handles multi-selection for thumbnails using standard Treeview methods."""
-        is_shift = event.state & 0x0001
-        is_ctrl = (event.state & 0x0004) or (sys.platform == 'darwin' and event.state & 0x0008)
-
-        if is_ctrl:
-            # Check if already selected using the standard selection() tuple
-            if tree_iid in self.results_tree.selection():
-                self.results_tree.selection_remove(tree_iid)
-            else:
-                self.results_tree.selection_add(tree_iid)
-        elif is_shift:
-            # Manual Range Selection for Shift-click
-            all_items = self.results_tree.get_children('')
-            current_sel = self.results_tree.selection()
-            
-            if current_sel:
-                anchor_iid = current_sel[0]
-                try:
-                    idx1 = all_items.index(anchor_iid)
-                    idx2 = all_items.index(tree_iid)
-                    start_idx, end_idx = min(idx1, idx2), max(idx1, idx2)
-                    range_iids = all_items[start_idx : end_idx + 1]
-                    self.results_tree.selection_set(range_iids)
-                except ValueError:
-                    self.results_tree.selection_set(tree_iid)
-            else:
-                self.results_tree.selection_set(tree_iid)
-        else:
-            self.results_tree.selection_set(tree_iid)
-        
-        self.results_tree.see(tree_iid)
-        self.on_selection_change(None)
-
-    def open_rescore_dialog(self):
-        query_text = simpledialog.askstring('Rescore', 'Enter new text query to rescore results:', parent=self)
-        if query_text:
-            self.threaded_task(self.rescore_task, query_text)
-
-    def rescore_task(self, query_text: str):
-        assert self.primary_db is not None
-        self._is_background_task_running = True
-        self.update_status(f"Rescoring with: '{query_text}'...")
-        try:
-            rescore_embedding = get_query_embedding(query_text, None, self.device, self.processor, self.model)
-            if rescore_embedding is None:
-                raise ValueError('Could not generate rescore embedding.')
-                
-            with sqlite3.connect(self.primary_db) as conn:
-                cursor = conn.cursor()
-                for i, (path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes, source_db) in enumerate(self.search_results):
-                    
-                    if ftype == 'image':
-                        cursor.execute('SELECT embedding FROM image_embeddings WHERE filepath=?', (path,))
-                        result = cursor.fetchone()
-                        if result:
-                            embedding = np.frombuffer(result[0], dtype=np.float32)
-                            similarity = np.dot(embedding, rescore_embedding.T).squeeze()
-                            self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes, source_db)
-                            
-                    elif ftype == 'video':
-                        if isinstance(scene_idx, tuple):
-                            start_idx, end_idx = scene_idx
-                            cursor.execute('''
-                                SELECT se.embedding FROM scene_embeddings se
-                                JOIN processed_videos pv ON se.video_id = pv.id
-                                WHERE pv.filepath=? AND se.scene_index >= ? AND se.scene_index <= ?
-                            ''', (path, start_idx, end_idx))
-                            results = cursor.fetchall()
-                            if results:
-                                max_sim = -1.0
-                                for res in results:
-                                    emb = np.frombuffer(res[0], dtype=np.float32)
-                                    sim = float(np.dot(emb, rescore_embedding.T).squeeze())
-                                    if sim > max_sim:
-                                        max_sim = sim
-                                self.search_results[i] = (path, score, ftype, max_sim, scene_idx, scene_time, scene_end, thumb_bytes, source_db)
-                        else:
-                            cursor.execute('''
-                                SELECT se.embedding FROM scene_embeddings se
-                                JOIN processed_videos pv ON se.video_id = pv.id
-                                WHERE pv.filepath=? AND se.scene_index=?
-                            ''', (path, scene_idx))
-                            result = cursor.fetchone()
-                            if result:
-                                embedding = np.frombuffer(result[0], dtype=np.float32)
-                                similarity = np.dot(embedding, rescore_embedding.T).squeeze()
-                                self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes, source_db)
-                                
-            self.after(0, self.on_rescore_finished)
-        except Exception as e:
-            self._is_background_task_running = False
-            self.after(0, lambda: messagebox.showerror('Rescore Error', str(e)))
-
-    def on_rescore_finished(self):
-        self._is_background_task_running = False
-        self._update_listview()
-        self.update_status('Rescore complete.')
-        self.clear_rescore_button.config(state='normal')
-
-    def clear_rescore(self):
-        self.search_results = [(path, score, ftype, None, scene_idx, scene_time, scene_end, thumb_bytes, source_db) for path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes, source_db in self.search_results]
-        self._update_listview()
-        self.update_status('Rescore cleared.')
-        self.clear_rescore_button.config(state='disabled')
-
-    def _scroll_thumb_to_view(self, widget):
-        """Ensures the selected thumbnail is visible in the horizontal strip."""
-        self.update_idletasks()
-        x_pos = widget.winfo_x()
-        canvas_w = self.thumb_canvas.winfo_width()
-        inner_w = self.thumb_inner_frame.winfo_width()
-        
-        if inner_w > canvas_w:
-            # Center the thumbnail in the viewport
-            scroll_fraction = max(0, (x_pos - (canvas_w / 2)) / inner_w)
-            self.thumb_canvas.xview_moveto(scroll_fraction)
-
-    def on_result_select(self, event: Optional[tk.Event]):
-        sel = self.results_tree.selection()
-        if not sel:
-            for widget in self.thumbnail_widgets.values():
-                widget.config(relief='flat', bg=self.style.lookup('TFrame', 'background'))
+        idx = indexes[0]
+        source_row = self.results_proxy.mapToSource(idx).row()
+        if source_row >= len(self.search_results):
             return
 
-        # Primary selection for the main preview window
-        primary_iid = sel[0]
-        if primary_iid != self.last_selected_entry:
-            self.last_selected_entry = primary_iid
-            index = int(primary_iid)
-            path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[index]
+        if len(indexes) > 1:
+            exportable_count = 0
+            for idx in indexes:
+                source_row = self.results_proxy.mapToSource(idx).row()
+                if source_row < len(self.search_results):
+                    if self.search_results[source_row][2] == 'video' and self.search_results[source_row][5] is not None:
+                        exportable_count += 1
+            if exportable_count > 0:
+                self._export_btn.setEnabled(True)
+                self._export_btn.setText(f'Export {exportable_count} Scenes...')
+            else:
+                self._export_btn.setEnabled(False)
+                self._export_btn.setText('Export Scene...')
+        else:
+            path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[source_row]
+            is_video = (ftype == 'video')
+            can_export = is_video and start_ms is not None
+            self._export_btn.setEnabled(can_export)
+            self._export_btn.setText('Export Scene...')
+
+        if source_row != self.last_selected_entry:
+            self.last_selected_entry = source_row
+            path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[source_row]
             self.display_media(path, is_video=(ftype == 'video'), start_ms=start_ms, end_ms=end_ms)
 
-        # Sync highlighting across the entire strip
-        bg_color = self.style.lookup('TFrame', 'background')
-        for iid, widget in self.thumbnail_widgets.items():
-            if iid in sel:
-                widget.config(relief='solid', bg='#0078D7') # Active highlight
-            else:
-                widget.config(relief='flat', bg=bg_color)
+        # Highlight thumbnail in list
+        for ref in self._thumbnail_refs:
+            if ref.data(Qt.UserRole) == source_row:
+                self._thumb_list.setCurrentItem(ref)
+                break
 
-        if primary_iid in self.thumbnail_widgets:
-            self._scroll_thumb_to_view(self.thumbnail_widgets[primary_iid])
+        self._scroll_thumb_to_view(source_row)
 
-    def on_result_double_click(self, event: tk.Event):
-        """Handle double-click on a search result to open the file."""
-        iid = self.results_tree.identify_row(event.y)
-        if not iid:
+    def _on_result_double_click(self, index):
+        source_row = self.results_proxy.mapToSource(index).row()
+        if source_row >= len(self.search_results):
             return
-            
-        # Ensure the row is selected and current_display_path is updated
-        self.results_tree.selection_set(iid)
-        index = int(iid)
-        path = self.search_results[index][0]
+        path = self.search_results[source_row][0]
         self.current_display_path = path
-        
-        # Open the file using the system's default application
         self.open_current_file()
 
-    def on_results_right_click(self, event: tk.Event):
-        """Triggered by Treeview right-click. Fixes the AttributeError."""
-        iid = self.results_tree.identify_row(event.y)
-        if iid:
-            if iid not in self.results_tree.selection():
-                self.results_tree.selection_set(iid)
-            self._post_results_context_menu(event)
+    # ======================================================================
+    # Context Menu
+    # ======================================================================
 
-    def _on_thumb_right_click(self, event, tree_iid):
-        """Triggered by Thumbnail right-click."""
-        if tree_iid not in self.results_tree.selection():
-            self.results_tree.selection_set(tree_iid)
-        self._post_results_context_menu(event)
-
-    def _post_results_context_menu(self, event):
-        """Unified context menu for both Treeview and Thumbnails."""
-        selection = self.results_tree.selection()
-        if not selection:
+    def _show_context_menu(self, position):
+        indexes = self._results_table.selectionModel().selectedRows()
+        if not indexes:
             return
 
-        menu = tk.Menu(self, tearoff=0)
-        num_selected = len(selection)
+        menu = QMenu(self._results_table)
 
-        # Handle Multi-Scene Export Logic
-        exportable = [
-            int(iid) for iid in selection
-            if self.search_results[int(iid)][2] == 'video'
-            and self.search_results[int(iid)][5] is not None
-        ]
+        exportable = []
+        for idx in indexes:
+            row = self.results_proxy.mapToSource(idx).row()
+            if row < len(self.search_results):
+                path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[row]
+                if ftype == 'video' and start_ms is not None:
+                    exportable.append(row)
 
         if exportable:
             label = "Export Scene..." if len(exportable) == 1 else f"Export {len(exportable)} Scenes..."
-            menu.add_command(label=label, command=self.open_export_dialog)
-            menu.add_separator()
+            export_action = QAction(label, self)
+            export_action.triggered.connect(self.open_export_dialog)
+            menu.addAction(export_action)
+            menu.addSeparator()
 
-        # Shared Actions
-        if num_selected == 1:
-            idx = int(selection[0])
-            path = self.search_results[idx][0]
-            menu.add_command(label='Open File', command=self.open_current_file)
-            menu.add_command(label='Copy Path', command=lambda p=path: self.clipboard_append(p))
-            menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
-            menu.add_separator()
-            menu.add_command(label='Search for Similar', command=self.search_for_similar_preview_frame)
+        if len(indexes) == 1:
+            row = self.results_proxy.mapToSource(indexes[0]).row()
+            path = self.search_results[row][0]
+
+            open_action = QAction('Open File', self)
+            open_action.triggered.connect(self.open_current_file)
+            menu.addAction(open_action)
+
+            copy_action = QAction('Copy Path', self)
+            copy_action.triggered.connect(lambda: self._copy_path(path))
+            menu.addAction(copy_action)
+
+            folder_action = QAction('Open Containing Folder', self)
+            folder_action.triggered.connect(self.open_containing_folder)
+            menu.addAction(folder_action)
+
+            menu.addSeparator()
+            similar_action = QAction('Search for Similar', self)
+            similar_action.triggered.connect(self.search_for_similar_preview_frame)
+            menu.addAction(similar_action)
         else:
-            menu.add_command(label=f'Copy {num_selected} Paths', command=self._copy_multiple_paths)
+            copy_multi_action = QAction(f'Copy {len(indexes)} Paths', self)
+            copy_multi_action.triggered.connect(self._copy_multiple_paths)
+            menu.addAction(copy_multi_action)
 
-        menu.post(event.x_root, event.y_root)
+        menu.exec(self._results_table.viewport().mapToGlobal(position))
+
+    def _copy_path(self, path: str):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(path)
 
     def _copy_multiple_paths(self):
-        """Helper to copy multiple paths to clipboard."""
-        paths = [self.search_results[int(iid)][0] for iid in self.results_tree.selection()]
-        self.clipboard_clear()
-        self.clipboard_append("\n".join(paths))
+        paths = []
+        for idx in self._results_table.selectionModel().selectedRows():
+            row = self.results_proxy.mapToSource(idx).row()
+            if row < len(self.search_results):
+                paths.append(self.search_results[row][0])
+        if paths:
+            clipboard = QApplication.clipboard()
+            clipboard.setText('\n'.join(paths))
 
-    def _render_preview_image_on_canvas(self):
-        if not self.original_image:
-            self.preview_image_canvas.delete('all')
-            return
-
-        canvas_w = self.preview_image_canvas.winfo_width()
-        canvas_h = self.preview_image_canvas.winfo_height()
-
-        if canvas_w <= 1 or canvas_h <= 1:
-            self.after(100, self._render_preview_image_on_canvas)
-            return
-
-        new_w = int(self.original_image.width * self.canvas_scale)
-        new_h = int(self.original_image.height * self.canvas_scale)
-
-        if new_w < 1 or new_h < 1:
-            self.preview_image_canvas.delete('all')
-            return
-
-        # Always use high-quality resampling
-        self.display_image = self.original_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-        self.tk_image = ImageTk.PhotoImage(self.display_image, master=self)
-        
-        self.preview_image_canvas.delete('all')
-        draw_x = canvas_w / 2 + self.canvas_offset_x
-        draw_y = canvas_h / 2 + self.canvas_offset_y
-        self.preview_image_canvas.create_image(draw_x, draw_y, image=self.tk_image)
-
-    def _show_static_pil_image(self, path):
-        # Use your existing high-quality PIL rendering here
-        self.original_image = Image.open(path).convert('RGB')
-        self._render_preview_image_on_canvas() # Use LANCZOS for static
-
-    def _vlc_loop_restart(self):
-        """Restarts the currently assigned media to create a loop effect."""
-        if hasattr(self, 'current_media') and self.current_media:
-            # Re-setting the media is required in VLC to respect start/stop-time options
-            self.player.set_media(self.current_media)
-            self.player.play()
-
-    def _extract_and_show_first_frame(self, path, start_ms):
-        """Accurately extracts the frame at the specific timestamp using stream time_base."""
-        container = None
-        try:
-            container = av.open(path)
-            stream = container.streams.video[0]
-            
-            # 1. Convert ms to the stream's internal PTS units
-            # formula: pts = (seconds) / time_base
-            target_pts = int((start_ms / 1000.0) / float(stream.time_base))
-            
-            # 2. Seek to the nearest keyframe BEFORE or AT the target
-            container.seek(target_pts, stream=stream, any_frame=False, backward=True)
-            
-            frame_found = False
-            for frame in container.decode(stream):
-                # 3. Calculate current frame time in ms
-                current_frame_ms = int(frame.time * 1000)
-                
-                # 4. Only accept the frame if it's at or after our target
-                if current_frame_ms >= start_ms:
-                    img = frame.to_image()
-                    self.after(0, self._finalize_frame_update, img)
-                    frame_found = True
-                    break
-            
-            if not frame_found:
-                # Fallback: if we exhausted the stream, take the last available frame
-                pass
-                
-        except Exception as e:
-            self.after(0, lambda: self.update_status(f"Preview Error: {e}"))
-        finally:
-            if container:
-                container.close()
-
-    def _finalize_frame_update(self, pil_img):
-        """Main-thread helper to update the image and redraw immediately."""
-        self.original_image = pil_img
-        self.display_image = None  # Force a re-resize in _render_preview_image_on_canvas
-        
-        # Reset view and calculate fitting scale
-        self.canvas_offset_x = 0
-        self.canvas_offset_y = 0
-        
-        canvas_w = self.preview_image_canvas.winfo_width()
-        if canvas_w > 1:
-            self.canvas_scale = canvas_w / self.original_image.width
-        else:
-            self.canvas_scale = 1.0
-
-        # FORCE the actual drawing to happen now
-        self._render_preview_image_on_canvas()
-        # Optional: Force a GUI update to ensure the canvas refreshes visually
-        self.preview_image_canvas.update_idletasks()
+    # ======================================================================
+    # Preview / Media Display
+    # ======================================================================
 
     def display_media(self, path: str, is_video: bool, start_ms: int = 0, end_ms: int = 0):
         self._stop_video_loop()
-        self.preview_image_canvas.delete("all")
-        
-        # Reset image state to prevent ghosting
         self.original_image = None
-        self.display_image = None
-        self.tk_image = None
-        
+        self.current_display_path = path
+
         if not is_video:
-            self.player.stop()
-            self.video_container.pack_forget() 
+            self._preview_stack.setCurrentIndex(0)
             self._show_static_pil_image(path)
             return
 
         if not config.SCENE_PLAYBACK:
-            self.player.stop()
-            self.video_container.pack_forget() 
-            # Accurate extraction happens here
-            self.threaded_task(self._extract_and_show_first_frame, path, start_ms)
+            self._preview_stack.setCurrentIndex(0)
+            self._extract_and_show_first_frame(path, start_ms)
         else:
-            # Ensure container is visible for VLC
-            self.video_container.pack(fill='both', expand=True) 
-            self.after(10, lambda: self._start_vlc_playback(path, start_ms, end_ms))
+            self._preview_stack.setCurrentIndex(1)
+            QTimer.singleShot(50, lambda: self._start_vlc_playback(path, start_ms, end_ms))
+
+    def _show_static_pil_image(self, path):
+        try:
+            img = Image.open(path).convert('RGB')
+            self._set_preview_pixmap(img)
+        except Exception as e:
+            self.update_status(f"Preview Error: {e}")
+
+    def _set_preview_pixmap(self, pil_img):
+        self.original_image = pil_img
+        # Scale to fit the scroll area
+        max_w = self._preview_scroll.viewport().width() - 10
+        max_h = self._preview_scroll.viewport().height() - 10
+        if max_w < 10 or max_h < 10:
+            max_w, max_h = 400, 300
+
+        img_w, img_h = pil_img.size
+        scale = min(max_w / img_w, max_h / img_h, 1.0)
+        new_w = int(img_w * scale)
+        new_h = int(img_h * scale)
+
+        if new_w < 1 or new_h < 1:
+            self._preview_image_label.clear()
+            return
+
+        resized = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        resized.save(buf, format='PNG')
+        pixmap = QPixmap()
+        pixmap.loadFromData(buf.getvalue())
+        self._preview_image_label.setPixmap(pixmap)
+
+    # ======================================================================
+    # VLC Playback
+    # ======================================================================
 
     def _set_vlc_window_handle(self, window_id):
-        """Applies the correct window handle based on the platform."""
         if sys.platform == 'win32':
             self.player.set_hwnd(window_id)
         elif sys.platform == 'darwin':
-            # macOS uses the NSObject handle for Cocoa windows
             self.player.set_nsobject(window_id)
         else:
-            # Linux and other Unix-like systems use X11
             self.player.set_xwindow(window_id)
 
     def _start_vlc_playback(self, path, start_ms, end_ms):
         try:
             media = self.vlc_instance.media_new(path)
-            
-            # Subtracting 100ms compensates for VLC's decoding overshoot
             playback_margin_ms = 100
-
-            # Use floating point seconds for VLC options
             if start_ms:
                 media.add_option(f'start-time={start_ms / 1000.0}')
             if end_ms:
-                # Ensure we don't accidentally set the end time before the start time
                 safe_end_ms = max(start_ms + 50, end_ms - playback_margin_ms)
                 media.add_option(f'stop-time={safe_end_ms / 1000.0}')
 
-            self.current_media = media 
+            self.current_media = media
             self.player.set_media(media)
-            
-            # Set up looping using a clean thread bounce
+
+            def _on_end_reached(event):
+                self.vlc_end_reached.emit()
+            self._vlc_end_callback = _on_end_reached
             events = self.player.event_manager()
-            events.event_attach(vlc.EventType.MediaPlayerEndReached, 
-                            lambda e: self.threaded_task(self._vlc_loop_restart))
+            events.event_attach(vlc.EventType.MediaPlayerEndReached, self._vlc_end_callback)
 
-            # Assign window handle
-            h = self.video_container.winfo_id()
-            self._set_vlc_window_handle(h)
-
+            window_id = int(self._video_container.winId())
+            self._set_vlc_window_handle(window_id)
             self.player.play()
-            
         except Exception as e:
             self.update_status(f"VLC Error: {e}")
-    
+
     def _stop_video_loop(self):
         if hasattr(self, 'player'):
             self.player.stop()
-            # Force macOS to release the hardware/GPU lock
             if sys.platform == 'darwin':
                 self.player.set_media(None)
 
+    def _vlc_loop_restart(self):
+        if hasattr(self, 'current_media') and self.current_media:
+            self.player.set_media(self.current_media)
+            self.player.play()
+
     def toggle_preview_playback(self):
-        # Toggle the global state
         config.SCENE_PLAYBACK = not config.SCENE_PLAYBACK
-        
-        # Update the internal config dictionary
         self.config['scene_playback'] = config.SCENE_PLAYBACK
-        
-        # Persist the change to the JSON file
         config.save_config(self.config)
-        
-        # Refresh UI elements
+
         state = 'On' if config.SCENE_PLAYBACK else 'Off'
-        self._playback_toggle_btn.config(text=f'Toggle preview playback ({state})')
-        
+        self._playback_toggle_btn.setText(f'Toggle preview playback ({state})')
+
         if not config.SCENE_PLAYBACK:
-            self._stop_video_loop()    
-        
+            self._stop_video_loop()
+            self._preview_stack.setCurrentIndex(0)
+
         self.last_selected_entry = None
-        self.on_result_select(None)
+        self._on_selection_changed()
 
-    def on_canvas_click(self, event: tk.Event):
-        self.drag_start_x, self.drag_start_y = (event.x, event.y)
+    # ======================================================================
+    # Frame extraction for non-playback preview
+    # ======================================================================
 
-    def on_canvas_drag(self, event: tk.Event):
-        self.canvas_offset_x += event.x - self.drag_start_x
-        self.canvas_offset_y += event.y - self.drag_start_y
-        self.drag_start_x, self.drag_start_y = (event.x, event.y)
-        self._render_preview_image_on_canvas()
+    def _extract_and_show_first_frame(self, path, start_ms):
+        container = None
+        try:
+            import av
+            av.logging.set_level(av.logging.PANIC)
+            container = av.open(path)
+            stream = container.streams.video[0]
+            target_pts = int((start_ms / 1000.0) / float(stream.time_base))
+            container.seek(target_pts, stream=stream, any_frame=False, backward=True)
+            for frame in container.decode(stream):
+                current_frame_ms = int(frame.time * 1000)
+                if current_frame_ms >= start_ms:
+                    img = frame.to_image()
+                    self._set_preview_pixmap(img)
+                    return
+        except Exception as e:
+            self.update_status(f"Preview Error: {e}")
+        finally:
+            if container:
+                container.close()
 
-    def on_canvas_zoom(self, event: tk.Event):
-        factor = 1.1 if event.delta > 0 else 1 / 1.1
-        self.canvas_scale = max(0.1, min(10.0, self.canvas_scale * factor))
-        self._render_preview_image_on_canvas()
-
-    def on_canvas_double_click(self, event: tk.Event):
-        if self.current_display_path:
-            try:
-                if sys.platform == 'win32':
-                    os.startfile(self.current_display_path)
-                elif sys.platform == 'darwin':
-                    subprocess.run(['open', self.current_display_path])
-                else:
-                    subprocess.run(['xdg-open', self.current_display_path])
-            except Exception as e:
-                messagebox.showerror('Error', f'Could not open file: {e}')
-
-    def on_canvas_right_click(self, event: tk.Event):
-        if not self.current_display_path:
-            return
-
-        self._post_results_context_menu(event)
-
-    def _on_thumb_right_click(self, event, tree_iid):
-        if tree_iid not in self.results_tree.selection():
-            self.results_tree.selection_set(tree_iid)
-        self._post_results_context_menu(event)
-
-    def on_selection_change(self, event: tk.Event):
-        """Handle selection change to update export button and trigger highlights."""
-        sel = self.results_tree.selection()
-        if not sel:
-            self.export_btn.config(state='disabled', text='Export Scene...')
-            return
-
-        # Update the Export Button text/state for bulk tasks
-        if len(sel) > 1:
-            exportable = [
-                i for i in sel
-                if int(i) < len(self.search_results)
-                and self.search_results[int(i)][2] == 'video'
-                and self.search_results[int(i)][5] is not None
-            ]
-            if exportable:
-                self.export_btn.config(state='normal', text=f'Export {len(exportable)} Scenes...')
-            else:
-                self.export_btn.config(state='disabled', text='Export Scene...')
-            # REMOVED THE RETURN HERE to allow highlights to update
-        else:
-            index = int(sel[0])
-            self.export_btn.config(text='Export Scene...')
-            # Standard single-select logic
-            if index < len(self.search_results):
-                if self.search_results[index][2] == 'video' and self.search_results[index][5] is not None:
-                    self.export_btn.config(state='normal')
-                else:
-                    self.export_btn.config(state='disabled')
-
-        # This call now runs for both single and multi-select
-        self.on_result_select(event)
+    # ======================================================================
+    # Export
+    # ======================================================================
 
     def open_export_dialog(self):
-        """Open export dialog for the currently selected scene(s)."""
-        sel = self.results_tree.selection()
-        if not sel:
+        sel_model = self._results_table.selectionModel()
+        indexes = sel_model.selectedRows()
+        if not indexes:
             return
-        # if the user has multiple scenes selected
-        if len(sel) > 1:
+
+        if len(indexes) > 1:
             scenes = []
-            for iid in sel: # go through each scene and run the same export logic on each one
-                index = int(iid)
-                if index >= len(self.search_results):
-                    continue
-                path = self.search_results[index][0]
-                start_ms = self.search_results[index][5]
-                end_ms = self.search_results[index][6]
-                file_type = self.search_results[index][2]
-                if file_type == 'video' and start_ms is not None and end_ms is not None:
-                    scenes.append((path, start_ms, end_ms))
+            for idx in indexes:
+                row = self.results_proxy.mapToSource(idx).row()
+                if row < len(self.search_results):
+                    scene_data = self.search_results[row]
+                    if scene_data[2] == 'video' and scene_data[5] is not None and scene_data[6] is not None:
+                        scenes.append(scene_data)
             if scenes:
                 self._stop_video_loop()
                 from exporters.bulk_exporter import BulkExportDialog
                 dialog = BulkExportDialog(self, scenes)
-                self.wait_window(dialog)
+                dialog.exec()
             return
 
-        self.open_export_dialog_for_index(int(sel[0]))
+        row = self.results_proxy.mapToSource(indexes[0]).row()
+        self.open_export_dialog_for_index(row)
 
     def open_export_dialog_for_index(self, index: int):
-        """Open export dialog for a specific search result index."""
         if index >= len(self.search_results):
             return
 
         path = self.search_results[index][0]
         start_ms = self.search_results[index][5]
         end_ms = self.search_results[index][6]
-
-        # 1. Save the user's current playback preference
         original_playback_state = config.SCENE_PLAYBACK
 
-        # 2. Temporarily disable playback to show a static frame and release the VLC file lock
         if original_playback_state:
             config.SCENE_PLAYBACK = False
             self.display_media(path, is_video=True, start_ms=start_ms, end_ms=end_ms)
@@ -2488,204 +1831,391 @@ class SceneScoutApp(TkinterDnD.Tk):
 
         from exporters.single_exporter import SingleExportDialog
         dialog = SingleExportDialog(self, path, start_ms, end_ms)
-        
-        # 3. Yield the event loop until the export dialog is closed/destroyed
-        self.wait_window(dialog)
-        
-        # 4. Restore the playback preference once the dialog closes
+        dialog.exec()
+
         if original_playback_state:
             config.SCENE_PLAYBACK = True
-            
-            # Restart the video playback if the same item is still selected
-            sel = self.results_tree.selection()
-            if sel and int(sel[0]) == index:
-                self.display_media(path, is_video=True, start_ms=start_ms, end_ms=end_ms)
+            sel = self._results_table.selectionModel().selectedRows()
+            if sel:
+                first_row = self.results_proxy.mapToSource(sel[0]).row()
+                if first_row == index:
+                    self.display_media(path, is_video=True, start_ms=start_ms, end_ms=end_ms)
+
+    # ======================================================================
+    # File operations
+    # ======================================================================
 
     def open_current_file(self):
-            """Opens the selected file, using VLC with a timestamp if enabled."""
-            if not self.current_display_path:
-                return
+        if not self.current_display_path:
+            return
 
-            # Get the selected item's start time
-            sel = self.results_tree.selection()
-            start_ms = 0
-            if sel:
-                index = int(sel[0])
-                # search_results index 5 is start_time_ms
-                start_ms = self.search_results[index][5] or 0
+        sel = self._results_table.selectionModel().selectedRows()
+        start_ms = 0
+        if sel:
+            row = self.results_proxy.mapToSource(sel[0]).row()
+            start_ms = self.search_results[row][5] or 0
 
-            # Handle VLC opening logic
-            if self.use_vlc_open_var.get():
-                start_sec = start_ms / 1000.0
-
-
-                if sys.platform == 'darwin':
-                    vlc_flags = [f":start-time={start_sec}"]
-                else:
-                    vlc_flags = [f":start-time={start_sec}", "--one-instance", "--no-playlist-enqueue"]
-
-                try:
-                    if sys.platform == 'win32':
-                        vlc_path = r"C:\Program Files\VideoLAN\VLC\vlc.exe"
-                        if os.path.exists(vlc_path):
-                            subprocess.Popen([vlc_path, self.current_display_path] + vlc_flags)
-                            return
-                    elif sys.platform == 'darwin':
-                        vlc_path = "/Applications/VLC.app/Contents/MacOS/VLC"
-                        if os.path.exists(vlc_path):
-                            subprocess.Popen([vlc_path, self.current_display_path] + vlc_flags)
-                            return
-                    else: # Linux
-                        subprocess.Popen(["vlc", self.current_display_path] + vlc_flags)
-                        return
-                except Exception as e:
-                    print(f"Failed to open with VLC: {e}")
-
-            # Fallback to Native Opening if VLC fails or is disabled
+        use_vlc_open = self.config.get('use_vlc_open', True)
+        if use_vlc_open:
+            start_sec = start_ms / 1000.0
+            if sys.platform == 'darwin':
+                vlc_flags = [f":start-time={start_sec}"]
+            else:
+                vlc_flags = [f":start-time={start_sec}", "--one-instance", "--no-playlist-enqueue"]
             try:
                 if sys.platform == 'win32':
-                    os.startfile(self.current_display_path)
+                    vlc_path = r"C:\Program Files\VideoLAN\VLC\vlc.exe"
+                    if os.path.exists(vlc_path):
+                        subprocess.Popen([vlc_path, self.current_display_path] + vlc_flags)
+                        return
                 elif sys.platform == 'darwin':
-                    subprocess.run(['open', self.current_display_path])
+                    vlc_path = "/Applications/VLC.app/Contents/MacOS/VLC"
+                    if os.path.exists(vlc_path):
+                        subprocess.Popen([vlc_path, self.current_display_path] + vlc_flags)
+                        return
                 else:
-                    subprocess.run(['xdg-open', self.current_display_path])
+                    subprocess.Popen(["vlc", self.current_display_path] + vlc_flags)
+                    return
             except Exception as e:
-                messagebox.showerror('Error', f'Could not open file: {e}')
+                print(f"Failed to open with VLC: {e}")
+
+        # Fallback native opening
+        try:
+            if sys.platform == 'win32':
+                os.startfile(self.current_display_path)
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', self.current_display_path])
+            else:
+                subprocess.run(['xdg-open', self.current_display_path])
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f'Could not open file: {e}')
 
     def open_containing_folder(self):
         if self.current_display_path:
             folder = os.path.dirname(self.current_display_path)
-            if sys.platform == 'win32':
-                subprocess.run(['explorer', '/select,', self.current_display_path])
-            elif sys.platform == 'darwin':
-                subprocess.run(['open', '-R', self.current_display_path])
-            else:
-                subprocess.run(['xdg-open', folder])
+            try:
+                if sys.platform == 'win32':
+                    subprocess.run(['explorer', '/select,', self.current_display_path])
+                elif sys.platform == 'darwin':
+                    subprocess.run(['open', '-R', self.current_display_path])
+                else:
+                    subprocess.run(['xdg-open', folder])
+            except Exception as e:
+                QMessageBox.critical(self, 'Error', f'Could not open folder: {e}')
 
-    def apply_theme(self):
-        new_theme = self.theme_var.get()
-        try:
-            self.style.theme_use(new_theme)
-            
-            # Manually grab the background color from the new theme
-            bg_color = self.style.lookup('TFrame', 'background')
-            
-            # Update the standard tk widgets that don't auto-theme
-            self.preview_image_canvas.config(bg=bg_color)
-            self.canvas.config(bg=bg_color) 
-            self.thumb_canvas.config(bg=bg_color)            
-
-            self.config['theme'] = new_theme
-            config.save_config(self.config)
-        except Exception as e:
-            messagebox.showerror("Theme Error", f"Failed to apply theme: {e}")
+    # ======================================================================
+    # Search by preview frame
+    # ======================================================================
 
     def search_for_similar_preview_frame(self):
         if not self.current_display_path:
-                    return
-
-        # If we have a frame in memory (Image or extracted Video frame)
+            return
         if self.original_image:
             os.makedirs(config.TEMP_FOLDER, exist_ok=True)
-            # Store image in temporary folder
-            temp_filename = "temp_search_query.jpg"
-            temp_path = os.path.abspath(os.path.join(config.TEMP_FOLDER, temp_filename))
-
+            temp_path = os.path.abspath(os.path.join(config.TEMP_FOLDER, "temp_search_query.jpg"))
             try:
-                # Save the high-quality original frame
                 self.original_image.save(temp_path, "JPEG", quality=95)
-                
-                # Set this temp file as the query image
                 self.query_image_path = temp_path
-                self.query_image_var.set(f"Frame from {os.path.basename(self.current_display_path)}")
-                self.query_text_var.set('')
-                
-                # Run the search
+                if hasattr(self, '_query_image_label') and self._query_image_label:
+                    self._query_image_label.setText(f"Frame from {os.path.basename(self.current_display_path)}")
+                if hasattr(self, '_query_text_edit') and self._query_text_edit:
+                    self._query_text_edit.clear()
                 self.threaded_search()
             except Exception as e:
-                messagebox.showerror("Search Error", f"Could not capture frame: {e}")
+                QMessageBox.critical(self, "Search Error", f"Could not capture frame: {e}")
         else:
-            # Fallback: if it's a standard image file and original_image isn't set
             if self.current_display_path.lower().endswith(config.IMAGE_EXTENSIONS):
                 self.query_image_path = self.current_display_path
-                self.query_image_var.set(os.path.basename(self.current_display_path))
-                self.query_text_var.set('')
+                if hasattr(self, '_query_image_label') and self._query_image_label:
+                    self._query_image_label.setText(os.path.basename(self.current_display_path))
+                if hasattr(self, '_query_text_edit') and self._query_text_edit:
+                    self._query_text_edit.clear()
                 self.threaded_search()
-    
-    def toggle_model_standby(self, to_cpu: bool):
-        """Moves the model between GPU and CPU to manage resources."""
-        if self.model is None or self.device.type != 'cuda':
+
+    # ======================================================================
+    # Theme (stub — Phase 5)
+    # ======================================================================
+
+    def apply_theme(self):
+        selected = self._theme_combobox.currentData()
+        if not selected:
+            return
+        self.save_config_key('theme', selected)
+        try:
+            from qt_material import apply_stylesheet
+            app = QApplication.instance()
+            apply_stylesheet(app, theme=selected, extra={'density_scale': '0'})
+            is_dark = 'dark' in selected
+            self._video_container.setStyleSheet(
+                'background-color: black;' if is_dark else 'background-color: #d3d3d3;'
+            )
+            text_color = '#e0e0e0' if is_dark else '#333333'
+            self._drop_zone._label.setStyleSheet(f'color: {text_color};')
+            display_name = selected.split('.')[0].replace('_', ' ').title()
+            self.update_status(f'Theme set to {display_name}')
+        except Exception as e:
+            QMessageBox.warning(self, 'Theme Error', f'Failed to apply theme: {e}')
+
+    # ======================================================================
+    # Cleanup
+    # ======================================================================
+
+    def cleanup_database(self):
+        if not self.primary_db:
+            QMessageBox.critical(self, 'Error', 'Please select a target database first.')
+            return
+        reply = QMessageBox.question(
+            self, 'Confirm',
+            'Remove entries for deleted files from the database?',
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
             return
 
-        if to_cpu and not self._is_in_standby:
-            self.update_status("Entering Standby: Moving model to CPU...")
-            self.model.to('cpu')
-            torch.cuda.empty_cache()
-            self._is_in_standby = True
-            self.update_status("Standby VRAM Freed")
-        
-        elif not to_cpu and self._is_in_standby:
-            self.update_status("Waking Up: Moving model to GPU...")
-            self.model.to(self.device)
-            self._is_in_standby = False
-            self.update_status("Model Active (GPU)")
+        bridge = self._active_bridge = SignalBridge()
+        bridge.set_callbacks(
+            status=self.update_status,
+            finished=lambda count: (
+                QMessageBox.information(self, 'Complete', f'Removed {count} orphaned embeddings.'),
+                self.update_status('Cleanup complete.'),
+            ),
+            error=lambda msg: QMessageBox.critical(self, 'Cleanup Error', msg),
+        )
+        worker = CleanupWorker(self.primary_db)
+        self._run_worker(worker, bridge)
 
-    def reset_idle_timer(self, event=None):
-        """Resets the idle counter on user input."""
-        self._idle_counter = 0
-        if self._is_in_standby:
-            self.toggle_model_standby(to_cpu=False)
+    # ======================================================================
+    # Dialog stubs (Phase 4 — full QDialog rewrites)
+    # ======================================================================
 
-    def check_idle_and_state(self):
-        """Periodic background loop for time-based offloading."""
-        if not self.is_active or self._is_background_task_running:
-            self._idle_counter = 0
-            return
+    def open_db_manager(self):
+        from database import get_db_stats, get_all_processed_videos
 
-        # Increment counter
-        self._idle_counter += 1
-        
-        # Retrieve idle limit from config (default to 300s / 5 mins)
-        idle_limit = self.config.get('idle_offload_seconds', 300)
+        dlg = QDialog(self)
+        dlg.setWindowTitle('Database Manager')
+        dlg.resize(650, 450)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        layout = QVBoxLayout(dlg)
 
-        # Trigger standby if the feature is enabled and threshold is reached
-        if self.gpu_standby_var.get() and self._idle_counter >= idle_limit:
-            if not self._is_in_standby:
-                self.toggle_model_standby(to_cpu=True)
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(['Database', 'Videos', 'Scenes'])
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        layout.addWidget(table)
 
-        # Reschedule for 1 second from now
-        self._idle_after_id = self.after(1000, self.check_idle_and_state)
-    
-    def _update_standby_ui_state(self):
-        """Updates the toggle availability based on selected hardware."""
-        if not hasattr(self, 'standby_check'):
-            return
-        if self.device_var.get() == 'cpu':
-            self.standby_check.config(state='disabled')
-        else:
-            self.standby_check.config(state='normal')
+        def refresh():
+            table.setRowCount(0)
+            for db_path in self.active_databases:
+                row = table.rowCount()
+                table.insertRow(row)
+                table.setItem(row, 0, QTableWidgetItem(db_path))
+                try:
+                    stats = get_db_stats(db_path)
+                    v_count = stats.get('video_count', 0)
+                    s_count = stats.get('scene_count', 0)
+                    table.setItem(row, 1, QTableWidgetItem(str(v_count)))
+                    table.setItem(row, 2, QTableWidgetItem(str(s_count)))
+                except Exception:
+                    table.setItem(row, 1, QTableWidgetItem('?'))
+                    table.setItem(row, 2, QTableWidgetItem('?'))
 
-    def _on_minimized(self, event=None):
-        # Only trigger if the event is for the main window itself and feature is enabled
-        if event.widget == self and self.gpu_standby_var.get():
-            self.toggle_model_standby(to_cpu=True)
+        def add():
+            paths, _ = QFileDialog.getOpenFileNames(
+                dlg, 'Add Database Files', '',
+                'SQLite Database (*.db)',
+            )
+            if paths:
+                self._add_databases(paths)
+                refresh()
 
-    def _on_restored(self, event=None):
-        if event.widget == self:
-            self._idle_counter = 0  # Reset idle on return
-            self.toggle_model_standby(to_cpu=False)
+        def remove_selected():
+            rows = sorted(set(index.row() for index in table.selectedIndexes()), reverse=True)
+            for row in rows:
+                db_path = table.item(row, 0).text()
+                if db_path in self.active_databases:
+                    self.active_databases.remove(db_path)
+                if db_path == self.primary_db:
+                    self.primary_db = self.active_databases[0] if self.active_databases else None
+            self._update_db_section()
+            self.save_db_config()
+            self._update_button_states()
+            self.update_queue_status()
+            refresh()
 
-    def _on_standby_toggle_changed(self):
-        """Handles logic when user clicks the GUI toggle."""
-        val = self.gpu_standby_var.get()
-        self.save_config_key('gpu_standby', val)
-        
-        # If turned OFF while in standby, wake up immediately
-        if not val and self._is_in_standby:
-            self.toggle_model_standby(to_cpu=False)
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton('Add Database')
+        add_btn.clicked.connect(add)
+        btn_layout.addWidget(add_btn)
+        remove_btn = QPushButton('Remove Selected')
+        remove_btn.clicked.connect(remove_selected)
+        btn_layout.addWidget(remove_btn)
+        refresh_btn = QPushButton('Refresh')
+        refresh_btn.clicked.connect(refresh)
+        btn_layout.addWidget(refresh_btn)
+        btn_layout.addStretch()
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(dlg.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
 
-    def ensure_model_active(self):
-        """Guarantees the model is on the GPU before a heavy task begins."""
-        if self._is_in_standby:
-            self.toggle_model_standby(to_cpu=False)
-        self._idle_counter = 0 # Reset idle counter so it doesn't sleep mid-task
+        dlg.refresh = refresh
+        refresh()
+        self.db_manager_dlg = dlg
+        dlg.exec()
+        self.db_manager_dlg = None
+
+    def open_queue_manager(self):
+        from database import get_queue, remove_from_queue, clear_queue, queue_count
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle('Queue Manager')
+        dlg.resize(650, 450)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        layout = QVBoxLayout(dlg)
+
+        table = QTableWidget()
+        table.setColumnCount(3)
+        table.setHorizontalHeaderLabels(['File', 'Type', 'Recursive'])
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        layout.addWidget(table)
+
+        def refresh():
+            table.setRowCount(0)
+            if self.primary_db:
+                items = get_queue(self.primary_db)
+                from database import update_queue_recursive
+                
+                for item_id, path, is_directory, recursive in items:
+                    row = table.rowCount()
+                    table.insertRow(row)
+                    table.setItem(row, 0, QTableWidgetItem(path))
+                    table.setItem(row, 1, QTableWidgetItem('Folder' if is_directory else 'File'))
+                    
+                    if is_directory:
+                        btn_text = 'Yes' if recursive else 'No'
+                        toggle_btn = QPushButton(btn_text)
+                        toggle_btn.setStyleSheet("font-weight: bold; color: #0078D7;")
+                        
+                        def toggle_func(checked, i=item_id, r=recursive):
+                            new_val = not r
+                            update_queue_recursive(self.primary_db, i, new_val)
+                            refresh()
+                            
+                        toggle_btn.clicked.connect(toggle_func)
+                        table.setCellWidget(row, 2, toggle_btn)
+                    else:
+                        table.setItem(row, 2, QTableWidgetItem('-'))
+                    
+                    table.item(row, 0).setData(Qt.UserRole, item_id)
+
+        def remove_selected():
+            rows = sorted(set(index.row() for index in table.selectedIndexes()), reverse=True)
+            if not rows:
+                return
+            for row in rows:
+                item_id = table.item(row, 0).data(Qt.UserRole)
+                if item_id is not None:
+                    remove_from_queue(self.primary_db, item_id)
+            self.update_queue_status()
+            refresh()
+
+        def clear():
+            reply = QMessageBox.question(
+                dlg, 'Clear Queue',
+                'Remove all items from the queue?',
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply == QMessageBox.Yes and self.primary_db:
+                clear_queue(self.primary_db)
+                self.update_queue_status()
+                refresh()
+
+        btn_layout = QHBoxLayout()
+        remove_btn = QPushButton('Remove Selected')
+        remove_btn.clicked.connect(remove_selected)
+        btn_layout.addWidget(remove_btn)
+        clear_btn = QPushButton('Clear Queue')
+        clear_btn.clicked.connect(clear)
+        btn_layout.addWidget(clear_btn)
+        btn_layout.addStretch()
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(dlg.accept)
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+
+        dlg.refresh = refresh
+        refresh()
+        self.queue_manager_dlg = dlg
+        dlg.exec()
+        self.queue_manager_dlg = None
+
+    def open_about_dialog(self):
+        from gui_utils import center_window
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle('About Scene Scout')
+        dlg.setFixedSize(450, 380)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        header = QLabel('Scene Scout')
+        header.setStyleSheet('font-size: 14px; font-weight: bold;')
+        layout.addWidget(header)
+
+        version_text = ''
+        try:
+            import toml
+            pyproject_path = config.PROJECT_ROOT / 'pyproject.toml'
+            if pyproject_path.exists():
+                with open(pyproject_path) as f:
+                    pyproject = toml.load(f)
+                ver = pyproject.get('project', {}).get('version', '')
+                if ver:
+                    version_text = f'v{ver}'
+        except Exception:
+            pass
+
+        if version_text:
+            vlabel = QLabel(version_text)
+            vlabel.setStyleSheet('font-size: 10px;')
+            layout.addWidget(vlabel)
+
+        desc = QLabel(
+            "Scene Scout is a tool written to help with searching for "
+            "specific scenes using keywords. It is forked and built on "
+            "top of Gabrjiele's project and uses Google's SigLIP 2 model "
+            "for embedding and extracting visual information."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+        layout.addSpacing(10)
+
+        links = [
+            ('Original Source', 'https://github.com/Gabrjiele/siglip2-naflex-search'),
+            ('Logo by Miwo', 'https://4miwo.carrd.co'),
+            ('GitHub Repo', 'https://github.com/Mark-Shun/scene-scout'),
+            ('Codeberg Repo', 'https://codeberg.org/Mark-Shun/scene-scout'),
+            ('Gitlab Repo', 'https://gitlab.com/Mark-Shun/scene-scout'),
+        ]
+        for label, url in links:
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda checked, u=url: webbrowser.open_new(u))
+            layout.addWidget(btn)
+
+        layout.addStretch()
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(dlg.accept)
+        layout.addWidget(close_btn)
+
+        center_window(dlg)
+        dlg.exec()

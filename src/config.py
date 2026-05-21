@@ -26,7 +26,7 @@ VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.t
 DEFAULT_CONFIG = {
     "generate_thumbnails": True,
     "scene_playback": True,
-    "theme": "radiance",
+    "theme": "dark_teal.xml",
     "use_trt": False,
     "use_vlc_open": True,
     "device": None,

@@ -7,5 +7,6 @@
 #   from exporters import BulkExportDialog
 #   from exporters import export_video_scene
 
-from .single_exporter import SingleExportDialog, export_video_scene, get_video_info_and_keyframe
+from .single_exporter import SingleExportDialog
 from .bulk_exporter import BulkExportDialog
+from .base_exporter import export_video_scene, get_video_info_and_keyframe
