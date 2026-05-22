@@ -257,6 +257,8 @@ class SceneScoutApp(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
 
         self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setHandleWidth(4)
+        self.splitter.setStyleSheet("QSplitter::handle { background: rgba(128, 128, 128, 0.2); }")
         main_layout.addWidget(self.splitter)
 
         # Left panel (scrollable controls)
@@ -305,7 +307,13 @@ class SceneScoutApp(QMainWindow):
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+            valid_exts = config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS + ('.db',)
+            for url in event.mimeData().urls():
+                path = url.toLocalFile()
+                if os.path.isdir(path) or path.lower().endswith(valid_exts):
+                    event.acceptProposedAction()
+                    return
+            event.ignore()
 
     def dropEvent(self, event):
         paths = [url.toLocalFile() for url in event.mimeData().urls()]
@@ -625,6 +633,8 @@ class SceneScoutApp(QMainWindow):
         layout.setContentsMargins(10, 10, 10, 10)
 
         right_splitter = QSplitter(Qt.Vertical)
+        right_splitter.setHandleWidth(4)
+        right_splitter.setStyleSheet("QSplitter::handle { background: rgba(128, 128, 128, 0.2); }")
 
         # ---- Results Section ----
         results_container = QWidget()
@@ -706,6 +716,8 @@ class SceneScoutApp(QMainWindow):
 
         # ---- Horizontal Splitter: Preview | Thumbnails ----
         media_splitter = QSplitter(Qt.Horizontal)
+        media_splitter.setHandleWidth(4)
+        media_splitter.setStyleSheet("QSplitter::handle { background: rgba(128, 128, 128, 0.2); }")
         media_splitter.addWidget(self._preview_stack)
 
         self._thumb_list = QListWidget()
@@ -1437,6 +1449,8 @@ class SceneScoutApp(QMainWindow):
             sort_key = lambda x: x[3] if has_rescore else x[1]
             self.search_results.sort(key=sort_key, reverse=True)
 
+        self._thumb_list.setUpdatesEnabled(False)
+
         display_data = []
         for i, data in enumerate(self.search_results):
             path, score, ftype, rescore, scene_idx, scene_time, scene_end, thumb_bytes, source_db = data
@@ -1468,6 +1482,8 @@ class SceneScoutApp(QMainWindow):
                 item.setSizeHint(QSize(120, 68))
                 self._thumb_list.addItem(item)
                 self._thumbnail_refs.append(item)
+
+        self._thumb_list.setUpdatesEnabled(True)
 
         self.results_model.update_data(display_data)
 
