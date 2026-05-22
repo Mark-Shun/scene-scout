@@ -2229,15 +2229,27 @@ class SceneScoutApp(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle('About Scene Scout')
-        dlg.setFixedSize(450, 380)
+        dlg.setFixedSize(500, 300)
         dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(20, 20, 20, 20)
+        main_layout = QHBoxLayout(dlg)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+
+        logo_label = QLabel()
+        try:
+            pixmap = QPixmap(str(config.big_logo))
+            scaled_logo = pixmap.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_label.setPixmap(scaled_logo)
+        except Exception:
+            logo_label.setText("Logo")
+        logo_label.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        main_layout.addWidget(logo_label, stretch=1)
+
+        info_layout = QVBoxLayout()
 
         header = QLabel('Scene Scout')
-        header.setStyleSheet('font-size: 14px; font-weight: bold;')
-        layout.addWidget(header)
+        header.setStyleSheet('font-size: 18px; font-weight: bold;')
+        info_layout.addWidget(header)
 
         version_text = ''
         try:
@@ -2254,8 +2266,8 @@ class SceneScoutApp(QMainWindow):
 
         if version_text:
             vlabel = QLabel(version_text)
-            vlabel.setStyleSheet('font-size: 10px;')
-            layout.addWidget(vlabel)
+            vlabel.setStyleSheet('font-size: 12px; color: gray;')
+            info_layout.addWidget(vlabel)
 
         desc = QLabel(
             "Scene Scout is a tool written to help with searching for "
@@ -2264,25 +2276,37 @@ class SceneScoutApp(QMainWindow):
             "for embedding and extracting visual information."
         )
         desc.setWordWrap(True)
-        layout.addWidget(desc)
-        layout.addSpacing(10)
+        info_layout.addWidget(desc)
+        info_layout.addSpacing(10)
 
+        grid = QGridLayout()
         links = [
-            ('Original Source', 'https://github.com/Gabrjiele/siglip2-naflex-search'),
             ('Logo by Miwo', 'https://4miwo.carrd.co'),
             ('GitHub Repo', 'https://github.com/Mark-Shun/scene-scout'),
             ('Codeberg Repo', 'https://codeberg.org/Mark-Shun/scene-scout'),
             ('Gitlab Repo', 'https://gitlab.com/Mark-Shun/scene-scout'),
+            ('Original Source', 'https://github.com/Gabrjiele/siglip2-naflex-search'),
         ]
-        for label, url in links:
+        for i, (label, url) in enumerate(links):
             btn = QPushButton(label)
+            btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda checked, u=url: webbrowser.open_new(u))
-            layout.addWidget(btn)
+            grid.addWidget(btn, i // 2, i % 2)
 
-        layout.addStretch()
+        info_layout.addLayout(grid)
+        info_layout.addSpacing(8)
+
+        copyright_label = QLabel('Developed by Sonicfreak1111/Mark-Shun \u00a9 2026')
+        copyright_label.setStyleSheet('font-size: 10px; color: gray;')
+        info_layout.addWidget(copyright_label)
+
+        info_layout.addStretch()
+
         close_btn = QPushButton('Close')
         close_btn.clicked.connect(dlg.accept)
-        layout.addWidget(close_btn)
+        info_layout.addWidget(close_btn, alignment=Qt.AlignRight)
+
+        main_layout.addLayout(info_layout, stretch=3)
 
         center_window(dlg)
         dlg.exec()

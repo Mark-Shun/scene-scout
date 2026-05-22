@@ -15,9 +15,17 @@ from PIL import Image
 from scenedetect.detectors import AdaptiveDetector
 from tqdm import tqdm
 
+import cv2
+
 import config
 from database import cleanup_orphaned_entries, get_fast_conn
 from utils import normalize_embedding
+
+
+def calculate_sharpness(pil_image):
+    """Calculates image sharpness using the Variance of Laplacian, normalized by pixel count."""
+    cv_image = np.array(pil_image.convert('L'))
+    return cv2.Laplacian(cv_image, cv2.CV_64F).var() / (cv_image.shape[0] * cv_image.shape[1])
 
 
 def _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None):
@@ -142,11 +150,47 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, video_i
             tqdm.write(f"Fatal error: {e}")
         return False
 
-def accurate_process_and_embed(video_path, model, processor, device, cursor, video_id, generate_thumbnails, frames_per_scene=3, batch_size=16, cancel_check: Optional[Callable[[], bool]] = None, silent=False):
+def _pick_sharpest_spaced(scored_frames, frames_per_scene, min_spacing):
+    """
+    Selects frames by balancing sharpness with temporal distance.
+    Always picks the sharpest frame first, then iteratively selects frames
+    that maximize a diversity score combining sharpness and distance.
+    """
+    if not scored_frames:
+        return []
+
+    scored_frames.sort(key=lambda x: x[1], reverse=True)
+
+    selected = [scored_frames[0]]
+
+    while len(selected) < frames_per_scene and len(selected) < len(scored_frames):
+        best_candidate = None
+        best_score = -float('inf')
+
+        for candidate in scored_frames:
+            if candidate in selected:
+                continue
+
+            t_ms, sharpness, img = candidate
+            min_dist = min(abs(t_ms - s[0]) for s in selected)
+            alpha = 0.5
+            score = (sharpness * (1 - alpha)) + (min_dist * alpha)
+
+            if score > best_score:
+                best_score = score
+                best_candidate = candidate
+
+        if best_candidate:
+            selected.append(best_candidate)
+        else:
+            break
+
+    return selected
+
+def accurate_process_and_embed(video_path, model, processor, device, cursor, video_id, generate_thumbnails, frames_per_scene=3, batch_size=16, cancel_check=None, silent=False):
     if not silent:
         tqdm.write(f"Accurate processing: {os.path.basename(video_path)}")
-    
-    # --- STAGE 1: Multi-Threaded Scene Detection (PyAV backend) ---
+
     from scenedetect import open_video, SceneManager, Interpolation
 
     video = open_video(video_path, backend="pyav", threading_mode="AUTO")
@@ -155,11 +199,14 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
     scene_manager.interpolation = Interpolation.NEAREST
     scene_manager.detect_scenes(video, show_progress=not silent)
     scene_list = scene_manager.get_scene_list()
-    
+
     if not scene_list:
         return False
 
     target_start_times = []
+
+    oversample_factor = 2
+    extraction_count = max(3, frames_per_scene * oversample_factor)
 
     for i, (start, end) in enumerate(scene_list):
         s_ms = int(start.get_seconds() * 1000)
@@ -168,21 +215,15 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
         e_ms = max(s_ms + 10, int(end.get_seconds() * 1000) - safe_margin_ms)
 
         duration = e_ms - s_ms
-
-        if frames_per_scene <= 1:
-            timestamps = [s_ms]
-        else:
-            step = duration / (frames_per_scene + 1)
-            timestamps = [int(s_ms + step * (j + 1)) for j in range(frames_per_scene)]
+        step = duration / (extraction_count + 1)
+        timestamps = [int(s_ms + step * (j + 1)) for j in range(extraction_count)]
 
         for t in timestamps:
             target_start_times.append((t, i, s_ms, e_ms))
 
     target_start_times.sort(key=lambda x: x[0])
-
     pbar = tqdm(total=len(scene_list), position=1, desc=f'Scenes processed:', disable=silent)
 
-    # --- STAGE 2: Efficient Extraction & Pooling ---
     container = av.open(video_path)
     stream = container.streams.video[0]
     stream.thread_type = "AUTO"
@@ -210,6 +251,13 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
 
                 if s_idx != current_scene_idx:
                     if current_scene_frames:
+                        scene_duration = current_scene_bounds[1] - current_scene_bounds[0]
+                        min_spacing = scene_duration // (frames_per_scene + 1)
+
+                        scored = [(t, calculate_sharpness(img), img) for t, img in current_scene_frames]
+                        best = _pick_sharpest_spaced(scored, frames_per_scene, min_spacing)
+                        current_scene_frames = [img for _, _, img in best]
+
                         while len(current_scene_frames) < frames_per_scene:
                             current_scene_frames.append(current_scene_frames[-1].copy())
 
@@ -224,10 +272,17 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
                     current_scene_frames = []
 
                 img = Image.fromarray(frame.to_ndarray(format='rgb24'))
-                current_scene_frames.append(img)
+                current_scene_frames.append((t_ms, img))
                 target_idx += 1
 
         if current_scene_frames:
+            scene_duration = current_scene_bounds[1] - current_scene_bounds[0]
+            min_spacing = scene_duration // (frames_per_scene + 1)
+
+            scored = [(t, calculate_sharpness(img), img) for t, img in current_scene_frames]
+            best = _pick_sharpest_spaced(scored, frames_per_scene, min_spacing)
+            current_scene_frames = [img for _, _, img in best]
+
             while len(current_scene_frames) < frames_per_scene:
                 current_scene_frames.append(current_scene_frames[-1].copy())
             batch_scene_data.append((current_scene_idx, current_scene_bounds[0], current_scene_bounds[1], current_scene_frames))

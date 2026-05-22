@@ -35,25 +35,31 @@ class UpdateDialog(QDialog):
     def __init__(self, parent, update_info: dict):
         super().__init__(parent)
         self.setWindowTitle("Update Available")
-        self.setMinimumSize(600, 500)
-        self.resize(600, 500)
+        self.setMinimumSize(600, 700)
+        self.resize(600, 700)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
 
-        header = QLabel("A new version of Scene Scout is available!")
-        header.setStyleSheet("font-size: 12px; font-weight: bold;")
+        header = QLabel(f"Version {update_info['latest_version']} is available!")
+        header.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(header)
 
-        version_label = QLabel(
-            f"Current: v{update_info['current_version']}  \u2794  Latest: v{update_info['latest_version']}"
-        )
-        layout.addWidget(version_label)
-        layout.addSpacing(15)
-
-        notes_label = QLabel("Release Notes")
-        notes_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(notes_label)
+        image_bytes = update_info.get("image_bytes")
+        if image_bytes:
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_bytes)
+            img_label = QLabel()
+            scaled_pixmap = pixmap.scaled(
+                560, 200,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            img_label.setPixmap(scaled_pixmap)
+            img_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(img_label)
 
         text_browser = QTextBrowser()
         text_browser.setOpenExternalLinks(True)
@@ -61,7 +67,7 @@ class UpdateDialog(QDialog):
         layout.addWidget(text_browser)
 
         btn_layout = QHBoxLayout()
-        download_btn = QPushButton("Open Release Page")
+        download_btn = QPushButton("Go to Release Page")
         download_btn.clicked.connect(
             lambda: webbrowser.open_new(update_info['url'])
         )
@@ -76,7 +82,6 @@ class UpdateDialog(QDialog):
         layout.addLayout(btn_layout)
 
         center_window(self)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
 
 def show_update_dialog(parent, update_info: dict) -> None:

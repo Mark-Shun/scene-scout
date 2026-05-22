@@ -11,6 +11,19 @@ from config import load_config
 logger = logging.getLogger(__name__)
 
 
+def extract_image_url(text: str) -> str:
+    """Extracts the first markdown or HTML image URL from the text."""
+    md_match = re.search(r'!\[.*?\]\((.*?)\)', text)
+    if md_match:
+        return md_match.group(1)
+
+    html_match = re.search(r'<img[^>]+src=["\'](.*?)["\']', text, flags=re.IGNORECASE)
+    if html_match:
+        return html_match.group(1)
+
+    return ""
+
+
 def clean_release_notes(text: str) -> str:
     """Strips images, HTML artifacts, and excessive whitespace from GitHub release notes."""
     if not text:
@@ -76,13 +89,24 @@ def check_for_update():
 
         if latest_parsed > current_parsed:
             raw_body = data.get("body", "No release notes available.")
-            
+
+            image_url = extract_image_url(raw_body)
+            image_bytes = None
+            if image_url:
+                try:
+                    img_resp = requests.get(image_url, timeout=5)
+                    if img_resp.status_code == 200:
+                        image_bytes = img_resp.content
+                except requests.RequestException as e:
+                    logger.warning(f"Failed to fetch update image: {e}")
+
             return {
                 "update_available": True,
                 "current_version": current_version,
                 "latest_version": latest_version,
                 "url": "https://github.com/Mark-Shun/scene-scout/releases/latest",
-                "notes": clean_release_notes(raw_body)
+                "notes": clean_release_notes(raw_body),
+                "image_bytes": image_bytes,
             }
             
         return {"update_available": False}
