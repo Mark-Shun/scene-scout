@@ -69,10 +69,16 @@ fix_homebrew_permissions() {
 }
 
 install_vlc() {
+    local force_flag=$1
     echo "Installing VLC..."
     ensure_homebrew
     fix_homebrew_permissions
-    brew install --cask vlc
+    
+    if [ "$force_flag" = "--force" ]; then
+        brew install --cask --force vlc
+    else
+        brew install --cask vlc
+    fi
 }
 
 echo "Checking system GUI dependencies..."
@@ -82,10 +88,17 @@ if ! check_vlc; then
     read -p "Install VLC automatically? [y/n] " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        install_vlc
+        install_vlc ""
     fi
 else
     echo "VLC is already installed."
+    echo "If you are on an Apple Silicon Mac (M1/M2/M3) and experiencing crashes,"
+    echo "you may have the older Intel version of VLC installed."
+    read -p "Would you like to force-reinstall VLC to ensure compatibility? [y/n] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        install_vlc "--force"
+    fi
 fi
 
 if ! check_vlc; then
