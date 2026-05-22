@@ -237,7 +237,6 @@ class SceneScoutApp(QMainWindow):
         self.queue_manager_dlg = None
         self.query_image_path = None
         self.search_results = []
-        self.current_display_path = None
         self.last_selected_entry = None
         self.current_sort_col = 'score'
         self.current_sort_reverse = True
@@ -478,25 +477,18 @@ class SceneScoutApp(QMainWindow):
         if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
             device_options.append('mps')
 
-        self.device_combobox = ttk.Combobox(
-            options_frame, 
-            textvariable=self.device_var, 
-            values=device_options, 
-            state='readonly'
-        )
-        self.device_combobox.pack(fill='x')
+        self._device_combobox = QComboBox()
+        self._device_combobox.addItems(device_options)
+        idx = self._device_combobox.findText(self.device_choice)
+        if idx >= 0:
+            self._device_combobox.setCurrentIndex(idx)
+        self._device_combobox.currentTextChanged.connect(self._on_device_changed)
+        opts_layout.addWidget(self._device_combobox)
 
-        # Save config when selection changes
-        self.device_combobox.bind("<<ComboboxSelected>>", 
-            lambda e: self.save_config_key('device', self.device_var.get()))
-        self.device_combobox.pack(fill='x')
+        device_msg_label = QLabel(f'Auto-detected: {self.device_msg}')
+        device_msg_label.setStyleSheet('font-style: italic; font-size: 8pt;')
+        opts_layout.addWidget(device_msg_label)
 
-        self.device_var.trace_add('write', lambda *args: self._update_standby_ui_state())
-        self._update_standby_ui_state()
-
-        ttk.Label(options_frame, text=f'Auto-detected: {self.device_msg}', font=('', 8, 'italic')).pack(anchor='w')
-
-        # Add TRT Toggle if hardware supports it
         if self.show_trt_option:
             self._trt_check = QCheckBox('Use TensorRT Acceleration')
             self._trt_check.setChecked(self.config.get('use_trt', False))
@@ -1725,108 +1717,15 @@ class SceneScoutApp(QMainWindow):
                 self._export_btn.setEnabled(False)
                 self._export_btn.setText('Export Scene...')
         else:
-            self.results_tree.selection_set(tree_iid)
-        
-        self.results_tree.see(tree_iid)
-        self.on_selection_change(None)
+            path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[source_row]
+            is_video = (ftype == 'video')
+            can_export = is_video and start_ms is not None
+            self._export_btn.setEnabled(can_export)
+            self._export_btn.setText('Export Scene...')
 
-    def open_rescore_dialog(self):
-        query_text = simpledialog.askstring('Rescore', 'Enter new text query to rescore results:', parent=self)
-        if query_text:
-            self.threaded_task(self.rescore_task, query_text)
-
-    def rescore_task(self, query_text: str):
-        assert self.primary_db is not None
-        self._is_background_task_running = True
-        self.update_status(f"Rescoring with: '{query_text}'...")
-        try:
-            rescore_embedding = get_query_embedding(query_text, None, self.device, self.processor, self.model)
-            if rescore_embedding is None:
-                raise ValueError('Could not generate rescore embedding.')
-                
-            with sqlite3.connect(self.primary_db) as conn:
-                cursor = conn.cursor()
-                for i, (path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes, source_db) in enumerate(self.search_results):
-                    
-                    if ftype == 'image':
-                        cursor.execute('SELECT embedding FROM image_embeddings WHERE filepath=?', (path,))
-                        result = cursor.fetchone()
-                        if result:
-                            embedding = np.frombuffer(result[0], dtype=np.float32)
-                            similarity = np.dot(embedding, rescore_embedding.T).squeeze()
-                            self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes, source_db)
-                            
-                    elif ftype == 'video':
-                        if isinstance(scene_idx, tuple):
-                            start_idx, end_idx = scene_idx
-                            cursor.execute('''
-                                SELECT se.embedding FROM scene_embeddings se
-                                JOIN processed_videos pv ON se.video_id = pv.id
-                                WHERE pv.filepath=? AND se.scene_index >= ? AND se.scene_index <= ?
-                            ''', (path, start_idx, end_idx))
-                            results = cursor.fetchall()
-                            if results:
-                                max_sim = -1.0
-                                for res in results:
-                                    emb = np.frombuffer(res[0], dtype=np.float32)
-                                    sim = float(np.dot(emb, rescore_embedding.T).squeeze())
-                                    if sim > max_sim:
-                                        max_sim = sim
-                                self.search_results[i] = (path, score, ftype, max_sim, scene_idx, scene_time, scene_end, thumb_bytes, source_db)
-                        else:
-                            cursor.execute('''
-                                SELECT se.embedding FROM scene_embeddings se
-                                JOIN processed_videos pv ON se.video_id = pv.id
-                                WHERE pv.filepath=? AND se.scene_index=?
-                            ''', (path, scene_idx))
-                            result = cursor.fetchone()
-                            if result:
-                                embedding = np.frombuffer(result[0], dtype=np.float32)
-                                similarity = np.dot(embedding, rescore_embedding.T).squeeze()
-                                self.search_results[i] = (path, score, ftype, float(similarity), scene_idx, scene_time, scene_end, thumb_bytes, source_db)
-                                
-            self.after(0, self.on_rescore_finished)
-        except Exception as e:
-            self._is_background_task_running = False
-            self.after(0, lambda: messagebox.showerror('Rescore Error', str(e)))
-
-    def on_rescore_finished(self):
-        self._is_background_task_running = False
-        self._update_listview()
-        self.update_status('Rescore complete.')
-        self.clear_rescore_button.config(state='normal')
-
-    def clear_rescore(self):
-        self.search_results = [(path, score, ftype, None, scene_idx, scene_time, scene_end, thumb_bytes, source_db) for path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes, source_db in self.search_results]
-        self._update_listview()
-        self.update_status('Rescore cleared.')
-        self.clear_rescore_button.config(state='disabled')
-
-    def _scroll_thumb_to_view(self, widget):
-        """Ensures the selected thumbnail is visible in the horizontal strip."""
-        self.update_idletasks()
-        x_pos = widget.winfo_x()
-        canvas_w = self.thumb_canvas.winfo_width()
-        inner_w = self.thumb_inner_frame.winfo_width()
-        
-        if inner_w > canvas_w:
-            # Center the thumbnail in the viewport
-            scroll_fraction = max(0, (x_pos - (canvas_w / 2)) / inner_w)
-            self.thumb_canvas.xview_moveto(scroll_fraction)
-
-    def on_result_select(self, event: Optional[tk.Event]):
-        sel = self.results_tree.selection()
-        if not sel:
-            for widget in self.thumbnail_widgets.values():
-                widget.config(relief='flat', bg=self.style.lookup('TFrame', 'background'))
-            return
-
-        # Primary selection for the main preview window
-        primary_iid = sel[0]
-        if primary_iid != self.last_selected_entry:
-            self.last_selected_entry = primary_iid
-            index = int(primary_iid)
-            path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[index]
+        if source_row != self.last_selected_entry:
+            self.last_selected_entry = source_row
+            path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[source_row]
             self.display_media(path, is_video=(ftype == 'video'), start_ms=start_ms, end_ms=end_ms)
 
         # Highlight thumbnail in list
@@ -1866,28 +1765,41 @@ class SceneScoutApp(QMainWindow):
 
         if exportable:
             label = "Export Scene..." if len(exportable) == 1 else f"Export {len(exportable)} Scenes..."
-            menu.add_command(label=label, command=self.open_export_dialog)
-            menu.add_separator()
+            export_action = QAction(label, self)
+            export_action.triggered.connect(self.open_export_dialog)
+            menu.addAction(export_action)
+            menu.addSeparator()
 
-        # Shared Actions
-        if num_selected == 1:
-            idx = int(selection[0])
-            path = self.search_results[idx][0]
-            menu.add_command(label='Open File', command=self.open_current_file)
-            menu.add_command(label='Copy Path', command=lambda p=path: self.clipboard_append(p))
-            menu.add_command(label='Open Containing Folder', command=self.open_containing_folder)
-            menu.add_separator()
-            menu.add_command(label='Search for Similar', command=self.search_for_similar_preview_frame)
+        if len(indexes) == 1:
+            row = self.results_proxy.mapToSource(indexes[0]).row()
+            path = self.search_results[row][0]
+
+            open_action = QAction('Open File', self)
+            open_action.triggered.connect(self.open_current_file)
+            menu.addAction(open_action)
+
+            copy_action = QAction('Copy Path', self)
+            copy_action.triggered.connect(lambda: self._copy_path(path))
+            menu.addAction(copy_action)
+
+            folder_action = QAction('Open Containing Folder', self)
+            folder_action.triggered.connect(self.open_containing_folder)
+            menu.addAction(folder_action)
+
+            menu.addSeparator()
+            similar_action = QAction('Search for Similar', self)
+            similar_action.triggered.connect(self.search_for_similar_preview_frame)
+            menu.addAction(similar_action)
         else:
-            menu.add_command(label=f'Copy {num_selected} Paths', command=self._copy_multiple_paths)
+            copy_multi_action = QAction(f'Copy {len(indexes)} Paths', self)
+            copy_multi_action.triggered.connect(self._copy_multiple_paths)
+            menu.addAction(copy_multi_action)
 
-        menu.post(event.x_root, event.y_root)
+        menu.exec(self._results_table.viewport().mapToGlobal(position))
 
-    def _copy_multiple_paths(self):
-        """Helper to copy multiple paths to clipboard."""
-        paths = [self.search_results[int(iid)][0] for iid in self.results_tree.selection()]
-        self.clipboard_clear()
-        self.clipboard_append("\n".join(paths))
+    def _copy_path(self, path: str):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(path)
 
     def _copy_multiple_paths(self):
         paths = []

@@ -48,8 +48,6 @@ DEFAULT_CONFIG = {
     "export_crf": 23,
     "export_audio_bitrate": "192k",
     "export_open_folder": True,
-    "export_container": "MP4 (.mp4)",
-    "naming_template": "{source-name}_scene_{time-start}",
     "gpu_standby": True,
     "idle_offload_seconds": 300
 }
@@ -117,17 +115,21 @@ def get_vlc_args():
 
 def get_hf_token() -> Optional[str]:
     """Retrieves the HF token, returning None if not found or empty."""
+    # 1. Check system environment variable
     token = os.environ.get("HF_TOKEN")
     
+    # 2. Fallback to config file
     if not token:
         current_config = load_config()
         token = current_config.get("hf_token", "")
     
+    # 3. If empty, return None to skip authentication headers
     if not token or not str(token).strip():
         return None
         
     token = token.strip()
     
+    # 4. Strip "Bearer " if accidentally included
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
         

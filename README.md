@@ -12,6 +12,9 @@
   <a href="https://github.com/Mark-Shun/scene-scout/stargazers"><img src="https://img.shields.io/github/stars/Mark-Shun/scene-scout?style=for-the-badge" alt="Stars" /></a>
   <a href="https://github.com/Mark-Shun/scene-scout/releases"><img src="https://img.shields.io/github/downloads/Mark-Shun/scene-scout/total?style=for-the-badge&label=downloads" alt="Downloads" /></a>
   <a href="https://mark-shun.github.io/scene-scout/"><img src="https://img.shields.io/badge/Website-GitHub%20Pages-green?style=for-the-badge&logo=github" alt="Website" /></a>
+  <a href="https://ko-fi.com/sonicfreak1111">
+    <img src="https://img.shields.io/badge/ko--fi-donate-FF5E5B?logo=ko-fi&logoColor=white" alt="Support me on Ko-fi" />
+  </a>
 </p>
 
 # Scene Scout - A scene search tool using keywords
@@ -337,6 +340,6 @@ This project follows the [all-contributors](https://github.com/all-contributors/
 
 ## Author
 
-Created by Mark-Shun/Sonicfreak
+Created by Mark-Shun/Sonicfreak1111
 
 Forked from project by Peris Gabriele

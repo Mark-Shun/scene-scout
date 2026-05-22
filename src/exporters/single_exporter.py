@@ -96,7 +96,6 @@ class SingleExportDialog(BaseExporter):
 
     def _save_settings(self):
         self._save_common_settings()
-        self.config['naming_template'] = self.template_var.get()
         config.save_config(self.config)
 
     def _start_export(self):
@@ -104,8 +103,6 @@ class SingleExportDialog(BaseExporter):
         if not output_path:
             QMessageBox.critical(self, 'Error', 'Please specify an output path.')
             return
-
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         if os.path.exists(output_path):
             reply = QMessageBox.question(
