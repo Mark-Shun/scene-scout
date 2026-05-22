@@ -101,17 +101,15 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
                 warnings.simplefilter("ignore")
                 logging.getLogger("torch_tensorrt").setLevel(logging.ERROR)
                 torch._dynamo.config.suppress_errors = True
-                
-            # Dynamo natively handles Hugging Face kwargs and dynamic batch sizes,
-            # while still utilizing the TensorRT backend for massive speedups.
+
             model.vision_model = torch.compile(
-                model.vision_model, 
-                backend="tensorrt", 
+                model.vision_model,
+                backend="tensorrt",
                 dynamic=True
             )
             update("TensorRT JIT Compiler Active! (Optimization runs on first search)")
-        except Exception as e:
-            update(f"TensorRT Compilation Error: {e}. Falling back to standard CUDA.")
+        except (Exception, AttributeError) as e:
+            update(f"TensorRT Compilation failed ({e}). Falling back to standard CUDA.")
     
     model.eval()
     return model, processor, device, dtype, device_str

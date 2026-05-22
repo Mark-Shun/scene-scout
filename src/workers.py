@@ -69,7 +69,7 @@ class WorkerSignals(QObject):
 
 
 class ModelLoadWorker(QThread):
-    def __init__(self, device_choice: str, use_trt: bool):
+    def __init__(self, device_choice: Optional[str], use_trt: bool):
         super().__init__()
         self.signals = WorkerSignals()
         self.device_choice = device_choice
@@ -78,15 +78,14 @@ class ModelLoadWorker(QThread):
     def run(self):
         try:
             from model_loader import load_siglip_model
-            self.signals.status_updated.emit(f'Loading model...')
-            model, processor, device, dtype, last_active = load_siglip_model(
+            res = load_siglip_model(
                 self.device_choice,
-                status_callback=self.signals.status_updated.emit,
                 use_trt=self.use_trt,
+                status_callback=self.signals.status_updated.emit,
             )
-            self.signals.finished.emit((model, processor, device, dtype, last_active))
+            self.signals.finished.emit(res)
         except Exception as e:
-            logging.exception("Fatal error in ModelLoadWorker")
+            logging.exception("Unhandled error during background model load initialization")
             self.signals.error.emit(str(e))
 
 
