@@ -112,6 +112,27 @@ case "$user_choice" in
     *) echo "Error: Invalid selection."; exit 1 ;;
 esac
 
+# --- Installation Mode Selection ---
+ACTUAL_ENV_PATH="$SCRIPT_DIR/.venv"
+if [ -n "$CUSTOM_ENV_PATH" ]; then
+    ACTUAL_ENV_PATH="$CUSTOM_ENV_PATH/.venv"
+    export UV_PROJECT_ENVIRONMENT="$ACTUAL_ENV_PATH"
+fi
+
+if [ -d "$ACTUAL_ENV_PATH" ]; then
+    echo "------------------------------------------"
+    echo "Existing Python environment detected."
+    echo "1) Standard Update (Fast - updates modified packages only)"
+    echo "2) Clean Install (Fixes corrupted environments and broken dependencies)"
+    echo "------------------------------------------"
+    read -p "Select installation mode [1-2]: " install_mode
+    if [ "$install_mode" = "2" ]; then
+        echo "Wiping old environment..."
+        rm -rf "$ACTUAL_ENV_PATH"
+        echo "Old environment removed. Proceeding with clean install."
+    fi
+fi
+
 echo "Synchronizing environment with extra: $EXTRA..."
 
 echo "EXTRA=$EXTRA" > "$SCRIPT_DIR/.install_state"

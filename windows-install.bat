@@ -128,6 +128,33 @@ echo EXTRA=%EXTRA%> "%BASE_DIR%.install_state"
 if not "%FLAGS%"=="" echo FLAGS=%FLAGS%>> "%BASE_DIR%.install_state"
 if not "%PY_VER%"=="" echo PY_VER=%PY_VER%>> "%BASE_DIR%.install_state"
 
+:: --- Installation Mode Selection ---
+:: Determine where the virtual environment currently lives
+set "ACTUAL_ENV_PATH=%~dp0.venv"
+if defined CUSTOM_ENV_PATH (
+    set "ACTUAL_ENV_PATH=%CUSTOM_ENV_PATH%\.venv"
+    set "UV_PROJECT_ENVIRONMENT=%CUSTOM_ENV_PATH%\.venv"
+)
+
+:: If an environment already exists, ask the user how to handle it
+if exist "%ACTUAL_ENV_PATH%" (
+    echo.
+    echo ==========================================
+    echo Existing Python environment detected.
+    echo [1] Standard Update (Fast - updates modified packages only)
+    echo [2] Clean Install (Fixes corrupted environments and broken dependencies)
+    echo ==========================================
+    choice /C 12 /M "Select installation mode:"
+    if errorlevel 2 (
+        echo.
+        echo Wiping old environment...
+        rmdir /s /q "%ACTUAL_ENV_PATH%"
+        echo Old environment removed. Proceeding with clean install.
+    )
+)
+
+echo.
+
 echo Running installer with extra: %EXTRA%...
 "%UV_EXE%" sync --extra %EXTRA% %FLAGS% %PY_VER% 
 
