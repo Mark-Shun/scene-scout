@@ -16,7 +16,7 @@ from scenedetect.detectors import AdaptiveDetector
 from tqdm import tqdm
 
 import config
-from database import cleanup_orphaned_entries
+from database import cleanup_orphaned_entries, get_fast_conn
 from utils import normalize_embedding
 
 
@@ -254,7 +254,7 @@ def index_files(device: torch.device, processor, model, db_path: str, batch_size
     if progress_callback:
         progress_callback('Cleaning database of deleted files...')
     cleanup_orphaned_entries(db_path, progress_callback)
-    conn = sqlite3.connect(db_path)
+    conn = get_fast_conn(db_path)
     cursor = conn.cursor()
     
     # Flatten the queue into a list of files to process

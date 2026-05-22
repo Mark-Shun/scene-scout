@@ -5,6 +5,13 @@ import numpy as np
 from pathlib import Path
 import config
 
+def get_fast_conn(db_path: str, timeout: float = 10.0) -> sqlite3.Connection:
+    """Returns a connection optimized for rapid I/O operations."""
+    conn = sqlite3.connect(db_path, timeout=timeout)
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    return conn
+
 DB_SCHEMA = f"""
 -- store image embeddings (searchable items) as before
 CREATE TABLE IF NOT EXISTS image_embeddings (
