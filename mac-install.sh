@@ -105,6 +105,10 @@ fi
 
 echo "Synchronizing environment with extra: $EXTRA..."
 
+echo "EXTRA=$EXTRA" > "$SCRIPT_DIR/.install_state"
+[ -n "$FLAGS" ] && echo "FLAGS=$FLAGS" >> "$SCRIPT_DIR/.install_state"
+[ -n "$PY_VER" ] && echo "PY_VER=$PY_VER" >> "$SCRIPT_DIR/.install_state"
+
 if uv sync --extra "$EXTRA" --python 3.12; then
     echo "--------------------------------------------------"
     echo "Installation successful."

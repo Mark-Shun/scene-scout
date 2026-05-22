@@ -3,7 +3,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout,
@@ -33,6 +33,7 @@ class UpdateDialog(QDialog):
     """A modal dialog displaying release notes for a new version."""
 
     progress_updated = Signal(int)
+    update_ready = Signal()
 
     def __init__(self, parent, update_info: dict):
         super().__init__(parent)
@@ -76,6 +77,7 @@ class UpdateDialog(QDialog):
         layout.addWidget(self.progress_bar)
 
         self.progress_updated.connect(self.progress_bar.setValue)
+        self.update_ready.connect(self.execute_shutdown)
 
         btn_layout = QHBoxLayout()
 
@@ -109,6 +111,13 @@ class UpdateDialog(QDialog):
         if reply != QMessageBox.Yes:
             return
 
+        download_url = self.update_info.get('download_url')
+        is_source_zip = self.update_info.get('is_source_zip', True)
+
+        if not download_url:
+            QMessageBox.critical(self, "Update Error", "Could not find a valid download link from the API.")
+            return
+
         self.install_btn.setEnabled(False)
         self.download_btn.setEnabled(False)
         self.close_btn.setEnabled(False)
@@ -116,48 +125,31 @@ class UpdateDialog(QDialog):
 
         self.download_btn.setText("Downloading...")
 
-        version = self.update_info['latest_version']
-        zip_url = f"https://github.com/Mark-Shun/scene-scout/archive/refs/tags/v{version}.zip"
-
         import threading
+        import config
+        from update_manager import trigger_update_handoff, verify_environment
 
         def run_update():
             try:
-                from update_manager import download_and_extract_update, generate_updater_script
-                import config as cfg
+                self.progress_updated.emit(5)
+                if not verify_environment(str(config.PROJECT_ROOT)):
+                    raise RuntimeError("Dependency pre-check failed. Network might be unstable.")
 
-                target_dir = str(cfg.PROJECT_ROOT)
-                extracted_folder = download_and_extract_update(
-                    zip_url,
-                    progress_callback=lambda p: self.progress_updated.emit(p),
+                trigger_update_handoff(
+                    download_url=download_url,
+                    is_source_zip=is_source_zip,
+                    progress_callback=lambda p: self.progress_updated.emit(10 + int(p * 0.9)),
                 )
-                self._do_handoff(extracted_folder, target_dir)
+                self.progress_updated.emit(100)
+                self.update_ready.emit()
             except Exception as e:
                 self._update_failed(str(e))
 
         threading.Thread(target=run_update, daemon=True).start()
 
-    def _do_handoff(self, extracted_folder: str, target_dir: str):
-        from update_manager import generate_updater_script
-        import subprocess
-
-        script_path = generate_updater_script(extracted_folder, target_dir)
-
-        if sys.platform == 'win32':
-            subprocess.Popen(
-                [script_path],
-                creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP,
-            )
-        else:
-            subprocess.Popen(
-                [script_path],
-                start_new_session=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-
+    @Slot()
+    def execute_shutdown(self):
         QApplication.quit()
-        import os
         os._exit(0)
 
     def _update_failed(self, msg: str):

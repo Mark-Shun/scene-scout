@@ -1,3 +1,4 @@
+import sys
 import logging
 import re
 from pathlib import Path
@@ -90,6 +91,30 @@ def check_for_update():
         if latest_parsed > current_parsed:
             raw_body = data.get("body", "No release notes available.")
 
+            # --- Download URL Extraction Scaffold ---
+            is_compiled = getattr(sys, 'frozen', False)
+            download_url = ""
+            is_source_zip = False
+
+            if is_compiled:
+                assets = data.get("assets", [])
+                for asset in assets:
+                    name = asset.get("name", "").lower()
+                    if sys.platform == 'win32' and name.endswith('.exe'):
+                        download_url = asset.get("browser_download_url")
+                        break
+                    elif sys.platform == 'darwin' and (name.endswith('.dmg') or name.endswith('.app.zip')):
+                        download_url = asset.get("browser_download_url")
+                        break
+                    elif sys.platform.startswith('linux') and name.endswith('.appimage'):
+                        download_url = asset.get("browser_download_url")
+                        break
+
+            if not download_url:
+                download_url = data.get("zipball_url", "")
+                is_source_zip = True
+            # ----------------------------------------
+
             image_url = extract_image_url(raw_body)
             image_bytes = None
             if image_url:
@@ -105,6 +130,8 @@ def check_for_update():
                 "current_version": current_version,
                 "latest_version": latest_version,
                 "url": "https://github.com/Mark-Shun/scene-scout/releases/latest",
+                "download_url": download_url,
+                "is_source_zip": is_source_zip,
                 "notes": clean_release_notes(raw_body),
                 "image_bytes": image_bytes,
             }

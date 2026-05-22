@@ -115,6 +115,10 @@ if "%EXTRA%"=="" (
     exit /b 1 
 )
 
+echo EXTRA=%EXTRA%> "%BASE_DIR%.install_state"
+if not "%FLAGS%"=="" echo FLAGS=%FLAGS%>> "%BASE_DIR%.install_state"
+if not "%PY_VER%"=="" echo PY_VER=%PY_VER%>> "%BASE_DIR%.install_state"
+
 echo Running installer with extra: %EXTRA%...
 "%UV_EXE%" sync --extra %EXTRA% %FLAGS% %PY_VER% 
 
