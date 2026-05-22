@@ -307,7 +307,7 @@ class SceneScoutApp(QMainWindow):
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
-            valid_exts = config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS + ('.db',)
+            valid_exts = config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS + ('.db', '.scdb')
             for url in event.mimeData().urls():
                 path = url.toLocalFile()
                 if os.path.isdir(path) or path.lower().endswith(valid_exts):
@@ -319,6 +319,16 @@ class SceneScoutApp(QMainWindow):
         paths = [url.toLocalFile() for url in event.mimeData().urls()]
         if not paths:
             return
+
+        scdb_files = [p for p in paths if p.lower().endswith('.scdb')]
+        if scdb_files:
+            if len(scdb_files) > 1:
+                QMessageBox.warning(self, "Multiple Archives", "Please drop only one .scdb archive at a time.")
+                return
+            self.open_db_manager()
+            self.database_manager.trigger_archive_unpack(scdb_files[0])
+            return
+
         db_paths = [p for p in paths if p.lower().endswith('.db')]
         if db_paths:
             self._add_databases(db_paths)
@@ -329,7 +339,7 @@ class SceneScoutApp(QMainWindow):
                     self._query_image_label.setText(os.path.basename(path))
                 self.update_status(f"Query image set via drop: {os.path.basename(path)}")
                 break
-        media_paths = [p for p in paths if not p.lower().endswith('.db') and (
+        media_paths = [p for p in paths if not p.lower().endswith('.db') and not p.lower().endswith('.scdb') and (
             os.path.isdir(p) or p.lower().endswith(config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS)
         )]
         if media_paths:
@@ -2168,11 +2178,18 @@ class SceneScoutApp(QMainWindow):
     # ======================================================================
 
     def open_db_manager(self):
-        from database import get_db_stats, get_all_processed_videos
+        from database import get_db_stats
+
+        if hasattr(self, 'database_manager') and self.database_manager is not None:
+            self.database_manager.refresh()
+            self.database_manager.show()
+            self.database_manager.raise_()
+            self.database_manager.activateWindow()
+            return
 
         dlg = QDialog(self)
         dlg.setWindowTitle('Database Manager')
-        dlg.resize(650, 450)
+        dlg.resize(700, 480)
         dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         layout = QVBoxLayout(dlg)
 
@@ -2225,27 +2242,157 @@ class SceneScoutApp(QMainWindow):
             self.update_queue_status()
             refresh()
 
+        def get_selected_db_paths():
+            rows = sorted(set(index.row() for index in table.selectedIndexes()))
+            return [table.item(row, 0).text() for row in rows] if rows else self.active_databases
+
+        def pack_selected_dbs():
+            selected_dbs = get_selected_db_paths()
+            if not selected_dbs:
+                QMessageBox.warning(dlg, "No Selection", "Please select at least one database to pack.")
+                return
+
+            default_name = "Workspace_Archive.scdb"
+            if len(selected_dbs) == 1:
+                default_name = os.path.splitext(os.path.basename(selected_dbs[0]))[0] + ".scdb"
+
+            output_path, _ = QFileDialog.getSaveFileName(
+                dlg, "Pack Databases to Archive",
+                os.path.join(os.getcwd(), default_name),
+                "Scene Scout Database (*.scdb)"
+            )
+            if not output_path:
+                return
+
+            # Store as instance attrs on dialog to prevent garbage collection
+            dlg.pack_progress_dialog = QProgressDialog("Initializing pack process...", "Cancel", 0, 100, dlg)
+            dlg.pack_progress_dialog.setWindowTitle("Packing Archive")
+            dlg.pack_progress_dialog.setWindowModality(Qt.WindowModal)
+            dlg.pack_progress_dialog.setAutoClose(True)
+            dlg.pack_progress_dialog.setValue(0)
+
+            dlg._current_pack_output = output_path
+
+            from workers import ArchiveExportWorker
+            dlg._export_worker = ArchiveExportWorker(selected_dbs, output_path)
+
+            def _on_pack_progress(pct: int, msg: str):
+                if hasattr(dlg, 'pack_progress_dialog'):
+                    dlg.pack_progress_dialog.setValue(pct)
+                    dlg.pack_progress_dialog.setLabelText(msg)
+
+            def _on_pack_finished():
+                QMessageBox.information(dlg, "Pack Complete", f"Archive successfully created at:\n{dlg._current_pack_output}")
+                dlg._export_worker = None
+
+            def _on_pack_error(err: str):
+                if hasattr(dlg, 'pack_progress_dialog'):
+                    dlg.pack_progress_dialog.cancel()
+                QMessageBox.critical(dlg, "Pack Error", f"Failed to pack archive:\n{err}")
+                dlg._export_worker = None
+
+            dlg._export_worker.progress.connect(_on_pack_progress, type=Qt.QueuedConnection)
+            dlg._export_worker.finished.connect(_on_pack_finished, type=Qt.QueuedConnection)
+            dlg._export_worker.error.connect(_on_pack_error, type=Qt.QueuedConnection)
+            dlg.pack_progress_dialog.canceled.connect(dlg._export_worker.cancel)
+
+            dlg._export_worker.start()
+
+        def trigger_archive_unpack(archive_path: str = None):
+            if not archive_path:
+                archive_path, _ = QFileDialog.getOpenFileName(
+                    dlg, "Select Archive to Unpack", "", "Scene Scout Database (*.scdb)"
+                )
+                if not archive_path:
+                    return
+
+            archive_name = os.path.basename(archive_path)
+            QMessageBox.information(
+                dlg, "Unpack Archive",
+                f"You selected the archive:\n{archive_name}\n\n"
+                "Please select an installation folder where the database(s) and videos will be unpacked."
+            )
+
+            target_dir = QFileDialog.getExistingDirectory(dlg, "Select Unpack Destination")
+            if not target_dir:
+                return
+
+            # Store as instance attrs on dialog to prevent garbage collection
+            dlg.unpack_progress_dialog = QProgressDialog("Initializing unpack process...", "Cancel", 0, 100, dlg)
+            dlg.unpack_progress_dialog.setWindowTitle("Unpacking Archive")
+            dlg.unpack_progress_dialog.setWindowModality(Qt.WindowModal)
+            dlg.unpack_progress_dialog.setAutoClose(True)
+            dlg.unpack_progress_dialog.setValue(0)
+            dlg.unpack_progress_dialog.setCancelButton(None)
+
+            from workers import ArchiveImportWorker
+            dlg._import_worker = ArchiveImportWorker(archive_path, target_dir)
+
+            def _on_unpack_progress(pct: int, msg: str):
+                if hasattr(dlg, 'unpack_progress_dialog'):
+                    dlg.unpack_progress_dialog.setValue(pct)
+                    dlg.unpack_progress_dialog.setLabelText(msg)
+
+            def _on_unpack_finished(new_db_paths: list):
+                count = len(new_db_paths)
+                QMessageBox.information(
+                    dlg, "Unpack Complete",
+                    f"Successfully unpacked {count} database(s)!\n\nThey will now be added to your workspace."
+                )
+                self._add_databases(new_db_paths)
+                refresh()
+                dlg._import_worker = None
+
+            def _on_unpack_error(err: str):
+                if hasattr(dlg, 'unpack_progress_dialog'):
+                    dlg.unpack_progress_dialog.cancel()
+                QMessageBox.critical(dlg, "Unpack Error", f"Failed to extract archive:\n{err}")
+                dlg._import_worker = None
+
+            dlg._import_worker.progress.connect(_on_unpack_progress, type=Qt.QueuedConnection)
+            dlg._import_worker.finished.connect(_on_unpack_finished, type=Qt.QueuedConnection)
+            dlg._import_worker.error.connect(_on_unpack_error, type=Qt.QueuedConnection)
+
+            dlg._import_worker.start()
+
         btn_layout = QHBoxLayout()
         add_btn = QPushButton('Add Database')
+        add_btn.setToolTip('Add existing Scene Scout database (.db) files to the search list.')
         add_btn.clicked.connect(add)
         btn_layout.addWidget(add_btn)
         remove_btn = QPushButton('Remove Selected')
+        remove_btn.setToolTip('Remove the selected database(s) from the workspace.')
         remove_btn.clicked.connect(remove_selected)
         btn_layout.addWidget(remove_btn)
+        pack_btn = QPushButton('Pack Selected to Archive')
+        pack_btn.setToolTip('Package the selected database(s) and their video assets into a portable .scdb archive.')
+        pack_btn.clicked.connect(pack_selected_dbs)
+        btn_layout.addWidget(pack_btn)
+        unpack_btn = QPushButton('Unpack Database Archive')
+        unpack_btn.setToolTip('Extract a .scdb archive and register the unpacked database(s) in the workspace.')
+        unpack_btn.clicked.connect(lambda: trigger_archive_unpack())
+        btn_layout.addWidget(unpack_btn)
         refresh_btn = QPushButton('Refresh')
+        refresh_btn.setToolTip('Reload the table to reflect current database stats.')
         refresh_btn.clicked.connect(refresh)
         btn_layout.addWidget(refresh_btn)
         btn_layout.addStretch()
         close_btn = QPushButton('Close')
-        close_btn.clicked.connect(dlg.accept)
+        close_btn.setToolTip('Close the Database Manager.')
+        close_btn.clicked.connect(dlg.close)
         btn_layout.addWidget(close_btn)
         layout.addLayout(btn_layout)
 
         dlg.refresh = refresh
+        dlg.get_selected_db_paths = get_selected_db_paths
+        dlg.pack_selected_dbs = pack_selected_dbs
+        dlg.trigger_archive_unpack = trigger_archive_unpack
+        dlg.setAttribute(Qt.WA_DeleteOnClose, False)
+
         refresh()
+        self.database_manager = dlg
         self.db_manager_dlg = dlg
-        dlg.exec()
-        self.db_manager_dlg = None
+        dlg.show()
 
     def open_queue_manager(self):
         from database import get_queue, remove_from_queue, clear_queue, queue_count

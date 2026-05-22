@@ -2,6 +2,8 @@ import os
 import re
 import subprocess
 import sys
+import zipfile
+import shutil
 from typing import Callable, Optional, List, Tuple, Any
 
 from PySide6.QtCore import QThread, Signal, QObject, Slot
@@ -381,3 +383,122 @@ class CleanupWorker(QThread):
             self.signals.finished.emit(count)
         except Exception as e:
             self.signals.error.emit(str(e))
+
+
+class ArchiveExportWorker(QThread):
+    progress = Signal(int, str)
+    finished = Signal()
+    error = Signal(str)
+
+    def __init__(self, db_paths: list, output_scdb_path: str):
+        super().__init__()
+        self.db_paths = db_paths  # Now accepts a LIST of database paths
+        self.output_path = output_scdb_path
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    def run(self):
+        try:
+            import sqlite3
+
+            # 1. Deduplicate Videos across ALL selected databases
+            self.progress.emit(0, "Analyzing databases for shared assets...")
+            unique_videos = set()
+
+            for db_path in self.db_paths:
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.execute("SELECT filepath FROM processed_videos WHERE status='completed'")
+                    # Only add videos that actually exist on disk
+                    unique_videos.update(row[0] for row in cursor.fetchall() if os.path.exists(row[0]))
+
+            total_items = len(self.db_paths) + len(unique_videos)
+            processed = 0
+
+            # 2. Pack the archive using ZIP_STORED to prevent CPU bottleneck and double-compression
+            with zipfile.ZipFile(self.output_path, 'w', zipfile.ZIP_STORED) as archive:
+                # Add all selected databases to the root of the archive
+                for db_path in self.db_paths:
+                    if self._is_cancelled: return
+                    db_name = os.path.basename(db_path)
+                    self.progress.emit(int((processed / total_items) * 100), f"Packing database: {db_name}")
+                    archive.write(db_path, db_name)
+                    processed += 1
+
+                # Add all unique video files to a 'videos' folder inside the archive
+                for path in unique_videos:
+                    if self._is_cancelled: return
+                    filename = os.path.basename(path)
+                    self.progress.emit(int((processed / total_items) * 100), f"Archiving video: {filename}")
+                    archive.write(path, f"videos/{filename}")
+                    processed += 1
+
+            self.progress.emit(100, "Done!")
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class ArchiveImportWorker(QThread):
+    progress = Signal(int, str)
+    finished = Signal(list)  # Returns a list of the newly unpacked database paths
+    error = Signal(str)
+
+    def __init__(self, scdb_path: str, target_extraction_dir: str):
+        super().__init__()
+        self.scdb_path = scdb_path
+        self.target_dir = target_extraction_dir
+
+    def run(self):
+        try:
+            from database import remap_all_video_paths
+
+            if not os.path.exists(self.scdb_path):
+                raise FileNotFoundError("Source archive file could not be found.")
+
+            # Space verification
+            archive_size = os.path.getsize(self.scdb_path)
+            check_path = self.target_dir
+            while check_path and not os.path.exists(check_path):
+                check_path = os.path.dirname(check_path)
+            if not check_path:
+                check_path = os.getcwd()
+
+            _, _, free_bytes = shutil.disk_usage(check_path)
+            required_space_with_buffer = int(archive_size * 1.05)
+
+            if free_bytes < required_space_with_buffer:
+                req_mb = required_space_with_buffer / (1024 * 1024)
+                free_mb = free_bytes / (1024 * 1024)
+                raise IOError(f"Insufficient disk space.\nRequired: ~{req_mb:.1f} MB\nAvailable: {free_mb:.1f} MB")
+
+            os.makedirs(self.target_dir, exist_ok=True)
+
+            # Extract everything
+            with zipfile.ZipFile(self.scdb_path, 'r') as archive:
+                namelist = archive.namelist()
+                total_files = len(namelist)
+
+                for idx, member in enumerate(namelist):
+                    self.progress.emit(int((idx / total_files) * 100), f"Unpacking: {os.path.basename(member)}")
+                    archive.extract(member, self.target_dir)
+
+            # Find all the databases we just extracted
+            extracted_dbs = [f for f in namelist if f.endswith('.db') and '/' not in f]
+            videos_folder = os.path.join(self.target_dir, "videos")
+
+            final_db_paths = []
+
+            # Remap paths for EVERY database in the archive
+            for db_name in extracted_dbs:
+                db_path = os.path.join(self.target_dir, db_name)
+                self.progress.emit(95, f"Recalibrating paths for {db_name}...")
+                remap_all_video_paths(db_path, videos_folder)
+                final_db_paths.append(db_path)
+
+            self.progress.emit(100, "Unpack successful!")
+            self.finished.emit(final_db_paths)
+
+        except Exception as e:
+            self.error.emit(str(e))

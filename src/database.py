@@ -573,3 +573,26 @@ def delete_video_record(db_path: str, video_id: int) -> bool:
             return True
     except sqlite3.Error:
         return False
+
+
+def remap_all_video_paths(db_path: str, new_base_dir: str) -> None:
+    """
+    Reads all absolute filepaths in a newly imported database,
+    extracts the file names, and rewrites them to the new folder target.
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute("SELECT id, filepath FROM processed_videos")
+            videos = cursor.fetchall()
+
+            for video_id, old_path in videos:
+                filename = os.path.basename(old_path)
+                updated_path = os.path.normpath(os.path.join(new_base_dir, filename))
+
+                conn.execute(
+                    "UPDATE processed_videos SET filepath = ? WHERE id = ?",
+                    (updated_path, video_id)
+                )
+            conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database error during path remapping: {e}")
