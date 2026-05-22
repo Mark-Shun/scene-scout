@@ -554,6 +554,12 @@ class SceneScoutApp(QMainWindow):
         self._thumb_check.toggled.connect(lambda v: self.save_config_key('generate_thumbnails', v))
         opts_layout.addWidget(self._thumb_check)
 
+        self._reprocess_check = QCheckBox('Force overwrite/reprocess indexed files')
+        self._reprocess_check.setChecked(self.config.get('force_reprocess', False))
+        self._reprocess_check.toggled.connect(lambda v: self.save_config_key('force_reprocess', v))
+        self._reprocess_check.setToolTip('If checked, queued files that already exist in the database will be re-analyzed and overwritten using the current settings.')
+        opts_layout.addWidget(self._reprocess_check)
+
         self._standby_check = QCheckBox('GPU Standby when minimized')
         self._standby_check.setChecked(self.config.get('gpu_standby', True))
         self._standby_check.toggled.connect(self._on_standby_toggle_changed)
@@ -1052,6 +1058,7 @@ class SceneScoutApp(QMainWindow):
             max_num_patches=self.config.get('max_patches', 256),
             fast_scene_detect=self.config.get('fast_detect', True),
             frames_per_scene=self.config.get('frames_per_scene', 3),
+            force_reprocess=self.config.get('force_reprocess', False),
         )
         self._index_worker = worker
         self._run_worker(worker, bridge)
@@ -1330,7 +1337,7 @@ class SceneScoutApp(QMainWindow):
         self._run_worker(worker, bridge)
 
     # ======================================================================
-    # Migration / merge popups (stubs — Phase 4)
+    # Migration / merge popups 
     # ======================================================================
 
     def show_migration_popup(self):
@@ -1978,7 +1985,7 @@ class SceneScoutApp(QMainWindow):
                 self.threaded_search()
 
     # ======================================================================
-    # Theme (stub — Phase 5)
+    # Theme
     # ======================================================================
 
     def apply_theme(self):
@@ -2030,7 +2037,7 @@ class SceneScoutApp(QMainWindow):
         self._run_worker(worker, bridge)
 
     # ======================================================================
-    # Dialog stubs (Phase 4 — full QDialog rewrites)
+    # Dialog
     # ======================================================================
 
     def open_db_manager(self):

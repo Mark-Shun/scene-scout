@@ -554,6 +554,16 @@ def update_video_filepath(db_path: str, video_id: int, new_filepath: str) -> boo
     except sqlite3.IntegrityError:
         return False
 
+def clear_video_data_by_path(db_path: str, filepath: str) -> None:
+    """Deletes a video record and cascades to all associated scene embeddings."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("DELETE FROM processed_videos WHERE filepath = ?", (filepath,))
+            conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database error clearing video data: {e}")
+
 def delete_video_record(db_path: str, video_id: int) -> bool:
     try:
         with sqlite3.connect(db_path) as conn:

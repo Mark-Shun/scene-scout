@@ -266,7 +266,7 @@ def _get_files_from_queue(db_path: str, image_exts: tuple, video_exts: tuple) ->
                 continue
     return [str(f) for f in all_files]
 
-def index_files(device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, frames_per_scene: int=3, toggle_preview_callback: Optional[Callable]=None, cancel_check: Optional[Callable[[], bool]] = None, silent: bool=False) -> str:
+def index_files(device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, frames_per_scene: int=3, force_reprocess: bool=False, toggle_preview_callback: Optional[Callable]=None, cancel_check: Optional[Callable[[], bool]] = None, silent: bool=False) -> str:
     """
     Index files from the index_queue stored in db_path.
     Returns 'completed', 'cancelled', or 'error'.
@@ -304,7 +304,7 @@ def index_files(device: torch.device, processor, model, db_path: str, batch_size
                 # skip any other type
                 continue
             result = cursor.fetchone()
-            if not result or result[0] < last_modified:
+            if force_reprocess or not result or result[0] < last_modified:
                 paths_to_process.append(path)
         except FileNotFoundError:
             continue
