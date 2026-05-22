@@ -1398,10 +1398,27 @@ class SceneScoutApp(QMainWindow):
     def changeEvent(self, event):
         if event.type() == QEvent.WindowStateChange:
             if self.windowState() & Qt.WindowMinimized:
+                if hasattr(self, 'player') and self.player.is_playing():
+                    vlc_time = self.player.get_time()
+                    if vlc_time > 0:
+                        self._resume_time_ms = vlc_time
+                    else:
+                        self._resume_time_ms = None
+                    self._stop_video_loop()
+                else:
+                    self._resume_time_ms = None
+
                 if self.config.get('gpu_standby', True):
                     self.toggle_model_standby(to_cpu=True)
+
             elif event.oldState() & Qt.WindowMinimized:
                 self.ensure_model_active()
+
+                if config.SCENE_PLAYBACK:
+                    self.last_selected_entry = None
+                    QTimer.singleShot(100, self._on_selection_changed)
+                    self._on_selection_changed()
+
         super().changeEvent(event)
 
     def ensure_model_active(self):
@@ -1672,6 +1689,7 @@ class SceneScoutApp(QMainWindow):
         self._stop_video_loop()
         self.original_image = None
         self.current_display_path = path
+        self.current_end_ms = end_ms
 
         if not is_video:
             self._preview_stack.setCurrentIndex(0)
