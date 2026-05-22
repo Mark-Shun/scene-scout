@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import subprocess
@@ -85,6 +86,7 @@ class ModelLoadWorker(QThread):
             )
             self.signals.finished.emit((model, processor, device, dtype, last_active))
         except Exception as e:
+            logging.exception("Fatal error in ModelLoadWorker")
             self.signals.error.emit(str(e))
 
 
@@ -123,6 +125,7 @@ class IndexWorker(QThread):
             )
             self.signals.finished.emit(result)
         except Exception as e:
+            logging.exception("Fatal error in IndexWorker")
             self.signals.error.emit(str(e))
 
 
@@ -159,6 +162,7 @@ class SearchWorker(QThread):
             )
             self.signals.finished.emit(results)
         except Exception as e:
+            logging.exception("Fatal error in SearchWorker")
             self.signals.error.emit(str(e))
 
 
@@ -230,6 +234,7 @@ class RescoreWorker(QThread):
                                     scene_time, scene_end, thumb_bytes, source_db))
             self.signals.finished.emit(updated)
         except Exception as e:
+            logging.exception("Fatal error in RescoreWorker")
             self.signals.error.emit(str(e))
 
 
@@ -285,6 +290,7 @@ class FFmpegWorker(QThread):
                 stderr_output = ''.join(stderr_lines[-80:])
                 self.error.emit(f'FFmpeg exited with code {process.returncode}\n\n{stderr_output}')
         except Exception as e:
+            logging.exception("Fatal error in FFmpegWorker")
             self.error.emit(str(e))
 
     def cancel(self):
@@ -345,6 +351,7 @@ class CombineDBWorker(QThread):
             )
             self.signals.finished.emit(self.out_path)
         except Exception as e:
+            logging.exception("Fatal error in CombineDBWorker")
             self.signals.error.emit(str(e))
 
 
@@ -365,6 +372,7 @@ class VerifyPathsWorker(QThread):
                         missing.append((db_path, video_id, filepath))
             self.signals.finished.emit(missing)
         except Exception as e:
+            logging.exception("Fatal error in VerifyPathsWorker")
             self.signals.error.emit(str(e))
 
 
@@ -382,6 +390,7 @@ class CleanupWorker(QThread):
             )
             self.signals.finished.emit(count)
         except Exception as e:
+            logging.exception("Fatal error in CleanupWorker")
             self.signals.error.emit(str(e))
 
 
@@ -437,6 +446,7 @@ class ArchiveExportWorker(QThread):
             self.progress.emit(100, "Done!")
             self.finished.emit()
         except Exception as e:
+            logging.exception("Fatal error in ArchiveExportWorker")
             self.error.emit(str(e))
 
 
@@ -501,4 +511,5 @@ class ArchiveImportWorker(QThread):
             self.finished.emit(final_db_paths)
 
         except Exception as e:
+            logging.exception("Fatal error in ArchiveImportWorker")
             self.error.emit(str(e))

@@ -8,8 +8,11 @@ from PySide6.QtWidgets import QApplication
 from qt_material import apply_stylesheet
 
 import config
+import utils
 
 if __name__ == '__main__':
+    utils.setup_logging()
+
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )

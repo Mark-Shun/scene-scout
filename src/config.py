@@ -13,6 +13,7 @@ warnings.filterwarnings('ignore', category=Image.DecompressionBombWarning)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMP_FOLDER = PROJECT_ROOT / "temp"
 CONFIG_FILE = PROJECT_ROOT / "scene_scout_config.json"
+LOG_FILE = PROJECT_ROOT / "scene_scout.log"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 THEMES_DIR = ASSETS_DIR / "themes"
 
