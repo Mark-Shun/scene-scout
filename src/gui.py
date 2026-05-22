@@ -248,7 +248,7 @@ class SceneScoutApp(QMainWindow):
         vlc_args = config.get_vlc_args()
         self.vlc_instance = vlc.Instance(*vlc_args)
         self.player = self.vlc_instance.media_player_new()
-        self.vlc_end_reached.connect(self._vlc_loop_restart, Qt.QueuedConnection)
+
 
         # ---- Build the UI ----
         central_widget = QWidget()
@@ -1766,20 +1766,20 @@ class SceneScoutApp(QMainWindow):
         try:
             media = self.vlc_instance.media_new(path)
             playback_margin_ms = 100
-            if start_ms:
-                media.add_option(f'start-time={start_ms / 1000.0}')
-            if end_ms:
-                safe_end_ms = max(start_ms + 50, end_ms - playback_margin_ms)
+
+            safe_start = int(start_ms) if isinstance(start_ms, (int, float)) else 0
+            safe_end = int(end_ms) if isinstance(end_ms, (int, float)) else 0
+
+            if safe_start > 0:
+                media.add_option(f'start-time={safe_start / 1000.0}')
+            if safe_end > 0:
+                safe_end_ms = max(safe_start + 50, safe_end - playback_margin_ms)
                 media.add_option(f'stop-time={safe_end_ms / 1000.0}')
+
+            media.add_option('input-repeat=65535')
 
             self.current_media = media
             self.player.set_media(media)
-
-            def _on_end_reached(event):
-                self.vlc_end_reached.emit()
-            self._vlc_end_callback = _on_end_reached
-            events = self.player.event_manager()
-            events.event_attach(vlc.EventType.MediaPlayerEndReached, self._vlc_end_callback)
 
             window_id = int(self._video_container.winId())
             self._set_vlc_window_handle(window_id)
@@ -1792,11 +1792,6 @@ class SceneScoutApp(QMainWindow):
             self.player.stop()
             if sys.platform == 'darwin':
                 self.player.set_media(None)
-
-    def _vlc_loop_restart(self):
-        if hasattr(self, 'current_media') and self.current_media:
-            self.player.set_media(self.current_media)
-            self.player.play()
 
     def toggle_preview_playback(self):
         config.SCENE_PLAYBACK = not config.SCENE_PLAYBACK
