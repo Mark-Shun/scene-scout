@@ -522,7 +522,7 @@ class SceneScoutApp(QMainWindow):
 
         opts_layout.addWidget(QLabel('Frames to pool per scene:'))
         self._frames_pool_spin = QSpinBox()
-        self._frames_pool_spin.setRange(1, 10)
+        self._frames_pool_spin.setRange(1, 20)
         self._frames_pool_spin.setValue(self.config.get('frames_per_scene', 3))
         self._frames_pool_spin.valueChanged.connect(lambda v: self.save_config_key('frames_per_scene', v))
         self._frames_pool_spin.setToolTip('Extracts N frames evenly across a scene and combines them (Max Pooling) for higher accuracy. 1 is fastest, 3-5 is optimal.')
@@ -530,7 +530,7 @@ class SceneScoutApp(QMainWindow):
 
         opts_layout.addWidget(QLabel('Results:'))
         self._top_k_spin = QSpinBox()
-        self._top_k_spin.setRange(1, 100)
+        self._top_k_spin.setRange(1, 999)
         self._top_k_spin.setValue(self.config.get('top_k', 20))
         self._top_k_spin.valueChanged.connect(lambda v: self.save_config_key('top_k', v))
         self._top_k_spin.setToolTip('How many matching scenes to return for each search.')
