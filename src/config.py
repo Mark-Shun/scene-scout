@@ -50,7 +50,8 @@ DEFAULT_CONFIG = {
     "export_audio_bitrate": "192k",
     "export_open_folder": True,
     "gpu_standby": True,
-    "idle_offload_seconds": 300
+    "idle_offload_seconds": 300,
+    "log_level": "WARNING"
 }
 
 def load_config() -> Dict[str, Any]:

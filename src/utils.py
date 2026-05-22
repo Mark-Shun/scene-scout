@@ -10,8 +10,21 @@ import config
 
 def setup_logging():
     """Initializes a globally accessible, thread-safe rotating logging system."""
+
+    app_config = config.load_config()
+    log_level_str = app_config.get("log_level", "INFO").upper()
+
+    levels = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL
+    }
+    log_level = levels.get(log_level_str, logging.INFO)
+
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(log_level)
 
     file_handler = RotatingFileHandler(
         config.LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8'

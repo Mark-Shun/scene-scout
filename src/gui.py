@@ -1319,7 +1319,7 @@ class SceneScoutApp(QMainWindow):
         dlg.setWindowTitle(f'Missing Files ({len(missing_files)})')
         dlg.setMinimumSize(700, 450)
         dlg.resize(700, 500)
-        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
 
         layout = QVBoxLayout(dlg)
         layout.setSpacing(10)
@@ -2190,7 +2190,7 @@ class SceneScoutApp(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle('Database Manager')
         dlg.resize(700, 480)
-        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
         layout = QVBoxLayout(dlg)
 
         table = QTableWidget()
@@ -2400,7 +2400,7 @@ class SceneScoutApp(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle('Queue Manager')
         dlg.resize(650, 450)
-        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
         layout = QVBoxLayout(dlg)
 
         table = QTableWidget()
@@ -2489,7 +2489,7 @@ class SceneScoutApp(QMainWindow):
         dlg = QDialog(self)
         dlg.setWindowTitle('About Scene Scout')
         dlg.setFixedSize(500, 300)
-        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
 
         main_layout = QHBoxLayout(dlg)
         main_layout.setContentsMargins(20, 20, 20, 20)
