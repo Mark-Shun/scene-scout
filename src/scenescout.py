@@ -40,6 +40,7 @@ if __name__ == '__main__':
             multiprocessing.freeze_support()
 
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel
+        from PySide6.QtCore import QTimer
 
         splash = QDialog(None, Qt.FramelessWindowHint)
         splash.setObjectName('GlassSplash')
@@ -86,27 +87,14 @@ if __name__ == '__main__':
 
         main_window = SceneScoutApp()
 
-        try:
-            def splash_status(msg):
-                status_label.setText(msg)
-                app.processEvents()
-
-            main_window.load_model(status_callback=splash_status)
-            status_label.setText('Model loaded successfully. Booting layout...')
-            app.processEvents()
-            main_window.on_model_load_finished()
-        except Exception as e:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.critical(None, 'Model Error', f'Failed to load model: {e}')
-            main_window.update_status('Error loading model.')
-
         main_window.showMaximized()
         splash.accept()
         splash.deleteLater()
 
+        QTimer.singleShot(100, main_window.threaded_load_model)
+
         if update_info and update_info.get("update_available"):
             from gui_utils import show_update_dialog
-            from PySide6.QtCore import QTimer
             QTimer.singleShot(500, lambda: show_update_dialog(main_window, update_info))
 
         sys.exit(app.exec())
