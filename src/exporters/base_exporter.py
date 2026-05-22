@@ -3,6 +3,7 @@ import re
 import sys
 import subprocess
 from typing import Any, Dict, Optional
+from datetime import date
 
 import av
 
@@ -12,7 +13,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox,
     QProgressBar, QPushButton, QLabel, QSpinBox, QCheckBox,
     QRadioButton, QFrame, QLineEdit, QGridLayout,
-    QWidget,
+    QWidget, QFileDialog
 )
 
 _FFMPEG_CACHE = None
@@ -78,6 +79,8 @@ class BaseExporter(QDialog):
         self.open_folder = self.config.get('export_open_folder', True)
         self.custom_width = self.config.get('export_custom_width', 1920)
         self.custom_height = self.config.get('export_custom_height', 1080)
+        self.container = self.config.get('export_container', 'MP4 (.mp4)')
+        self.naming_template = self.config.get('naming_template', '{source-name}_scene_{time-start}')
 
     def _get_core_ffmpeg_args(self, metadata: dict) -> list:
         args = self._get_video_encode_args()
@@ -111,6 +114,129 @@ class BaseExporter(QDialog):
             'Re-encode mode provides exact frame accuracy but takes longer.'
         )
         parent.layout().addWidget(group)
+
+    def _build_container_section(self, parent):
+        group = QGroupBox('Container')
+        layout = QHBoxLayout(group)
+        
+        layout.addWidget(QLabel('Format:'))
+        self._container_combo = QComboBox()
+        self._container_combo.addItems(list(self.CONTAINERS.keys()))
+        idx = self._container_combo.findText(self.container)
+        if idx >= 0:
+            self._container_combo.setCurrentIndex(idx)
+            
+        self._container_combo.currentTextChanged.connect(self._update_preview_display)
+        layout.addWidget(self._container_combo)
+        layout.addStretch()
+        
+        parent.layout().addWidget(group)
+
+    def _build_naming_section(self, parent, is_bulk=False):
+        self.is_bulk = is_bulk
+        group = QGroupBox('Output & Naming')
+        layout = QVBoxLayout(group)
+
+        path_layout = QHBoxLayout()
+        self._output_dir_edit = QLineEdit()
+        path_layout.addWidget(self._output_dir_edit)
+        
+        browse_btn = QPushButton('Browse...')
+        browse_btn.clicked.connect(self._browse_output_dir if is_bulk else self._browse_output)
+        path_layout.addWidget(browse_btn)
+        layout.addLayout(path_layout)
+
+        temp_layout = QHBoxLayout()
+        temp_layout.addWidget(QLabel('Template:'))
+        self._template_edit = QLineEdit(self.naming_template)
+        self._template_edit.textChanged.connect(self._update_preview_display)
+        temp_layout.addWidget(self._template_edit)
+
+        self.tag_options = {
+            "Original Name": "{source-name}", "Date": "{date-today}", "Scene ID": "{scene-id}",
+            "Start": "{time-start}", "End": "{time-end}", "Codec": "{codec}", "Res": "{res}",
+        }
+        self._tag_selector = QComboBox()
+        self._tag_selector.addItem("Insert Tag...")
+        self._tag_selector.addItems(list(self.tag_options.keys()))
+        self._tag_selector.activated.connect(self._on_tag_selected)
+        temp_layout.addWidget(self._tag_selector)
+        layout.addLayout(temp_layout)
+
+        layout.addWidget(QLabel("Filename Preview:"))
+        self._preview_label = QLabel()
+        self._preview_label.setWordWrap(True)
+        self._preview_label.setStyleSheet("font-style: italic; color: gray;")
+        layout.addWidget(self._preview_label)
+
+        parent.layout().addWidget(group)
+
+    def _on_tag_selected(self, index):
+        if index <= 0: return
+        tag_key = self._tag_selector.currentText()
+        tag_val = self.tag_options.get(tag_key)
+        if tag_val:
+            # Insert tag at current cursor position
+            self._template_edit.insert(tag_val)
+        
+        # Reset dropdown silently
+        self._tag_selector.blockSignals(True)
+        self._tag_selector.setCurrentIndex(0)
+        self._tag_selector.blockSignals(False)
+
+    def _resolve_naming_template(self, template: str, metadata: dict, video_path: str, start_ms: int, end_ms: int, scene_idx: int = 0) -> str:
+        tags = {
+            '{source-name}': os.path.splitext(os.path.basename(video_path))[0],
+            '{scene-id}': str(scene_idx + 1),
+            '{time-start}': f"{start_ms / 1000.0:.1f}s",
+            '{time-end}': f"{end_ms / 1000.0:.1f}s",
+            '{duration}': f"{(end_ms - start_ms) / 1000.0:.1f}s",
+            '{codec}': metadata.get('video_codec', 'unknown') if metadata else 'unknown',
+            '{res}': f"{metadata.get('width', 0)}x{metadata.get('height', 0)}" if metadata else "0x0",
+            '{date-today}': date.today().isoformat(),
+        }
+        result = template
+        for tag, value in tags.items():
+            result = result.replace(tag, value)
+        
+        # Sanitize OS-invalid characters
+        sanitized = re.sub(r'[*?:"<>|]', "_", result)
+        return os.path.normpath(sanitized)
+
+    def _update_preview_display(self):
+        metadata, v_path, s_ms, e_ms = self._get_preview_params()
+        template = self._template_edit.text() if hasattr(self, '_template_edit') else self.naming_template
+        filename = self._resolve_naming_template(template, metadata, v_path, s_ms, e_ms)
+        
+        combo_text = self._container_combo.currentText() if hasattr(self, '_container_combo') else self.container
+        ext = self.CONTAINERS.get(combo_text, '.mp4')
+        full_name = f"{filename}{ext}"
+        
+        if hasattr(self, '_preview_label'):
+            self._preview_label.setText(full_name)
+
+        # For Single Exporter: Dynamically update the full file path string in the UI
+        if not getattr(self, 'is_bulk', True) and hasattr(self, '_output_dir_edit'):
+            current_path = self._output_dir_edit.text()
+            folder = os.path.dirname(current_path) if current_path else os.path.dirname(v_path)
+            new_path = os.path.join(folder, full_name)
+            if current_path != new_path:
+                self._output_dir_edit.setText(new_path)
+
+    def _get_preview_params(self):
+        # Override in subclasses
+        return {}, 'video.mp4', 0, 10000
+
+    def _browse_output_dir(self):
+        path = QFileDialog.getExistingDirectory(self, 'Choose Bulk Export Folder', self._output_dir_edit.text() or os.getcwd())
+        if path:
+            self._output_dir_edit.setText(path)
+
+    def _browse_output(self):
+        initial = self._output_dir_edit.text()
+        path, _ = QFileDialog.getSaveFileName(self, 'Export Scene As', initial, 'All Files (*.*)')
+        if path:
+            self._output_dir_edit.setText(path)
 
     def _build_video_options(self, parent):
         self._video_group = QGroupBox('Video Options')
@@ -235,6 +361,10 @@ class BaseExporter(QDialog):
         self.config['export_open_folder'] = self._open_folder_check.isChecked()
         self.config['export_custom_width'] = int(self._width_edit.text())
         self.config['export_custom_height'] = int(self._height_edit.text())
+        
+        # New Settings to Save
+        self.config['export_container'] = self._container_combo.currentText()
+        self.config['naming_template'] = self._template_edit.text()
 
     def _get_ffmpeg_path(self) -> str:
         global _FFMPEG_CACHE
@@ -336,6 +466,7 @@ def get_video_info_and_keyframe(video_path: str, target_ms: int) -> Dict[str, An
     finally:
         if container:
             container.close()
+
 
 VIDEO_CODEC_MAP = {
     'H.264 (libx264)': 'libx264', 'H.265 (libx265)': 'libx265',

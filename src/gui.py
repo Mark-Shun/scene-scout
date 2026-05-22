@@ -573,6 +573,7 @@ class SceneScoutApp(QMainWindow):
         theme_layout = QHBoxLayout(theme_frame)
         theme_layout.setContentsMargins(0, 0, 0, 0)
         self._theme_combobox = QComboBox()
+        self._theme_combobox.setMaxVisibleItems(10)
 
         default_theme = config.DEFAULT_CONFIG.get('theme', 'dark_lightgreen.xml')
         saved_theme = self.config.get('theme', default_theme)

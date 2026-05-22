@@ -33,27 +33,19 @@ class SingleExportDialog(BaseExporter):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
 
-        self._build_output_section(layout)
+        self._build_container_section(layout)
         self._build_mode_section(layout)
+        self._build_naming_section(layout, is_bulk=False)
         self._build_video_options(layout)
         self._build_audio_options(layout)
         self._build_progress_section(layout)
         self._build_button_section(layout, export_text='Export')
+        
         self._update_widget_states()
+        self._update_preview_display() # Force first update to generate the full default path
 
-    def _build_output_section(self, layout):
-        group = QGroupBox('Output')
-        group_layout = QVBoxLayout(group)
-        path_row = QHBoxLayout()
-
-        self._output_path_edit = QLineEdit(self._generate_default_output())
-        path_row.addWidget(self._output_path_edit)
-
-        browse_btn = QPushButton('Browse...')
-        browse_btn.clicked.connect(self._browse_output)
-        path_row.addWidget(browse_btn)
-        group_layout.addLayout(path_row)
-        layout.addWidget(group)
+    def _get_preview_params(self):
+        return self.metadata, self.video_path, self.start_ms, self.end_ms
 
     def _build_progress_section(self, layout):
         self._progress_bar = QProgressBar()
@@ -66,25 +58,6 @@ class SingleExportDialog(BaseExporter):
         self._keyframe_info_label = QLabel(self._get_keyframe_info())
         self._keyframe_info_label.setStyleSheet('font-size: 8pt;')
         layout.addWidget(self._keyframe_info_label)
-
-    def _generate_default_output(self) -> str:
-        base = os.path.splitext(os.path.basename(self.video_path))[0]
-        start_sec = self.start_ms / 1000.0
-        end_sec = self.end_ms / 1000.0
-        return os.path.join(
-            os.path.dirname(self.video_path),
-            f'{base}_scene_{start_sec:.1f}s-{end_sec:.1f}s.mp4',
-        )
-
-    def _browse_output(self):
-        initial = self._output_path_edit.text()
-        path, _ = QFileDialog.getSaveFileName(
-            self, 'Export Scene As',
-            initial,
-            'MP4 Video (*.mp4);;Matroska Video (*.mkv);;WebM Video (*.webm);;All Files (*.*)',
-        )
-        if path:
-            self._output_path_edit.setText(path)
 
     def _get_keyframe_info(self) -> str:
         if self._mode_copy.isChecked():
@@ -99,7 +72,7 @@ class SingleExportDialog(BaseExporter):
         config.save_config(self.config)
 
     def _start_export(self):
-        output_path = self._output_path_edit.text()
+        output_path = self._output_dir_edit.text()
         if not output_path:
             QMessageBox.critical(self, 'Error', 'Please specify an output path.')
             return
@@ -142,8 +115,9 @@ class SingleExportDialog(BaseExporter):
             exact_seek = start_sec - fast_seek
             cmd.extend(['-ss', str(fast_seek), '-i', self.video_path, '-ss', str(exact_seek)])
             cmd.extend(self._get_core_ffmpeg_args(self.metadata))
+            
         duration_sec = self.duration_ms / 1000.0
-        cmd.extend(['-t', str(duration_sec), self._output_path_edit.text()])
+        cmd.extend(['-t', str(duration_sec), self._output_dir_edit.text()])
         return cmd
 
     def _update_progress(self, progress: float, status: str):
@@ -154,7 +128,7 @@ class SingleExportDialog(BaseExporter):
         self._progress_bar.setValue(100)
         self._status_label.setText('Export complete!')
 
-        output_path = self._output_path_edit.text()
+        output_path = self._output_dir_edit.text()
 
         if self._open_folder_check.isChecked():
             output_abs = os.path.abspath(output_path)
@@ -186,6 +160,3 @@ class SingleExportDialog(BaseExporter):
             self._ffmpeg_worker.cancel()
         else:
             self.reject()
-
-
-
