@@ -1,0 +1,92 @@
+QWidget {
+    background-color: #ECE9D8;
+    color: #000000;
+    font-family: "Tahoma", "Segoe UI", sans-serif;
+    font-size: 10pt;
+}
+
+QGroupBox {
+    background-color: #ECE9D8;
+    border: 1px solid #003399; /* Classic Luna Blue */
+    border-radius: 4px;
+    margin-top: 15px;
+    padding-top: 15px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px;
+    color: #003399;
+    font-weight: bold;
+}
+
+/* Standard XP Button with slight metallic/blue gradient */
+QPushButton {
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                stop: 0 #F4F3EE, 
+                                stop: 1.0 #D5D2CA);
+    border: 1px solid #003C74;
+    border-radius: 3px;
+    padding: 5px 12px;
+    color: #000000;
+}
+
+QPushButton:hover {
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                stop: 0 #FFDCA0, 
+                                stop: 1.0 #FFB03B); /* XP Orange Hover */
+    border: 1px solid #CE7D00;
+}
+
+QPushButton:pressed {
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                stop: 0 #E4E3DF, 
+                                stop: 1.0 #C2BFA8);
+    border: 1px solid #003C74;
+}
+
+QPushButton:disabled {
+    color: #ACA899;
+    border: 1px solid #C9C7BA;
+    background: #F4F3EE;
+}
+
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #FFFFFF;
+    border: 1px solid #7F9DB9;
+    padding: 3px;
+    selection-background-color: #316AC5;
+    selection-color: #FFFFFF;
+}
+
+QTableView, QListWidget {
+    background-color: #FFFFFF;
+    gridline-color: #D0D0BF;
+    border: 1px solid #7F9DB9;
+    selection-background-color: #316AC5;
+    selection-color: #FFFFFF;
+}
+
+QHeaderView::section {
+    background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                stop: 0 #F8F8F5, 
+                                stop: 1.0 #EBEAE2);
+    border: none;
+    border-right: 1px solid #D0D0BF;
+    border-bottom: 1px solid #D0D0BF;
+    padding: 4px;
+}
+
+QDialog#GlassSplash {
+    background-color: #ECE9D8;
+    border: 2px solid #003399;
+    border-radius: 12px;
+}
+
+QLabel#SplashStatus {
+    color: #003399;
+    font-size: 10pt;
+    margin-top: 15px;
+    font-weight: bold;
+}

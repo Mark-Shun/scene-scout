@@ -622,6 +622,15 @@ class SceneScoutApp(QMainWindow):
 
     def _get_available_themes(self):
         return [
+            # --- Custom QSS Themes ---
+            "default_light.qss",
+            "fruitiger_aero.qss",
+            "luna_blue.qss",
+            "sakura.qss",
+            "matrix.qss",
+            "ubuntu.qss",
+            "win2k.qss",
+            # --- qt-material themes ---
             "dark_teal.xml",
             "dark_amber.xml",
             "dark_blue.xml",
@@ -1989,10 +1998,21 @@ class SceneScoutApp(QMainWindow):
             return
         self.save_config_key('theme', selected)
         try:
-            from qt_material import apply_stylesheet
             app = QApplication.instance()
-            apply_stylesheet(app, theme=selected, extra={'density_scale': '0'})
-            is_dark = 'dark' in selected
+            is_dark = 'dark' in selected.lower()
+
+            if selected.endswith('.xml'):
+                from qt_material import apply_stylesheet
+                apply_stylesheet(app, theme=selected, extra={'density_scale': '0'})
+            elif selected.endswith('.qss'):
+                theme_path = config.THEMES_DIR / selected
+                if theme_path.exists():
+                    with open(theme_path, "r", encoding="utf-8") as f:
+                        app.setStyleSheet(f.read())
+                else:
+                    QMessageBox.warning(self, 'Theme Missing', f'Could not find {selected} in assets/themes/')
+                    return
+
             self._video_container.setStyleSheet(
                 'background-color: black;' if is_dark else 'background-color: #d3d3d3;'
             )

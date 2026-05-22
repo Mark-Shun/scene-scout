@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMP_FOLDER = PROJECT_ROOT / "temp"
 CONFIG_FILE = PROJECT_ROOT / "scene_scout_config.json"
 ASSETS_DIR = PROJECT_ROOT / "assets"
+THEMES_DIR = ASSETS_DIR / "themes"
 
 big_logo = ASSETS_DIR / "logo" / "scene-scout-logo.png"
 text_logo = ASSETS_DIR / "logo" / "scene-scout-text-logo.png"

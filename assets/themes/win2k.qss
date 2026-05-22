@@ -1,0 +1,85 @@
+QWidget {
+    background-color: #D4D0C8;
+    color: #000000;
+    font-family: "MS Sans Serif", "Tahoma", sans-serif;
+    font-size: 10pt;
+}
+
+QGroupBox {
+    border: 2px groove #FFFFFF;
+    margin-top: 15px;
+    padding-top: 10px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 3px;
+}
+
+/* Hard 3D Outset Border */
+QPushButton {
+    background-color: #D4D0C8;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-bottom: 2px solid #404040;
+    border-right: 2px solid #404040;
+    padding: 4px 10px;
+}
+
+QPushButton:hover {
+    background-color: #DFDFDF;
+}
+
+/* Inset border when clicked */
+QPushButton:pressed {
+    border-top: 2px solid #404040;
+    border-left: 2px solid #404040;
+    border-bottom: 2px solid #FFFFFF;
+    border-right: 2px solid #FFFFFF;
+    padding: 5px 9px 3px 11px; /* Shifts text down-right slightly */
+}
+
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #FFFFFF;
+    border-top: 2px solid #404040;
+    border-left: 2px solid #404040;
+    border-bottom: 2px solid #FFFFFF;
+    border-right: 2px solid #FFFFFF;
+    padding: 2px;
+    selection-background-color: #000080; /* Classic Navy Blue */
+    selection-color: #FFFFFF;
+}
+
+QTableView, QListWidget {
+    background-color: #FFFFFF;
+    border-top: 2px solid #404040;
+    border-left: 2px solid #404040;
+    border-bottom: 2px solid #FFFFFF;
+    border-right: 2px solid #FFFFFF;
+    gridline-color: #C0C0C0;
+    selection-background-color: #000080;
+    selection-color: #FFFFFF;
+}
+
+QHeaderView::section {
+    background-color: #D4D0C8;
+    border-top: 1px solid #FFFFFF;
+    border-left: 1px solid #FFFFFF;
+    border-bottom: 1px solid #404040;
+    border-right: 1px solid #404040;
+    padding: 3px;
+}
+
+QDialog#GlassSplash {
+    background-color: #D4D0C8;
+    border: 2px solid #000080;
+    border-radius: 12px;
+}
+
+QLabel#SplashStatus {
+    color: #000080;
+    font-size: 10pt;
+    margin-top: 15px;
+    font-weight: bold;
+}

@@ -2,7 +2,7 @@ import sys
 from update_checker import check_for_update
 import multiprocessing
 
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QPalette
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 from qt_material import apply_stylesheet
@@ -18,7 +18,15 @@ if __name__ == '__main__':
     saved_config = config.load_config()
     initial_theme = saved_config.get('theme', 'dark_teal.xml')
     try:
-        apply_stylesheet(app, theme=initial_theme, extra={'density_scale': '0'})
+        if initial_theme.endswith('.xml'):
+            apply_stylesheet(app, theme=initial_theme, extra={'density_scale': '0'})
+        elif initial_theme.endswith('.qss'):
+            theme_path = config.THEMES_DIR / initial_theme
+            if theme_path.exists():
+                with open(theme_path, "r", encoding="utf-8") as f:
+                    app.setStyleSheet(f.read())
+            else:
+                print(f"Warning: Custom theme file not found at {theme_path}")
     except Exception as e:
         print(f'Failed to load theme: {e}')
 
@@ -45,18 +53,25 @@ if __name__ == '__main__':
         splash = QDialog(None, Qt.FramelessWindowHint)
         splash.setObjectName('GlassSplash')
         splash.setFixedSize(450, 320)
-        splash.setStyleSheet("""
-            QDialog#GlassSplash {
-                background-color: rgba(43, 43, 43, 0.85);
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                border-radius: 12px;
-            }
-            QLabel#SplashStatus {
-                color: #b0b0b0;
-                font-size: 10pt;
-                margin-top: 15px;
-            }
-        """)
+
+        if initial_theme.endswith('.xml'):
+            pal = app.palette()
+            bg_color = pal.color(QPalette.Window).name()
+            border_color = pal.color(QPalette.Highlight).name()
+            text_color = pal.color(QPalette.WindowText).name()
+
+            splash.setStyleSheet(f"""
+                QDialog#GlassSplash {{
+                    background-color: {bg_color};
+                    border: 2px solid {border_color};
+                    border-radius: 12px;
+                }}
+                QLabel#SplashStatus {{
+                    color: {text_color};
+                    font-size: 10pt;
+                    margin-top: 15px;
+                }}
+            """)
         splash_layout = QVBoxLayout(splash)
         splash_layout.setAlignment(Qt.AlignCenter)
         splash_layout.setContentsMargins(30, 40, 30, 30)
