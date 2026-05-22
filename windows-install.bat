@@ -1,7 +1,16 @@
 @echo off
 setlocal
 
-echo ---Installation script for Scene Scout---
+set "LOGO_ASCII=assets\logo\logo.txt"
+
+cls
+if exist "%LOGO_ASCII%" (
+    type "%LOGO_ASCII%"
+) else (
+    echo [!] logo.txt not found.
+)
+echo.
+echo ---Windows installation script for Scene Scout---
 
 :: Teleport to the script's actual directory
 cd /d "%~dp0"
@@ -22,7 +31,7 @@ set "UV_VENV_CLEAR=1"
 
 :: Set shortcut variables 
 set "NAME=Scene Scout"
-set "TARGET=scene-scout.bat"
+set "TARGET=windows-scene-scout.bat"
 set "ICON=assets\logo\scene-scout-logo.ico"
 set "BASE_DIR=%~dp0"
 set "TARGET_PATH=%BASE_DIR%%TARGET%"
@@ -115,6 +124,10 @@ if "%EXTRA%"=="" (
     exit /b 1 
 )
 
+echo EXTRA=%EXTRA%> "%BASE_DIR%.install_state"
+if not "%FLAGS%"=="" echo FLAGS=%FLAGS%>> "%BASE_DIR%.install_state"
+if not "%PY_VER%"=="" echo PY_VER=%PY_VER%>> "%BASE_DIR%.install_state"
+
 echo Running installer with extra: %EXTRA%...
 "%UV_EXE%" sync --extra %EXTRA% %FLAGS% %PY_VER% 
 
@@ -126,18 +139,21 @@ if errorlevel 1 (
 )
 
 echo.
-echo Creating shortcut for %NAME%... 
-:: Local Shortcut
-powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%SHORTCUT_PATH%'); $s.TargetPath='%TARGET_PATH%'; $s.WorkingDirectory='%BASE_DIR%'; $s.IconLocation='%ICON_PATH%'; $s.Save()"
-:: Desktop Shortcut
-powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%DESKTOP_SHORTCUT_PATH%'); $s.TargetPath='%TARGET_PATH%'; $s.WorkingDirectory='%BASE_DIR%'; $s.IconLocation='%ICON_PATH%'; $s.Save()"
+echo Checking and creating shortcuts for %NAME%... 
 
-echo.
-for %%P in ("%SHORTCUT_PATH%" "%DESKTOP_SHORTCUT_PATH%") do (
-    if exist "%%~P" (
-        powershell -Command "Write-Host '[SUCCESS] Shortcut created at: %%~P' -ForegroundColor Green"
-    ) else (
-        powershell -Command "Write-Host '[ERROR] Failed to create shortcut at: %%~P' -ForegroundColor Red"
+:: Local Folder Shortcut Check & Creation
+if not exist "%SHORTCUT_PATH%" (
+    powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%SHORTCUT_PATH%'); $s.TargetPath='%TARGET_PATH%'; $s.WorkingDirectory='%BASE_DIR%'; $s.IconLocation='%ICON_PATH%'; $s.Save()"
+    if exist "%SHORTCUT_PATH%" (
+        powershell -Command "Write-Host '[SUCCESS] Local shortcut created.' -ForegroundColor Green"
+    )
+)
+
+:: Desktop Shortcut Check & Creation
+if not exist "%DESKTOP_SHORTCUT_PATH%" (
+    powershell -ExecutionPolicy Bypass -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%DESKTOP_SHORTCUT_PATH%'); $s.TargetPath='%TARGET_PATH%'; $s.WorkingDirectory='%BASE_DIR%'; $s.IconLocation='%ICON_PATH%'; $s.Save()"
+    if exist "%DESKTOP_SHORTCUT_PATH%" (
+        powershell -Command "Write-Host '[SUCCESS] Desktop shortcut created.' -ForegroundColor Green"
     )
 )
 

@@ -21,8 +21,17 @@ except ImportError:
     torch_tensorrt = None
     TRT_AVAILABLE = False
 
+from huggingface_hub import snapshot_download
+
 # Define a path for the cached engine
 ENGINE_CACHE_PATH = os.path.join(os.path.dirname(__file__), "../", "siglip2_trt_engine.ts")
+
+def _is_model_cached(model_id: str) -> bool:
+    try:
+        snapshot_download(model_id, local_files_only=True)
+        return True
+    except Exception:
+        return False
 
 def get_compute_device(device_choice=None):
     """
@@ -69,11 +78,13 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
             status_callback(text)
 
     update(f"Hardware Status: {msg}")
-    update("Loading processor config...")
 
+    model_cached = _is_model_cached(config.DEFAULT_MODEL)
+
+    update("Loading processor config..." if model_cached else "Downloading processor config... (first run)")
     processor = AutoProcessor.from_pretrained(config.DEFAULT_MODEL, token=config.get_hf_token())
 
-    update(f"Loading weights in {str(dtype).split('.')[-1]}...")
+    update(f"Loading weights in {str(dtype).split('.')[-1]}..." if model_cached else f"Downloading weights ({str(dtype).split('.')[-1]})... (first run)")
     model = Siglip2Model.from_pretrained(
             config.DEFAULT_MODEL, 
             token=config.get_hf_token(), 

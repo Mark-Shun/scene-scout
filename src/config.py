@@ -14,6 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMP_FOLDER = PROJECT_ROOT / "temp"
 CONFIG_FILE = PROJECT_ROOT / "scene_scout_config.json"
 ASSETS_DIR = PROJECT_ROOT / "assets"
+THEMES_DIR = ASSETS_DIR / "themes"
 
 big_logo = ASSETS_DIR / "logo" / "scene-scout-logo.png"
 text_logo = ASSETS_DIR / "logo" / "scene-scout-text-logo.png"
@@ -26,7 +27,7 @@ VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.t
 DEFAULT_CONFIG = {
     "generate_thumbnails": True,
     "scene_playback": True,
-    "theme": "radiance",
+    "theme": "dark_lightgreen.xml",
     "use_trt": False,
     "use_vlc_open": True,
     "device": None,
@@ -34,6 +35,7 @@ DEFAULT_CONFIG = {
     "batch_size": 16,
     "fast_detect": True,
     "max_patches": 256,
+    "frames_per_scene": 3,
     "active_databases": [],
     "primary_database": "",
     "github_token": "",

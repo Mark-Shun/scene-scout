@@ -54,3 +54,4 @@ models/
 
 # Scene Scout specific folder
 temp/
+.install_state

@@ -1,201 +1,167 @@
 import os
 import sys
-import tkinter as tk
-from tkinter import ttk
-from PIL import Image, ImageTk
 import webbrowser
-import re
+from pathlib import Path
+
+from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QProgressBar, QMessageBox, QTextBrowser, QWidget,
+)
 
 
-class ToolTip:
-    """Creates a tooltip for a given widget."""
-    def __init__(self, widget, text, delay=500):
-        self.widget = widget
-        self.text = text
-        self.delay = delay
-        self._after_id = None
-        self._tipwindow = None
-        self.widget.bind('<Enter>', self._schedule)
-        self.widget.bind('<Leave>', self._hide)
-        self.widget.bind('<Motion>', self._move)
-
-    def _schedule(self, event=None):
-        self._unschedule()
-        self._after_id = self.widget.after(self.delay, self._show)
-
-    def _unschedule(self):
-        if self._after_id:
-            self.widget.after_cancel(self._after_id)
-            self._after_id = None
-
-    def _show(self):
-        if self._tipwindow or not self.text:
-            return
-        x = self.widget.winfo_rootx() + 20
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
-        self._tipwindow = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f'+{x}+{y}')
-        label = ttk.Label(tw, text=self.text, background='#ffffe0', relief='solid', borderwidth=1, wraplength=240)
-        label.pack(ipadx=6, ipady=3)
-
-    def _move(self, event=None):
-        if self._tipwindow:
-            x = self.widget.winfo_rootx() + 20
-            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
-            self._tipwindow.wm_geometry(f'+{x}+{y}')
-
-    def _hide(self, event=None):
-        self._unschedule()
-        if self._tipwindow:
-            self._tipwindow.destroy()
-            self._tipwindow = None
-
-
-def load_app_icon(master_window, icon_path):
-    """Loads and resizes the application icon, returning the ImageTk object."""
+def load_app_icon(icon_path: str) -> QIcon:
+    """Loads and returns a QIcon from the given path."""
     try:
-        # Resize for compatibility across taskbars and window titles
-        icon_img = Image.open(icon_path).resize((64, 64), Image.Resampling.LANCZOS)
-        icon_photo = ImageTk.PhotoImage(icon_img, master=master_window)
-        
-        # Apply globally to root
-        master_window.iconphoto(True, icon_photo)
-        
-        # Native Windows optimization
-        if sys.platform == 'win32':
-            ico_path = icon_path.with_suffix('.ico')
-            if os.path.exists(ico_path):
-                master_window.iconbitmap(ico_path)
-                
-        return icon_photo
+        return QIcon(str(icon_path))
     except Exception as e:
         print(f"Icon Load Warning: {e}")
-        return None
+        return QIcon()
 
-def apply_window_icon(window, icon_obj):
-    """Manually applies the icon to Toplevel windows for cross-platform stability."""
-    if icon_obj:
-        window.iconphoto(False, icon_obj)
 
-def center_window(window, width, height):
-    """Centers a window or dialog on the screen."""
-    window.update_idletasks()
-    sw, sh = window.winfo_screenwidth(), window.winfo_screenheight()
-    x = (sw - width) // 2
-    y = (sh - height) // 2
-    window.geometry(f"{width}x{height}+{x}+{y}")
+def center_window(window: QWidget) -> None:
+    """Centers a QWidget/QMainWindow/QDialog on the primary screen."""
+    screen = QApplication.primaryScreen().geometry()
+    size = window.geometry()
+    x = (screen.width() - size.width()) // 2
+    y = (screen.height() - size.height()) // 2
+    window.move(x, y)
 
-RE_STRIP_IMAGES = re.compile(r'!\[.*?\]\(.*?\)')
-RE_STRIP_LINKS = re.compile(r'\[([^\]]+)\]\(.*?\)')
-RE_MARKDOWN_PARTS = re.compile(r'(\*\*.*?\*\*|`.*?`)')
 
-def insert_markdown(text_widget, text):
-    """A lightweight Markdown parser for tk.Text widgets."""
-    
-    text = RE_STRIP_IMAGES.sub('', text)
-    text = RE_STRIP_LINKS.sub(r'\1', text)
-    
-    if 'h1' not in text_widget.tag_names():
-        base_font = "TkDefaultFont"
-        mono_font = "TkFixedFont"
-        text_widget.tag_configure('h1', font=(base_font, 14, 'bold'), spacing1=15, spacing3=5)
-        text_widget.tag_configure('h2', font=(base_font, 12, 'bold'), spacing1=10, spacing3=5)
-        text_widget.tag_configure('h3', font=(base_font, 11, 'bold'), spacing1=10, spacing3=3)
-        text_widget.tag_configure('bold', font=(base_font, 9, 'bold'))
-        text_widget.tag_configure('code', font=(mono_font, 9))
-        text_widget.tag_configure('bullet', lmargin1=15, lmargin2=30, spacing1=2, spacing3=2)
-        text_widget.tag_configure('normal', lmargin1=5, lmargin2=5, spacing1=2, spacing3=2)
+class UpdateDialog(QDialog):
+    """A modal dialog displaying release notes for a new version."""
 
-    lines = text.split('\n')
-    for line in lines:
-        line_stripped = line.strip()
-        
-        # Handle empty lines
-        if not line_stripped:
-            text_widget.insert('end', '\n', ('normal',))
-            continue
-            
-        line_tags = tuple()
-        
-        # Parse Headers
-        if line_stripped.startswith('### '):
-            text_widget.insert('end', line_stripped[4:] + '\n', ('h3',))
-            continue
-        elif line_stripped.startswith('## '):
-            text_widget.insert('end', line_stripped[3:] + '\n', ('h2',))
-            continue
-        elif line_stripped.startswith('# '):
-            text_widget.insert('end', line_stripped[2:] + '\n', ('h1',))
-            continue
-        
-        # Parse Bullet Points
-        if line_stripped.startswith('- ') or line_stripped.startswith('* '):
-            line = '• ' + line_stripped[2:]
-            line_tags = ('bullet',)
-        else:
-            line_tags = ('normal',)
-        
-        parts = RE_MARKDOWN_PARTS.split(line)
-        
-        for part in parts:
-            if not part:
-                continue
-            if part.startswith('**') and part.endswith('**'):
-                # Apply bold tag (strip the ** asterisks)
-                tags = line_tags + ('bold',)
-                text_widget.insert('end', part[2:-2], tags)
-            elif part.startswith('`') and part.endswith('`'):
-                # Apply code tag (strip the ` backticks)
-                tags = line_tags + ('code',)
-                text_widget.insert('end', part[1:-1], tags)
-            else:
-                # Standard text
-                text_widget.insert('end', part, line_tags)
-        
-        text_widget.insert('end', '\n', line_tags)
+    progress_updated = Signal(int)
+    update_ready = Signal()
 
-def show_update_dialog(parent_app, update_info):
-    """Displays a non-blocking dialog with formatted update details."""
-    dlg = tk.Toplevel(parent_app)
-    apply_window_icon(dlg, parent_app.app_icon)
-    dlg.title("Update Available")
-    dlg.transient(parent_app)
-    dlg.grab_set()
-    
-    main_frame = ttk.Frame(dlg, padding=20)
-    main_frame.pack(fill='both', expand=True)
-    
-    # Header
-    ttk.Label(main_frame, text="A new version of Scene Scout is available!", font=('', 12, 'bold')).pack(anchor='w', pady=(0, 10))
-    ttk.Label(main_frame, text=f"Current: v{update_info['current_version']}  ➔  Latest: v{update_info['latest_version']}").pack(anchor='w', pady=(0, 15))
-    
-    # Release Notes Text Area (Scrollable)
-    notes_frame = ttk.LabelFrame(main_frame, text="Release Notes", padding=5)
-    notes_frame.pack(fill='both', expand=True, pady=(0, 15))
-    
-    # Standard tk.Text widget with wrapped words
-    text_area = tk.Text(notes_frame, wrap='word', height=14, width=70, bg=parent_app.cget('bg'), relief='flat', font=("TkDefaultFont", 9))
-    scrollbar = ttk.Scrollbar(notes_frame, command=text_area.yview)
-    text_area.configure(yscrollcommand=scrollbar.set)
-    
-    text_area.pack(side='left', fill='both', expand=True)
-    scrollbar.pack(side='right', fill='y')
-    
-    # Insert the formatted Markdown
-    insert_markdown(text_area, update_info['notes'])
-    
-    # Disable text area so the user can't type in it
-    text_area.configure(state='disabled')
-    
-    # Action Buttons
-    btn_frame = ttk.Frame(main_frame)
-    btn_frame.pack(fill='x')
-    
-    download_btn = ttk.Button(btn_frame, text="Open Release Page", command=lambda: webbrowser.open_new(update_info['url']))
-    download_btn.pack(side='left', padx=(0, 5))
-    
-    close_btn = ttk.Button(btn_frame, text="Close", command=dlg.destroy)
-    close_btn.pack(side='right')
-    
-    center_window(dlg, 600, 500)
+    def __init__(self, parent, update_info: dict):
+        super().__init__(parent)
+        self.update_info = update_info
+        self.setWindowTitle("Update Available")
+        self.setMinimumSize(600, 700)
+        self.resize(600, 700)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+
+        header = QLabel(f"Version {update_info['latest_version']} is available!")
+        header.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(header)
+
+        image_bytes = update_info.get("image_bytes")
+        if image_bytes:
+            pixmap = QPixmap()
+            pixmap.loadFromData(image_bytes)
+            img_label = QLabel()
+            scaled_pixmap = pixmap.scaled(
+                560, 200,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+            img_label.setPixmap(scaled_pixmap)
+            img_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(img_label)
+
+        text_browser = QTextBrowser()
+        text_browser.setOpenExternalLinks(True)
+        text_browser.setMarkdown(update_info.get('notes', ''))
+        layout.addWidget(text_browser)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
+        self.progress_updated.connect(self.progress_bar.setValue)
+        self.update_ready.connect(self.execute_shutdown)
+
+        btn_layout = QHBoxLayout()
+
+        self.install_btn = QPushButton("Install Update Automatically")
+        self.install_btn.setStyleSheet("font-weight: bold; background-color: #0078D7; color: white;")
+        self.install_btn.clicked.connect(self.start_automated_update)
+        btn_layout.addWidget(self.install_btn)
+
+        self.download_btn = QPushButton("Manual Download")
+        self.download_btn.clicked.connect(
+            lambda: webbrowser.open_new(update_info['url'])
+        )
+        btn_layout.addWidget(self.download_btn)
+
+        btn_layout.addStretch()
+
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.close_btn)
+
+        layout.addLayout(btn_layout)
+
+        center_window(self)
+
+    def start_automated_update(self):
+        reply = QMessageBox.question(
+            self, 'Confirm Update',
+            'Scene Scout will download the update, restart, and apply the new files. Continue?',
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        download_url = self.update_info.get('download_url')
+        is_source_zip = self.update_info.get('is_source_zip', True)
+
+        if not download_url:
+            QMessageBox.critical(self, "Update Error", "Could not find a valid download link from the API.")
+            return
+
+        self.install_btn.setEnabled(False)
+        self.download_btn.setEnabled(False)
+        self.close_btn.setEnabled(False)
+        self.progress_bar.show()
+
+        self.download_btn.setText("Downloading...")
+
+        import threading
+        import config
+        from update_manager import trigger_update_handoff, verify_environment
+
+        def run_update():
+            try:
+                self.progress_updated.emit(5)
+                if not verify_environment(str(config.PROJECT_ROOT)):
+                    raise RuntimeError("Dependency pre-check failed. Network might be unstable.")
+
+                trigger_update_handoff(
+                    download_url=download_url,
+                    is_source_zip=is_source_zip,
+                    progress_callback=lambda p: self.progress_updated.emit(10 + int(p * 0.9)),
+                )
+                self.progress_updated.emit(100)
+                self.update_ready.emit()
+            except Exception as e:
+                self._update_failed(str(e))
+
+        threading.Thread(target=run_update, daemon=True).start()
+
+    @Slot()
+    def execute_shutdown(self):
+        QApplication.quit()
+        os._exit(0)
+
+    def _update_failed(self, msg: str):
+        self.progress_bar.hide()
+        self.download_btn.setText("Manual Download")
+        self.install_btn.setEnabled(True)
+        self.download_btn.setEnabled(True)
+        self.close_btn.setEnabled(True)
+        QMessageBox.critical(self, 'Update Failed', f'Update failed: {msg}')
+
+
+def show_update_dialog(parent, update_info: dict) -> None:
+    """Convenience wrapper that creates and shows the UpdateDialog."""
+    dialog = UpdateDialog(parent, update_info)
+    dialog.exec()
