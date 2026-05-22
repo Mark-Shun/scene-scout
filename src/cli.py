@@ -35,7 +35,9 @@ COMMAND_ALIASES = {
     'ex': 'export',
     'rs': 'rescore',
     'v': 'verify',
-    'rl': 'relink'
+    'rl': 'relink',
+    'p': 'pack',
+    'up': 'unpack'
 }
 
 # --- Helper Functions ---
@@ -756,6 +758,89 @@ class SceneScoutShell(cmd.Cmd):
         print(self.update_info['notes'])
         print("-----------------------------------\n")
 
+    def do_pack(self, arg):
+        """Pack active databases into a .scdb archive. Usage: pack <output_archive.scdb>"""
+        if not arg:
+            print("Usage: pack <output_archive.scdb>")
+            return
+
+        if not self.active_databases:
+            print("Error: No active databases to pack. Use 'db add' first.")
+            return
+
+        out_path = os.path.expanduser(arg)
+        if not out_path.endswith('.scdb'):
+            out_path += '.scdb'
+
+        print(f"Packing {len(self.active_databases)} database(s) into {out_path}...")
+
+        import sqlite3
+        import zipfile
+
+        unique_videos = set()
+        for db_path in self.active_databases:
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.execute("SELECT filepath FROM processed_videos WHERE status='completed'")
+                    unique_videos.update(row[0] for row in cursor.fetchall() if os.path.exists(row[0]))
+            except Exception as e:
+                print(f"  [Warning] Failed to read {db_path}: {e}")
+
+        try:
+            with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_STORED) as archive:
+                for db_path in self.active_databases:
+                    print(f"  -> Adding Database: {os.path.basename(db_path)}")
+                    archive.write(db_path, os.path.basename(db_path))
+
+                for path in unique_videos:
+                    print(f"  -> Archiving Video: {os.path.basename(path)}")
+                    archive.write(path, f"videos/{os.path.basename(path)}")
+
+            print("Pack complete!")
+        except Exception as e:
+            print(f"Error packing archive: {e}")
+
+    def do_unpack(self, arg):
+        """Unpack a .scdb archive. Usage: unpack <archive.scdb> <destination_folder>"""
+        args = shlex.split(arg)
+        if len(args) < 2:
+            print("Usage: unpack <archive.scdb> <destination_folder>")
+            return
+
+        archive_path = os.path.expanduser(args[0])
+        target_dir = os.path.expanduser(args[1])
+
+        if not os.path.exists(archive_path):
+            print(f"Error: Archive not found at {archive_path}")
+            return
+
+        import zipfile
+        from database import remap_all_video_paths
+
+        print(f"Unpacking {os.path.basename(archive_path)} to {target_dir}...")
+        os.makedirs(target_dir, exist_ok=True)
+
+        try:
+            with zipfile.ZipFile(archive_path, 'r') as archive:
+                archive.extractall(target_dir)
+
+            extracted_dbs = [f for f in archive.namelist() if f.endswith('.db') and '/' not in f]
+            videos_folder = os.path.join(target_dir, "videos")
+
+            for db_name in extracted_dbs:
+                db_path = os.path.join(target_dir, db_name)
+                print(f"  -> Recalibrating paths for {db_name}...")
+                remap_all_video_paths(db_path, videos_folder)
+
+                if db_path not in self.active_databases:
+                    self.active_databases.append(db_path)
+                    if not self.target_db:
+                        self.target_db = db_path
+
+            print(f"Unpack successful. {len(extracted_dbs)} database(s) added to active workspace.")
+        except Exception as e:
+            print(f"Error unpacking archive: {e}")
+
     def do_exit(self, arg):
         """Exit the interactive shell."""
         if not getattr(self.state, 'silent', False):
@@ -804,6 +889,10 @@ def cli_mode(update_info=None):
     parser.add_argument('--audio-codec', type=str, default=None, help='Audio codec for export (e.g. AAC (aac), MP3 (libmp3lame))')
     parser.add_argument('--audio-bitrate', type=str, default=None, help='Audio bitrate (e.g. 128k, 192k, 256k, 320k)')
     parser.add_argument('--resolution', type=str, default=None, help='Output resolution (e.g. 1080p, 720p, 480p, or Custom 1920x1080)')
+    parser.add_argument('--pack', type=str, help='Pack active databases into the specified .scdb archive path')
+    parser.add_argument('--unpack', nargs=2, metavar=('ARCHIVE', 'DEST'), help='Unpack a .scdb archive to a destination folder')
+    parser.add_argument('--verify', action='store_true', help='Verify all video paths in the target database')
+    parser.add_argument('--relink', nargs=2, metavar=('ID', 'NEW_PATH'), help='Relink a broken video path in the database')
     args = parser.parse_args()
 
     def cli_migration_callback(msg):
@@ -951,10 +1040,53 @@ def cli_mode(update_info=None):
         if not (args.index or args.search_text or args.search_image or args.show_queue or args.remove_queue or args.clear_queue):
             sys.exit(EXIT_SUCCESS)
 
-    if not (args.index or args.search_text or args.search_image or args.show_queue or args.remove_queue or args.clear_queue):
+    if not (args.index or args.search_text or args.search_image or args.show_queue or args.remove_queue or args.clear_queue or args.verify or args.relink or args.pack or args.unpack):
         if not args.silent:
             print('No action specified. Use --help for options.')
         sys.exit(EXIT_INVALID_INPUT)
+
+    if args.verify:
+        if not target_db:
+            print('Error: No target database specified.', file=sys.stderr)
+        else:
+            from database import get_all_processed_videos
+            videos = get_all_processed_videos(target_db)
+            missing = [(vid, path) for vid, path in videos if not os.path.exists(path)]
+            if not args.silent:
+                if missing:
+                    print(f"Found {len(missing)} missing video(s):")
+                    for vid, p in missing:
+                        print(f"  [ID: {vid}] {p}")
+                else:
+                    print("All videos verified successfully.")
+
+    if args.relink:
+        if not target_db:
+            print('Error: No target database specified.', file=sys.stderr)
+        else:
+            from database import update_video_filepath
+            vid_id, new_path = int(args.relink[0]), os.path.abspath(args.relink[1])
+            if update_video_filepath(target_db, vid_id, new_path):
+                if not args.silent:
+                    print(f"Successfully relinked ID {vid_id} to {new_path}")
+            else:
+                print(f"Error: Failed to relink ID {vid_id}.", file=sys.stderr)
+
+    if args.pack:
+        if not active_dbs:
+            print('Error: No active databases to pack.', file=sys.stderr)
+        else:
+            temp_shell = SceneScoutShell(args, update_info)
+            temp_shell.active_databases = active_dbs
+            temp_shell.do_pack(args.pack)
+
+    if args.unpack:
+        archive_path, dest_dir = args.unpack
+        temp_shell = SceneScoutShell(args, update_info)
+        temp_shell.do_unpack(f'"{archive_path}" "{dest_dir}"')
+
+    if not (args.index or args.search_text or args.search_image or args.show_queue or args.remove_queue or args.clear_queue):
+        sys.exit(EXIT_SUCCESS)
 
     if args.show_queue or args.remove_queue or args.clear_queue or args.index:
         if not target_db:
