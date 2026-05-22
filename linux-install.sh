@@ -102,7 +102,7 @@ if uv sync --extra "$EXTRA" --python 3.12; then
     if [ "$CLI_ONLY" -eq 1 ]; then
         echo "NOTICE: VLC/Tkinter missing. Only CLI mode is supported."
         echo "You can install these manually if you want to use the GUI."
-        echo "Run via: ./scene-scout-cli.sh"
+        echo "Run via: ./linux-scene-scout-cli.sh"
     fi
     echo "--------------------------------------------------"
 else
@@ -111,8 +111,9 @@ else
 fi
 
 # 4. Final Permissions and Cleanup
-chmod +x "$SCRIPT_DIR/scene-scout.sh"
+chmod +x "$SCRIPT_DIR/linux-scene-scout.sh"
+chmod +x "$SCRIPT_DIR/linux-scene-scout-cli.sh"
 
 if [ "$CLI_ONLY" -eq 0 ]; then
-    echo "Run via: ./scene-scout.sh"
+    echo "Run via: ./linux-scene-scout.sh"
 fi
