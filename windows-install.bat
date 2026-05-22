@@ -1,7 +1,16 @@
 @echo off
 setlocal
 
-echo ---Installation script for Scene Scout---
+set "LOGO_ASCII=assets\logo\logo.txt"
+
+cls
+if exist "%LOGO_ASCII%" (
+    type "%LOGO_ASCII%"
+) else (
+    echo [!] logo.txt not found.
+)
+echo.
+echo ---Windows installation script for Scene Scout---
 
 :: Teleport to the script's actual directory
 cd /d "%~dp0"

@@ -4,6 +4,23 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || { echo "Failed to enter directory"; exit 1; }
 
+LOGO_ASCII="./assets/logo/logo.txt" 
+
+# --- ASCII Logo Function ---
+display_logo() {
+    clear
+    if [ -f "$LOGO_ASCII" ]; then
+        # 'cat' outputs the file content exactly as is
+        cat "$LOGO_ASCII"
+    fi
+    echo ""
+}
+
+display_logo
+# --------------------------------
+
+echo "---Linux installation script for Scene Scout---"
+
 # --- START UPDATE CHECK ---
 echo "Checking for updates..."
 REMOTE_TAG=$(curl -s --connect-timeout 2 https://api.github.com/repos/Mark-Shun/scene-scout/releases/latest | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
