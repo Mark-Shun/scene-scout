@@ -80,6 +80,69 @@ QScrollBar::handle:vertical:hover {
     background: #00FF41;
 }
 
+QCheckBox {
+    color: #00FF41;
+    spacing: 6px;
+}
+
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 2px;
+    border: 2px solid #008F11;
+    background-color: #001100;
+}
+
+QCheckBox::indicator:hover {
+    border: 2px solid #00FF41;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #00FF41;
+    border: 2px solid #00FF41;
+}
+
+QCheckBox:disabled {
+    color: #005000;
+}
+
+QCheckBox::indicator:disabled {
+    border: 2px solid #005000;
+    background-color: #000000;
+}
+
+QRadioButton {
+    color: #00FF41;
+    spacing: 6px;
+    font-weight: bold;
+}
+
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 8px;
+    border: 2px solid #008F11;
+    background-color: #001100;
+}
+
+QRadioButton::indicator:hover {
+    border: 2px solid #00FF41;
+}
+
+QRadioButton::indicator:checked {
+    background-color: #00FF41;
+    border: 2px solid #00FF41;
+}
+
+QRadioButton:disabled {
+    color: #005000;
+}
+
+QRadioButton::indicator:disabled {
+    border: 2px solid #005000;
+    background-color: #000000;
+}
+
 QDialog#GlassSplash {
     background-color: #000000;
     border: 2px solid #00FF41;

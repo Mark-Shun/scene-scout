@@ -96,6 +96,37 @@ QScrollBar::handle:vertical:hover {
     background: #FF9EBB;
 }
 
+QCheckBox {
+    color: #4A4A4A;
+    spacing: 6px;
+}
+
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 2px;
+    border: 2px solid #FFB7C5;
+    background-color: #FFFFFF;
+}
+
+QCheckBox::indicator:hover {
+    border: 2px solid #D81B60;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #D81B60;
+    border: 2px solid #D81B60;
+}
+
+QCheckBox:disabled {
+    color: #A0A0A0;
+}
+
+QCheckBox::indicator:disabled {
+    border: 2px solid #E0E0E0;
+    background-color: #F8F8F8;
+}
+
 QRadioButton {
     color: #4A4A4A;
     spacing: 6px;
