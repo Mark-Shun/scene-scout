@@ -1301,30 +1301,127 @@ class SceneScoutApp(QMainWindow):
     def show_missing_files_dialog(self, missing_files: list):
         if not missing_files:
             return
+
+        from database import update_video_filepath, delete_video_record
+
         dlg = QDialog(self)
         dlg.setWindowTitle(f'Missing Files ({len(missing_files)})')
-        dlg.setMinimumSize(500, 400)
+        dlg.setMinimumSize(700, 450)
+        dlg.resize(700, 500)
         dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
         layout = QVBoxLayout(dlg)
+        layout.setSpacing(10)
+
         header = QLabel(f'Found {len(missing_files)} missing video file(s).\n'
                         'They may have been moved, renamed, or deleted.')
         header.setWordWrap(True)
         layout.addWidget(header)
 
-        list_widget = QListWidget()
-        for db_path, video_id, filepath in missing_files:
-            list_widget.addItem(f'{os.path.basename(filepath)}  ({db_path})')
-        layout.addWidget(list_widget)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(4)
 
-        hint = QLabel('Use the Database Manager to locate or remove these entries.')
-        layout.addWidget(hint)
+        remaining = list(missing_files)
+
+        def refresh_count():
+            count_label.setText(
+                f'{len(remaining)} missing entr{"y" if len(remaining) == 1 else "ies"} remaining'
+                if remaining else 'No missing entries remaining.'
+            )
+            if not remaining:
+                header.setText('All missing files have been resolved!')
+
+        def remove_row(frame, db_path, video_id):
+            scroll_layout.removeWidget(frame)
+            frame.deleteLater()
+            for i, (rd, rv, _) in enumerate(remaining):
+                if rd == db_path and rv == video_id:
+                    remaining.pop(i)
+                    break
+            refresh_count()
+
+        all_exts = config.IMAGE_EXTENSIONS + config.VIDEO_EXTENSIONS
+        filter_str = 'Media Files (' + ' '.join(f'*{e}' for e in all_exts) + ')'
+
+        for db_path, video_id, filepath in missing_files:
+            frame = QFrame()
+            frame.setFrameShape(QFrame.StyledPanel)
+            row = QHBoxLayout(frame)
+            row.setContentsMargins(8, 6, 8, 6)
+            row.setSpacing(8)
+
+            info = QLabel(f'{os.path.basename(filepath)}\n{db_path}')
+            info.setWordWrap(True)
+            row.addWidget(info, stretch=1)
+
+            find_btn = QPushButton('Find...')
+            find_btn.clicked.connect(
+                lambda checked, d=db_path, v=video_id, f=filepath: (
+                    self._resolve_missing_find(dlg, d, v, f, filter_str,
+                                               lambda: remove_row(frame, d, v))
+                )
+            )
+            row.addWidget(find_btn)
+
+            remove_btn = QPushButton('Remove')
+            remove_btn.clicked.connect(
+                lambda checked, d=db_path, v=video_id, f=filepath: (
+                    self._resolve_missing_remove(dlg, d, v, f,
+                                                 lambda: remove_row(frame, d, v))
+                )
+            )
+            row.addWidget(remove_btn)
+
+            scroll_layout.addWidget(frame)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, stretch=1)
+
+        count_label = QLabel()
+        layout.addWidget(count_label)
+        refresh_count()
 
         close_btn = QPushButton('Close')
         close_btn.clicked.connect(dlg.accept)
         layout.addWidget(close_btn)
 
         dlg.exec()
+
+    def _resolve_missing_find(self, dlg, db_path, video_id, filepath,
+                               filter_str, on_success):
+        from database import update_video_filepath
+        new_path, _ = QFileDialog.getOpenFileName(
+            dlg, f'Locate: {os.path.basename(filepath)}', '',
+            f'{filter_str};;All Files (*)',
+        )
+        if new_path:
+            if update_video_filepath(db_path, video_id, new_path):
+                on_success()
+            else:
+                QMessageBox.warning(
+                    dlg, 'Error',
+                    'Could not update the path. The new path may already exist '
+                    'in the database.'
+                )
+
+    def _resolve_missing_remove(self, dlg, db_path, video_id, filepath,
+                                 on_success):
+        from database import delete_video_record
+        reply = QMessageBox.question(
+            dlg, 'Confirm Remove',
+            f'Remove this entry and all associated scene embeddings?\n'
+            f'{os.path.basename(filepath)}',
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            delete_video_record(db_path, video_id)
+            on_success()
 
     # ======================================================================
     # Database combine
