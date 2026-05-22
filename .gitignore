@@ -51,6 +51,7 @@ models/
 
 # Generic files
 *.lnk
+*.log
 
 # Scene Scout specific folder
 temp/

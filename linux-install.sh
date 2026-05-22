@@ -112,6 +112,26 @@ case "$user_choice" in
     *) echo "Error: Invalid selection."; exit 1 ;;
 esac
 
+# --- Initialize Install State (Overwrites old file) ---
+echo "EXTRA=$EXTRA" > "$SCRIPT_DIR/.install_state"
+[ -n "$FLAGS" ] && echo "FLAGS=$FLAGS" >> "$SCRIPT_DIR/.install_state"
+[ -n "$PY_VER" ] && echo "PY_VER=$PY_VER" >> "$SCRIPT_DIR/.install_state"
+
+# --- Custom Environment Path Setup ---
+echo "------------------------------------------"
+echo "By default, the Python environment is installed in this folder."
+read -p "Do you want to install it to a different custom path? (y/N): " use_custom
+if [[ "$use_custom" =~ ^[Yy]$ ]]; then
+    read -p "Enter full absolute path (e.g., /mnt/data/scout_env): " CUSTOM_ENV_PATH
+    if mkdir -p "$CUSTOM_ENV_PATH" 2>/dev/null; then
+        echo "Environment will be installed to: $CUSTOM_ENV_PATH"
+    else
+        echo "Error: Cannot create directory or permission denied. Falling back to local."
+        CUSTOM_ENV_PATH=""
+    fi
+fi
+echo "------------------------------------------"
+
 # --- Installation Mode Selection ---
 ACTUAL_ENV_PATH="$SCRIPT_DIR/.venv"
 if [ -n "$CUSTOM_ENV_PATH" ]; then
@@ -135,9 +155,7 @@ fi
 
 echo "Synchronizing environment with extra: $EXTRA..."
 
-echo "EXTRA=$EXTRA" > "$SCRIPT_DIR/.install_state"
-[ -n "$FLAGS" ] && echo "FLAGS=$FLAGS" >> "$SCRIPT_DIR/.install_state"
-[ -n "$PY_VER" ] && echo "PY_VER=$PY_VER" >> "$SCRIPT_DIR/.install_state"
+[ -n "$CUSTOM_ENV_PATH" ] && echo "ENV_PATH=$CUSTOM_ENV_PATH" >> "$SCRIPT_DIR/.install_state"
 
 if uv sync --extra "$EXTRA" --python 3.12; then
     echo "--------------------------------------------------"

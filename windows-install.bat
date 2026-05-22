@@ -124,9 +124,44 @@ if "%EXTRA%"=="" (
     exit /b 1 
 )
 
+:: --- Initialize Install State (Overwrites old file) ---
 echo EXTRA=%EXTRA%> "%BASE_DIR%.install_state"
 if not "%FLAGS%"=="" echo FLAGS=%FLAGS%>> "%BASE_DIR%.install_state"
 if not "%PY_VER%"=="" echo PY_VER=%PY_VER%>> "%BASE_DIR%.install_state"
+
+:: --- Custom Environment Path Setup ---
+echo.
+choice /C YN /M "Do you want to install the Python environment to a different drive/folder?"
+if errorlevel 2 goto SKIP_CUSTOM_PATH
+
+:PROMPT_CUSTOM_PATH
+set /p "CUSTOM_ENV_PATH=Enter the full absolute path (e.g., D:\scout_env): "
+set "CUSTOM_ENV_PATH=%CUSTOM_ENV_PATH:"=%"
+
+:: Validate Path
+set "PARENT_DIR=%~dp0"
+for %%I in ("%CUSTOM_ENV_PATH%") do set "PARENT_DIR=%%~dpI"
+
+if not exist "%PARENT_DIR%" (
+    echo [!] The parent folder does not exist. Try again.
+    goto PROMPT_CUSTOM_PATH
+)
+
+mkdir "%CUSTOM_ENV_PATH%" 2>nul
+if exist "%CUSTOM_ENV_PATH%" (
+    echo [SUCCESS] Environment will be installed to: %CUSTOM_ENV_PATH%
+    echo ENV_PATH=%CUSTOM_ENV_PATH%>> "%~dp0\.install_state"
+) else (
+    echo [!] Access Denied. Falling back to local.
+    set "CUSTOM_ENV_PATH="
+)
+
+:: --- CRITICAL FIX: ADD THESE LINES BEFORE THE PROMPT ---
+echo.
+echo ------------------------------------------
+:: This ensures the next prompt has a fresh line
+
+:SKIP_CUSTOM_PATH
 
 :: --- Installation Mode Selection ---
 :: Determine where the virtual environment currently lives
