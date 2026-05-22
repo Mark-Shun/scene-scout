@@ -11,7 +11,6 @@ import numpy as np
 import torch
 
 from PIL import Image
-from scenedetect import detect
 from scenedetect.detectors import AdaptiveDetector
 from tqdm import tqdm
 
@@ -147,10 +146,15 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
     if not silent:
         tqdm.write(f"Accurate processing: {os.path.basename(video_path)}")
     
-    # --- STAGE 1: Accurate Scene Detection ---
-    # Threshold 27.0 is usually standard for 'ContentDetector'
-    detector = AdaptiveDetector(adaptive_threshold=3.0)
-    scene_list = detect(video_path, detector, show_progress=not silent)
+    # --- STAGE 1: Multi-Threaded Scene Detection (PyAV backend) ---
+    from scenedetect import open_video, SceneManager, Interpolation
+
+    video = open_video(video_path, backend="pyav", threading_mode="AUTO")
+    scene_manager = SceneManager()
+    scene_manager.add_detector(AdaptiveDetector(adaptive_threshold=3.0))
+    scene_manager.interpolation = Interpolation.NEAREST
+    scene_manager.detect_scenes(video, show_progress=not silent)
+    scene_list = scene_manager.get_scene_list()
     
     if not scene_list:
         return False
