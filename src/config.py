@@ -34,6 +34,7 @@ DEFAULT_CONFIG = {
     "batch_size": 16,
     "fast_detect": True,
     "max_patches": 256,
+    "frames_per_scene": 3,
     "active_databases": [],
     "primary_database": "",
     "github_token": "",

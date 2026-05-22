@@ -520,6 +520,14 @@ class SceneScoutApp(QMainWindow):
         self._max_patches_spin.setToolTip('Number of patches to evaluate per scene; higher values may improve accuracy but increase runtime.')
         opts_layout.addWidget(self._max_patches_spin)
 
+        opts_layout.addWidget(QLabel('Frames to pool per scene:'))
+        self._frames_pool_spin = QSpinBox()
+        self._frames_pool_spin.setRange(1, 10)
+        self._frames_pool_spin.setValue(self.config.get('frames_per_scene', 3))
+        self._frames_pool_spin.valueChanged.connect(lambda v: self.save_config_key('frames_per_scene', v))
+        self._frames_pool_spin.setToolTip('Extracts N frames evenly across a scene and combines them (Max Pooling) for higher accuracy. 1 is fastest, 3-5 is optimal.')
+        opts_layout.addWidget(self._frames_pool_spin)
+
         opts_layout.addWidget(QLabel('Results:'))
         self._top_k_spin = QSpinBox()
         self._top_k_spin.setRange(1, 100)
@@ -1043,6 +1051,7 @@ class SceneScoutApp(QMainWindow):
             generate_thumbnails=self.config.get('generate_thumbnails', True),
             max_num_patches=self.config.get('max_patches', 256),
             fast_scene_detect=self.config.get('fast_detect', True),
+            frames_per_scene=self.config.get('frames_per_scene', 3),
         )
         self._index_worker = worker
         self._run_worker(worker, bridge)

@@ -9,6 +9,7 @@ av.logging.set_level(av.logging.PANIC)
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from PIL import Image
 from scenedetect.detectors import AdaptiveDetector
@@ -19,25 +20,42 @@ from database import cleanup_orphaned_entries, get_fast_conn
 from utils import normalize_embedding
 
 
-def _run_batch_inference(frames, info, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None):
-    """Internal helper to handle SigLIP2 inference and DB insertion."""
-    if not frames:
+def _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None):
+    """
+    Expects batch_scene_data as a list of tuples:
+    [(scene_idx, start_ms, end_ms, [frame_1, frame_2, ...]), ...]
+    """
+    if not batch_scene_data:
         return
 
     try:
-        inputs = processor(images=frames, return_tensors='pt').to(device)
-        
+        flat_frames = []
+        info = []
+
+        for scene_idx, s_ms, e_ms, frames in batch_scene_data:
+            flat_frames.extend(frames)
+            info.append((scene_idx, s_ms, e_ms, frames))
+
+        inputs = processor(images=flat_frames, return_tensors='pt').to(device)
+
         with torch.no_grad():
             output = model.get_image_features(**inputs)
             features = output.pooler_output if hasattr(output, 'pooler_output') else output[0]
-            embeddings = features.cpu().numpy().astype(np.float32)
-        for idx, (scene_idx, start_ms, end_ms) in enumerate(info):
+
+            B = len(batch_scene_data)
+            N = len(batch_scene_data[0][3])
+            pooled_features = torch.max(features.view(B, N, -1), dim=1)[0]
+
+            normalized_features = F.normalize(pooled_features, p=2, dim=1)
+            embeddings = normalized_features.cpu().numpy().astype(np.float32)
+
+        for idx, (scene_idx, start_ms, end_ms, frames) in enumerate(info):
             emb_bytes = embeddings[idx].tobytes()
             thumb_bytes = None
 
             if generate_thumbnails:
-                thumb = frames[idx].copy()
-                # Restrict max size to 160px width and 90px height to natively fit the 3 rows
+                middle_idx = len(frames) // 2
+                thumb = frames[middle_idx].copy()
                 thumb.thumbnail((160, 90), Image.Resampling.BILINEAR)
                 buffer = io.BytesIO()
                 thumb.save(buffer, format="JPEG", quality=60, optimize=True)
@@ -48,9 +66,10 @@ def _run_batch_inference(frames, info, model, processor, device, cursor, video_i
                 (video_id, scene_index, start_time_ms, end_time_ms, embedding, thumbnail) 
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (video_id, scene_idx, start_ms, end_ms, emb_bytes, thumb_bytes))
-        
+
         if pbar:
-            pbar.update(len(info))
+            pbar.update(len(batch_scene_data))
+
     except Exception as e:
         if pbar is None or not getattr(pbar, 'disable', False):
             tqdm.write(f"Inference Error: {e}")
@@ -60,33 +79,24 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, video_i
         tqdm.write(f"Fast processing: {os.path.basename(video_path)}")
     
     try:
-        # Use options to ignore errors in the container header
         container = av.open(video_path, options={'err_detect': 'ignore_err'})
         video_stream = container.streams.video[0]
-        
-        # Disable multi-threading to prevent Picture Order Count (POC) collisions
-        video_stream.thread_type = "NONE" 
-        
-        # Force the decoder to only bother with keyframes at the hardware level
+        video_stream.thread_type = "NONE"
         video_stream.codec_context.skip_frame = 'NONKEY'
         
         total_duration_ms = int((container.duration / av.time_base) * 1000)
-        
-        # Calculate a safe margin (~2 frames) to prevent player bleeding into the next scene
         fps = float(video_stream.average_rate) if video_stream.average_rate and video_stream.average_rate > 0 else 30.0
         safe_margin_ms = int((1000 / fps) * 2)
 
-        pbar = tqdm(total=total_duration_ms / 60000, position=1, unit='min', unit_scale=True, 
+        pbar = tqdm(total=total_duration_ms / 60000, position=1, unit='min', unit_scale=True,
                     desc=f'Progress video', disable=silent)
         
-        batch_frames = []
-        batch_info = []
+        batch_scene_data = []
         pending_frame = None
         pending_start_ms = None
         scene_idx = 0
         last_pbar_update = 0
 
-        # METHOD: decode() is more robust than demux() for corrupted interleaving
         for frame in container.decode(video=0):
             if cancel_check and cancel_check():
                 container.close()
@@ -100,33 +110,28 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, video_i
                 current_ms = int(frame.time * 1000)
                 
                 if pending_frame is not None:
-                    batch_frames.append(pending_frame)
-                    # Apply the safe margin, ensuring we don't go below the start time
                     e_ms = max(pending_start_ms + 10, current_ms - safe_margin_ms)
-                    batch_info.append((scene_idx, pending_start_ms, e_ms))
+                    batch_scene_data.append((scene_idx, pending_start_ms, e_ms, [pending_frame]))
                     scene_idx += 1
                 
                 pending_frame = Image.fromarray(frame.to_ndarray(format='rgb24'))
                 pending_start_ms = current_ms
 
-                if len(batch_frames) >= batch_size:
-                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_id, generate_thumbnails=generate_thumbnails)
-                    pbar.update((batch_info[-1][2] - last_pbar_update) / 60000)
-                    last_pbar_update = batch_info[-1][2]
-                    batch_frames, batch_info = [], []
+                if len(batch_scene_data) >= batch_size:
+                    _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
+                    pbar.update((batch_scene_data[-1][2] - last_pbar_update) / 60000)
+                    last_pbar_update = batch_scene_data[-1][2]
+                    batch_scene_data = []
 
             except (av.AVError, ValueError) as e:
-                # This catches the "Duplicate POC" at the frame level and skips it
                 continue
 
-        # Handle last keyframe
         if pending_frame is not None:
-            batch_frames.append(pending_frame)
-            batch_info.append((scene_idx, pending_start_ms, total_duration_ms))
+            batch_scene_data.append((scene_idx, pending_start_ms, total_duration_ms, [pending_frame]))
 
-        if batch_frames:
-            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_id, generate_thumbnails=generate_thumbnails)
-            pbar.update((batch_info[-1][2] - last_pbar_update) / 60000)
+        if batch_scene_data:
+            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
+            pbar.update((batch_scene_data[-1][2] - last_pbar_update) / 60000)
 
         container.close()
         pbar.close()
@@ -137,12 +142,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, video_i
             tqdm.write(f"Fatal error: {e}")
         return False
 
-def accurate_process_and_embed(video_path, model, processor, device, cursor, video_id, generate_thumbnails, batch_size=16, cancel_check: Optional[Callable[[], bool]] = None, silent=False):
-    """
-    Two-pass accurate detection:
-    1. PySceneDetect finds precise cut points (slower, looks at every frame).
-    2. PyAV streams and extracts those specific frames for embedding.
-    """
+def accurate_process_and_embed(video_path, model, processor, device, cursor, video_id, generate_thumbnails, frames_per_scene=3, batch_size=16, cancel_check: Optional[Callable[[], bool]] = None, silent=False):
     if not silent:
         tqdm.write(f"Accurate processing: {os.path.basename(video_path)}")
     
@@ -159,62 +159,81 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
     if not scene_list:
         return False
 
-    # Convert scene_list (start_time, end_time) to a dictionary for lookup
-    scene_map = {}
+    target_start_times = []
+
     for i, (start, end) in enumerate(scene_list):
         s_ms = int(start.get_seconds() * 1000)
-        
-        # Calculate a safe margin (~2 frames) using PySceneDetect's framerate data
         fps = float(end.framerate) if end.framerate and end.framerate > 0 else 30.0
         safe_margin_ms = int((1000 / fps) * 2)
-        
         e_ms = max(s_ms + 10, int(end.get_seconds() * 1000) - safe_margin_ms)
-        scene_map[s_ms] = (i, e_ms)    
-    target_start_times = sorted(scene_map.keys())
+
+        duration = e_ms - s_ms
+
+        if frames_per_scene <= 1:
+            timestamps = [s_ms]
+        else:
+            step = duration / (frames_per_scene + 1)
+            timestamps = [int(s_ms + step * (j + 1)) for j in range(frames_per_scene)]
+
+        for t in timestamps:
+            target_start_times.append((t, i, s_ms, e_ms))
+
+    target_start_times.sort(key=lambda x: x[0])
 
     pbar = tqdm(total=len(scene_list), position=1, desc=f'Scenes processed:', disable=silent)
 
-    # --- STAGE 2: Efficient Extraction & Embedding ---
+    # --- STAGE 2: Efficient Extraction & Pooling ---
     container = av.open(video_path)
     stream = container.streams.video[0]
     stream.thread_type = "AUTO"
 
-    batch_frames = []
-    batch_info = []
+    batch_scene_data = []
+    current_scene_frames = []
+    current_scene_idx = -1
+    current_scene_bounds = (0, 0)
     target_idx = 0
 
     try:
-        # Decode only until we hit our last target scene start
         for frame in container.decode(stream):
             if cancel_check and cancel_check():
                 container.close()
                 pbar.close()
                 return False
-            
+
             if target_idx >= len(target_start_times):
                 break
-                
-            current_ms = int(frame.time * 1000)
-            target_ms = target_start_times[target_idx]
 
-            # If the target timestamp is reached or passed
-            if current_ms >= target_ms:
-                scene_idx, end_ms = scene_map[target_ms]
-                
-                # Convert to PIL and add to batch
+            current_ms = int(frame.time * 1000)
+
+            while target_idx < len(target_start_times) and current_ms >= target_start_times[target_idx][0]:
+                t_ms, s_idx, s_ms, e_ms = target_start_times[target_idx]
+
+                if s_idx != current_scene_idx:
+                    if current_scene_frames:
+                        while len(current_scene_frames) < frames_per_scene:
+                            current_scene_frames.append(current_scene_frames[-1].copy())
+
+                        batch_scene_data.append((current_scene_idx, current_scene_bounds[0], current_scene_bounds[1], current_scene_frames))
+
+                        if len(batch_scene_data) >= batch_size:
+                            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
+                            batch_scene_data = []
+
+                    current_scene_idx = s_idx
+                    current_scene_bounds = (s_ms, e_ms)
+                    current_scene_frames = []
+
                 img = Image.fromarray(frame.to_ndarray(format='rgb24'))
-                batch_frames.append(img)
-                batch_info.append((scene_idx, target_ms, end_ms))
-                
+                current_scene_frames.append(img)
                 target_idx += 1
 
-                if len(batch_frames) >= batch_size:
-                    _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_id, generate_thumbnails=generate_thumbnails, pbar=pbar)
-                    batch_frames, batch_info = [], []
+        if current_scene_frames:
+            while len(current_scene_frames) < frames_per_scene:
+                current_scene_frames.append(current_scene_frames[-1].copy())
+            batch_scene_data.append((current_scene_idx, current_scene_bounds[0], current_scene_bounds[1], current_scene_frames))
 
-        # Cleanup final batch
-        if batch_frames:
-            _run_batch_inference(batch_frames, batch_info, model, processor, device, cursor, video_id, generate_thumbnails=generate_thumbnails, pbar=pbar)
+        if batch_scene_data:
+            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
 
     finally:
         container.close()
@@ -247,7 +266,7 @@ def _get_files_from_queue(db_path: str, image_exts: tuple, video_exts: tuple) ->
                 continue
     return [str(f) for f in all_files]
 
-def index_files(device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, toggle_preview_callback: Optional[Callable]=None, cancel_check: Optional[Callable[[], bool]] = None, silent: bool=False) -> str:
+def index_files(device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, frames_per_scene: int=3, toggle_preview_callback: Optional[Callable]=None, cancel_check: Optional[Callable[[], bool]] = None, silent: bool=False) -> str:
     """
     Index files from the index_queue stored in db_path.
     Returns 'completed', 'cancelled', or 'error'.
@@ -385,7 +404,7 @@ def index_files(device: torch.device, processor, model, db_path: str, batch_size
                 if fast_scene_detect:
                     video_processed = fast_process_and_embed(path, model, processor, device, cursor, video_id, batch_size=batch_size, cancel_check=cancel_check, generate_thumbnails=generate_thumbnails, silent=silent)
                 else:
-                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, video_id, batch_size=batch_size, cancel_check=cancel_check, generate_thumbnails=generate_thumbnails, silent=silent)
+                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, video_id, batch_size=batch_size, cancel_check=cancel_check, generate_thumbnails=generate_thumbnails, frames_per_scene=frames_per_scene, silent=silent)
 
                 if not video_processed:
                     # Video processing was cancelled or failed

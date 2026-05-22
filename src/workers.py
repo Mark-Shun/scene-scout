@@ -88,7 +88,8 @@ class ModelLoadWorker(QThread):
 
 class IndexWorker(QThread):
     def __init__(self, device, processor, model, db_path: str, batch_size: int,
-                 generate_thumbnails: bool, max_num_patches: int, fast_scene_detect: bool):
+                 generate_thumbnails: bool, max_num_patches: int, fast_scene_detect: bool,
+                 frames_per_scene: int = 3):
         super().__init__()
         self.signals = WorkerSignals()
         self.device = device
@@ -99,6 +100,7 @@ class IndexWorker(QThread):
         self.generate_thumbnails = generate_thumbnails
         self.max_num_patches = max_num_patches
         self.fast_scene_detect = fast_scene_detect
+        self.frames_per_scene = frames_per_scene
 
     def run(self):
         try:
@@ -111,6 +113,7 @@ class IndexWorker(QThread):
                 progress_callback=self.signals.progress_updated.emit,
                 max_num_patches=self.max_num_patches,
                 fast_scene_detect=self.fast_scene_detect,
+                frames_per_scene=self.frames_per_scene,
                 toggle_preview_callback=None,
                 cancel_check=lambda: self.isInterruptionRequested(),
             )
