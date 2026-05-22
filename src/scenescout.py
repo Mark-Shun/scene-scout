@@ -16,19 +16,33 @@ if __name__ == '__main__':
     app = QApplication.instance() or QApplication(sys.argv)
 
     saved_config = config.load_config()
-    initial_theme = saved_config.get('theme', 'dark_teal.xml')
-    try:
-        if initial_theme.endswith('.xml'):
-            apply_stylesheet(app, theme=initial_theme, extra={'density_scale': '0'})
-        elif initial_theme.endswith('.qss'):
-            theme_path = config.THEMES_DIR / initial_theme
+    default_theme = config.DEFAULT_CONFIG.get('theme', 'dark_lightgreen.xml')
+    initial_theme = saved_config.get('theme', default_theme)
+
+    def apply_initial_theme(theme_name):
+        if theme_name.endswith('.xml'):
+            apply_stylesheet(app, theme=theme_name, extra={'density_scale': '0'})
+            return True
+        elif theme_name.endswith('.qss'):
+            theme_path = config.THEMES_DIR / theme_name
             if theme_path.exists():
                 with open(theme_path, "r", encoding="utf-8") as f:
                     app.setStyleSheet(f.read())
+                return True
             else:
                 print(f"Warning: Custom theme file not found at {theme_path}")
+                return False
+        return False
+
+    try:
+        success = apply_initial_theme(initial_theme)
+        if not success and initial_theme != default_theme:
+            print(f"Falling back to default theme: {default_theme}")
+            apply_initial_theme(default_theme)
     except Exception as e:
         print(f'Failed to load theme: {e}')
+        if initial_theme != default_theme:
+            apply_stylesheet(app, theme=default_theme, extra={'density_scale': '0'})
 
     update_info = check_for_update()
 

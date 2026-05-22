@@ -573,14 +573,22 @@ class SceneScoutApp(QMainWindow):
         theme_layout = QHBoxLayout(theme_frame)
         theme_layout.setContentsMargins(0, 0, 0, 0)
         self._theme_combobox = QComboBox()
-        saved_theme = self.config.get('theme', 'dark_teal.xml')
-        default_index = 0
+
+        default_theme = config.DEFAULT_CONFIG.get('theme', 'dark_lightgreen.xml')
+        saved_theme = self.config.get('theme', default_theme)
+
+        target_index = -1
+        fallback_index = 0
+
         for idx, filename in enumerate(self._get_available_themes()):
             display_name = filename.split('.')[0].replace('_', ' ').title()
             self._theme_combobox.addItem(display_name, userData=filename)
             if filename == saved_theme:
-                default_index = idx
-        self._theme_combobox.setCurrentIndex(default_index)
+                target_index = idx
+            if filename == default_theme:
+                fallback_index = idx
+
+        self._theme_combobox.setCurrentIndex(target_index if target_index != -1 else fallback_index)
         theme_layout.addWidget(self._theme_combobox)
 
         apply_theme_btn = QPushButton('Apply')
@@ -1996,7 +2004,7 @@ class SceneScoutApp(QMainWindow):
         selected = self._theme_combobox.currentData()
         if not selected:
             return
-        self.save_config_key('theme', selected)
+
         try:
             app = QApplication.instance()
             is_dark = 'dark' in selected.lower()
@@ -2010,9 +2018,15 @@ class SceneScoutApp(QMainWindow):
                     with open(theme_path, "r", encoding="utf-8") as f:
                         app.setStyleSheet(f.read())
                 else:
-                    QMessageBox.warning(self, 'Theme Missing', f'Could not find {selected} in assets/themes/')
+                    default_theme = config.DEFAULT_CONFIG.get('theme', 'dark_lightgreen.xml')
+                    QMessageBox.warning(self, 'Theme Missing', f'Could not find {selected}. Falling back to {default_theme}.')
+                    idx = self._theme_combobox.findData(default_theme)
+                    if idx >= 0:
+                        self._theme_combobox.setCurrentIndex(idx)
+                        self.apply_theme()
                     return
 
+            self.save_config_key('theme', selected)
             self._video_container.setStyleSheet(
                 'background-color: black;' if is_dark else 'background-color: #d3d3d3;'
             )
@@ -2271,9 +2285,11 @@ class SceneScoutApp(QMainWindow):
 
         desc = QLabel(
             "Scene Scout is a tool written to help with searching for "
-            "specific scenes using keywords. It is forked and built on "
-            "top of Gabrjiele's project and uses Google's SigLIP 2 model "
+            "specific scenes using keywords. It was initially forked from"
+            "Gabrjiele's project and uses Google's SigLIP 2 model "
             "for embedding and extracting visual information."
+            "In the meantime it has been expanded to focus very specifically,"
+            "to process, inspect and export specific scenes from videos."
         )
         desc.setWordWrap(True)
         info_layout.addWidget(desc)
@@ -2285,7 +2301,7 @@ class SceneScoutApp(QMainWindow):
             ('GitHub Repo', 'https://github.com/Mark-Shun/scene-scout'),
             ('Codeberg Repo', 'https://codeberg.org/Mark-Shun/scene-scout'),
             ('Gitlab Repo', 'https://gitlab.com/Mark-Shun/scene-scout'),
-            ('Original Source', 'https://github.com/Gabrjiele/siglip2-naflex-search'),
+            ('Initial fork', 'https://github.com/Gabrjiele/siglip2-naflex-search'),
         ]
         for i, (label, url) in enumerate(links):
             btn = QPushButton(label)
