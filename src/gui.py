@@ -448,7 +448,13 @@ class SceneScoutApp(QMainWindow):
 
         query_layout.addWidget(QLabel('Text:'))
         self._query_text_edit = QLineEdit()
-        self._query_text_edit.setPlaceholderText('Enter natural language text to search for matching scenes.')
+        self._query_text_edit.setObjectName("MainSearchInput")
+        self._query_text_edit.setPlaceholderText('Describe the scene you are looking for here...')
+        self._query_text_edit.setClearButtonEnabled(True)
+        self._query_text_edit.setMinimumHeight(45)
+        font = self._query_text_edit.font()
+        font.setPointSize(12)
+        self._query_text_edit.setFont(font)
         self._query_text_edit.returnPressed.connect(self.threaded_search)
         query_layout.addWidget(self._query_text_edit)
 
@@ -2194,6 +2200,7 @@ class SceneScoutApp(QMainWindow):
                 bg = "rgba(255, 255, 255, 0.15)" if is_dark else "rgba(0, 0, 0, 0.08)"
                 border = "rgba(255, 255, 255, 0.1)" if is_dark else "rgba(0, 0, 0, 0.1)"
 
+                focus_accent = "#33FFFF" if is_dark else "#0033CC"
                 custom_css = f"""
                 QStatusBar {{
                     border-top: 1px solid {border};
@@ -2217,6 +2224,17 @@ class SceneScoutApp(QMainWindow):
                 QLabel#StatusBarCountLabel {{
                     padding: 0 8px;
                     font-size: 10pt;
+                }}
+                QLineEdit#MainSearchInput {{
+                    border: 2px solid {accent};
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    min-height: 28px;
+                    font-size: 12pt;
+                }}
+                QLineEdit#MainSearchInput:focus {{
+                    border: 2px solid {focus_accent};
+                    background-color: {bg};
                 }}
                 """
                 app.setStyleSheet(app.styleSheet() + custom_css)
