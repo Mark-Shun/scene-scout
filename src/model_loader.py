@@ -79,18 +79,24 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
 
     update(f"Hardware Status: {msg}")
 
-    model_cached = _is_model_cached(config.DEFAULT_MODEL)
+    cached = _is_model_cached(config.DEFAULT_MODEL)
 
-    update("Loading processor config..." if model_cached else "Downloading processor config... (first run)")
+    update("Loading processor config...")
     processor = AutoProcessor.from_pretrained(config.DEFAULT_MODEL, token=config.get_hf_token())
+    update("Processor loaded.")
 
-    update(f"Loading weights in {str(dtype).split('.')[-1]}..." if model_cached else f"Downloading weights ({str(dtype).split('.')[-1]})... (first run)")
+    if cached:
+        update(f"Loading model weights in {str(dtype).split('.')[-1]}...")
+    else:
+        update(f"Downloading model weights...") 
+
     model = Siglip2Model.from_pretrained(
             config.DEFAULT_MODEL, 
             token=config.get_hf_token(), 
             torch_dtype=dtype, 
             attn_implementation='sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager'
         ).to(device)
+    update(f"Model loaded on {device_str}.")
 
     if use_trt and device_str == 'cuda' and TRT_AVAILABLE:
         import logging

@@ -124,6 +124,16 @@ if "%EXTRA%"=="" (
     exit /b 1 
 )
 
+:: --- Read existing optional paths from previous installs ---
+set "OLD_ENV_PATH="
+set "OLD_HF_HOME="
+if exist "%BASE_DIR%.install_state" (
+    for /f "tokens=1,* delims==" %%A in (%BASE_DIR%.install_state) do (
+        if "%%A"=="ENV_PATH" set "OLD_ENV_PATH=%%B"
+        if "%%A"=="HF_HOME" set "OLD_HF_HOME=%%B"
+    )
+)
+
 :: --- Initialize Install State (Overwrites old file) ---
 echo EXTRA=%EXTRA%> "%BASE_DIR%.install_state"
 if not "%FLAGS%"=="" echo FLAGS=%FLAGS%>> "%BASE_DIR%.install_state"
@@ -131,10 +141,19 @@ if not "%PY_VER%"=="" echo PY_VER=%PY_VER%>> "%BASE_DIR%.install_state"
 
 :: --- Custom Environment Path Setup ---
 echo.
-choice /C YN /M "Do you want to install the Python environment to a different drive/folder?"
-if errorlevel 2 goto SKIP_CUSTOM_PATH
+set "CUSTOM_ENV_PATH="
+if defined OLD_ENV_PATH (
+    echo [INFO] Python environment is currently at: %OLD_ENV_PATH%
+    choice /C KC /M "(K)eep or (C)hange?"
+    if errorlevel 2 goto PROMPT_ENV_PATH
+    set "CUSTOM_ENV_PATH=%OLD_ENV_PATH%"
+    goto ENV_PATH_DONE
+)
 
-:PROMPT_CUSTOM_PATH
+choice /C YN /M "Do you want to install the Python environment to a different drive/folder?"
+if errorlevel 2 goto ENV_PATH_DONE
+
+:PROMPT_ENV_PATH
 set /p "CUSTOM_ENV_PATH=Enter the full absolute path (e.g., D:\scout_env): "
 set "CUSTOM_ENV_PATH=%CUSTOM_ENV_PATH:"=%"
 
@@ -144,22 +163,59 @@ for %%I in ("%CUSTOM_ENV_PATH%") do set "PARENT_DIR=%%~dpI"
 
 if not exist "%PARENT_DIR%" (
     echo [!] The parent folder does not exist. Try again.
-    goto PROMPT_CUSTOM_PATH
+    goto PROMPT_ENV_PATH
 )
 
 mkdir "%CUSTOM_ENV_PATH%" 2>nul
 if exist "%CUSTOM_ENV_PATH%" (
     echo [SUCCESS] Environment will be installed to: %CUSTOM_ENV_PATH%
-    echo ENV_PATH=%CUSTOM_ENV_PATH%>> "%~dp0\.install_state"
 ) else (
     echo [!] Access Denied. Falling back to installation in scene scout folder.
     set "CUSTOM_ENV_PATH="
 )
 
+:ENV_PATH_DONE
+
+:: --- HuggingFace Cache Path Setup ---
+set "CUSTOM_HF_HOME="
+if defined OLD_HF_HOME (
+    echo [INFO] HuggingFace cache is currently at: %OLD_HF_HOME%
+    choice /C KC /M "(K)eep or (C)hange?"
+    if errorlevel 2 goto PROMPT_HF_HOME
+    set "CUSTOM_HF_HOME=%OLD_HF_HOME%"
+    goto HF_HOME_DONE
+)
+
+choice /C YN /M "Do you want to set a custom HuggingFace cache directory?"
+if errorlevel 2 goto HF_HOME_DONE
+
+:PROMPT_HF_HOME
+set /p "CUSTOM_HF_HOME=Enter the full absolute path (e.g., D:\scene_scout_cache\hf): "
+set "CUSTOM_HF_HOME=%CUSTOM_HF_HOME:"=%"
+
+set "PARENT_DIR=%~dp0"
+for %%I in ("%CUSTOM_HF_HOME%") do set "PARENT_DIR=%%~dpI"
+
+if not exist "%PARENT_DIR%" (
+    echo [!] The parent folder does not exist. Try again.
+    goto PROMPT_HF_HOME
+)
+
+mkdir "%CUSTOM_HF_HOME%" 2>nul
+if exist "%CUSTOM_HF_HOME%" (
+    echo [SUCCESS] HuggingFace cache will be set to: %CUSTOM_HF_HOME%
+) else (
+    echo [!] Access Denied. Falling back to default HuggingFace cache location.
+    set "CUSTOM_HF_HOME="
+)
+
+:HF_HOME_DONE
 echo.
 echo ------------------------------------------
 
-:SKIP_CUSTOM_PATH
+:: Write optional paths to install state
+if defined CUSTOM_ENV_PATH echo ENV_PATH=%CUSTOM_ENV_PATH%>> "%BASE_DIR%.install_state"
+if defined CUSTOM_HF_HOME echo HF_HOME=%CUSTOM_HF_HOME%>> "%BASE_DIR%.install_state"
 
 :: --- Installation Mode Selection ---
 :: Determine where the virtual environment currently lives

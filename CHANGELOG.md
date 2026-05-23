@@ -21,7 +21,8 @@ Besides the already mentioned points in main highlights.
 
 - **CLI Pack/Unpack `.scdb` archives**: `do_pack` and `do_unpack` methods in the interactive shell — packs active databases and their video files into a portable archive, with automatic path recalibration on unpack
 - **Headless utility commands**: `--pack`, `--unpack`, `--verify`, `--relink` arguments for scripted use without entering interactive mode
-- **Custom environment path**: Install scripts prompt for an alternative path; With this it is possible to install the environment files at a different spot in your system
+- **Custom environment path**: Install scripts prompt for an alternative environment path. With this it is possible to install the environment files at a different place in your system
+- **Custom model path**: Install scripts prompt for an alternative path. With this it is possible to download and use the model files at a different place in your system
 - **Clean install option**: Users can wipe and recreate the virtual environment during installation to fix corrupted dependencies
 - **Reprocess files**: Added the option to reprocess files which were already in the database (for if you changed processing settings and want to pass this to an existing database)
 - **VLC force-reinstall (Mac)**: Opt-in option to force reinstall VLC for Apple Silicon compatibility
