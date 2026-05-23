@@ -4,7 +4,9 @@ import subprocess
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QVBoxLayout, QLabel, QProgressBar, QMessageBox,
+    QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
+    QProgressBar, QLineEdit, QFileDialog, QMessageBox,
+    QWidget, QGridLayout, QScrollArea, QFrame,
 )
 
 import config
@@ -17,37 +19,55 @@ class BulkExportDialog(BaseExporter):
         super().__init__(parent)
 
         self.search_results = search_results
-        self._metadata = [
-            get_video_info_and_keyframe(vp, st)
-            for vp, _, _, _, _, st, _, _, _ in search_results
-        ]
+        self._metadata = []
         self._export_count = 0
         self._total_exports = 0
         self._current_worker = None
+        self._metadata_worker = None
         self._current_scene_idx = 0
         self.planned_outputs = []
 
         self.setWindowTitle('Bulk Export Scenes')
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(600)
+        self.resize(800, 700)
 
+        self._start_metadata_analysis()
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
 
-        self._build_container_section(layout)
-        self._build_mode_section(layout)
-        self._build_naming_section(layout, is_bulk=True)
-        
-        self._build_video_options(layout)
-        self._build_audio_options(layout)
-        self._build_progress_section(layout)
-        self._build_button_section(layout, export_text='Export Selected')
-        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 10, 0, 0)
+
+        self._build_container_section(scroll_layout)
+        self._build_mode_section(scroll_layout)
+        self._build_naming_section(scroll_layout, is_bulk=True)
+        self._build_video_options(scroll_layout)
+        self._build_audio_options(scroll_layout)
+        scroll_layout.addStretch()
+
+        scroll.setWidget(scroll_content)
+        main_layout.addWidget(scroll, stretch=1)
+
+        self._build_progress_section(main_layout)
+        self._build_button_section(main_layout, export_text='Export Selected')
+
         self._output_dir_edit.setText(self._get_initial_output_dir())
         self._update_widget_states()
         self._update_preview_display()
+
+    def _start_metadata_analysis(self):
+        self._metadata = [
+            get_video_info_and_keyframe(vp, st)
+            for vp, _, _, _, _, st, _, _, _ in self.search_results
+        ]
 
     def _get_preview_params(self):
         v_path = self.search_results[0][0]
@@ -105,7 +125,7 @@ class BulkExportDialog(BaseExporter):
         selected_indices = list(range(len(self.search_results)))
 
         if not selected_indices:
-            QMessageBox.information(self, 'No Scenes', 'No scenes selected for export.')
+            QMessageBox.information(self, 'No Scenes', 'No scenes to export.')
             return
 
         output_dir = self._output_dir_edit.text()
@@ -115,7 +135,6 @@ class BulkExportDialog(BaseExporter):
 
         os.makedirs(output_dir, exist_ok=True)
 
-        # Build paths securely, check for overwrites upfront
         planned_outputs = []
         reserved_paths = set()
         
@@ -166,7 +185,6 @@ class BulkExportDialog(BaseExporter):
             self._on_bulk_finished()
             return
 
-        # Pop from queue but figure out index in the static planned_outputs
         queue_index = self._total_exports - len(self._export_queue) 
         self._current_scene_idx = self._export_queue.pop(0)
         output_path = self.planned_outputs[queue_index]

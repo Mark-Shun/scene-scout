@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
     QProgressBar, QLineEdit, QFileDialog, QMessageBox, QWidget,
+    QScrollArea, QFrame,
 )
 
 import config
@@ -26,23 +27,37 @@ class SingleExportDialog(BaseExporter):
 
         self.setWindowTitle('Export Scene')
         self.setMinimumWidth(500)
+        self.resize(500, 450)
 
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
 
-        self._build_container_section(layout)
-        self._build_mode_section(layout)
-        self._build_naming_section(layout, is_bulk=False)
-        self._build_video_options(layout)
-        self._build_audio_options(layout)
-        self._build_progress_section(layout)
-        self._build_button_section(layout, export_text='Export')
-        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._build_container_section(scroll_layout)
+        self._build_mode_section(scroll_layout)
+        self._build_naming_section(scroll_layout, is_bulk=False)
+        self._build_video_options(scroll_layout)
+        self._build_audio_options(scroll_layout)
+        scroll_layout.addStretch()
+
+        scroll.setWidget(scroll_content)
+        main_layout.addWidget(scroll)
+
+        self._build_progress_section(main_layout)
+        self._build_button_section(main_layout, export_text='Export')
+
         self._update_widget_states()
-        self._update_preview_display() # Force first update to generate the full default path
+        self._update_preview_display()
 
     def _get_preview_params(self):
         return self.metadata, self.video_path, self.start_ms, self.end_ms

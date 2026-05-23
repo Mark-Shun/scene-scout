@@ -64,7 +64,7 @@ class BaseExporter(QDialog):
         self.export_thread = None
         self.cancelled = False
 
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
         self.setModal(True)
         self.config = config.load_config()
 

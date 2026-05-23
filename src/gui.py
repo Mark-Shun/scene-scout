@@ -771,6 +771,8 @@ class SceneScoutApp(QMainWindow):
         self._thumb_list.setSpacing(4)
         self._thumb_list.setFrameShape(QFrame.NoFrame)
         self._thumb_list.itemClicked.connect(self._on_thumbnail_click)
+        self._thumb_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._thumb_list.customContextMenuRequested.connect(self._show_thumb_context_menu)
         self._thumb_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         media_splitter.addWidget(self._thumb_list)
 
@@ -1756,15 +1758,32 @@ class SceneScoutApp(QMainWindow):
         self.open_current_file()
 
     # ======================================================================
-    # Context Menu
+    # Context Menus (Shared for List View & Thumbnails)
     # ======================================================================
 
     def _show_context_menu(self, position):
+        """Triggered when the user right-clicks the list/table view."""
+        global_pos = self._results_table.viewport().mapToGlobal(position)
+        self._exec_shared_context_menu(global_pos)
+
+    def _show_thumb_context_menu(self, position):
+        """Triggered when the user right-clicks a thumbnail."""
+        item = self._thumb_list.itemAt(position)
+        if not item:
+            return
+
+        self._on_thumbnail_click(item)
+
+        global_pos = self._thumb_list.viewport().mapToGlobal(position)
+        self._exec_shared_context_menu(global_pos)
+
+    def _exec_shared_context_menu(self, global_pos):
+        """Builds and executes the context menu based on the active table selection."""
         indexes = self._results_table.selectionModel().selectedRows()
         if not indexes:
             return
 
-        menu = QMenu(self._results_table)
+        menu = QMenu(self)
 
         exportable = []
         for idx in indexes:
@@ -1806,7 +1825,7 @@ class SceneScoutApp(QMainWindow):
             copy_multi_action.triggered.connect(self._copy_multiple_paths)
             menu.addAction(copy_multi_action)
 
-        menu.exec(self._results_table.viewport().mapToGlobal(position))
+        menu.exec(global_pos)
 
     def _copy_path(self, path: str):
         clipboard = QApplication.clipboard()
