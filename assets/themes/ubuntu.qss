@@ -167,3 +167,9 @@ QLabel#SplashStatus {
     margin-top: 15px;
     font-weight: bold;
 }
+
+/* --- STATUS BAR STYLING --- */
+QStatusBar { border-top: 1px solid #DCDCDC; min-height: 32px; background-color: #F5F5F5; }
+QLabel#MainStatusLabel { color: #E95420; font-family: "Ubuntu Mono", "Consolas", monospace; font-weight: bold; font-size: 11pt; padding-left: 8px; }
+QLabel#StatusBarDBLabel { background-color: #FFFFFF; border: 1px solid #DCDCDC; border-radius: 4px; padding: 3px 10px; margin: 4px 8px; font-weight: bold; font-size: 10pt; color: #3D3D3D; }
+QLabel#StatusBarCountLabel { padding: 0 8px; font-size: 10pt; color: #777777; }

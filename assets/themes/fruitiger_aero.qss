@@ -210,7 +210,13 @@ QDialog#GlassSplash {
 }
 
 QLabel#SplashStatus {
-    color: #0E5E8A;
+    color: #2C5F7C;
     font-size: 10pt;
     margin-top: 15px;
 }
+
+/* --- STATUS BAR STYLING --- */
+QStatusBar { border-top: 1px solid #A9C6D9; min-height: 32px; background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1, stop: 0 #F8FCFF, stop: 1 #CFE8FA); }
+QLabel#MainStatusLabel { color: #0E5E8A; font-family: "Consolas", "Courier New", monospace; font-weight: bold; font-size: 11pt; padding-left: 8px; }
+QLabel#StatusBarDBLabel { background-color: rgba(255, 255, 255, 180); border: 1px solid #7B9EBD; border-radius: 5px; padding: 3px 10px; margin: 4px 8px; font-weight: bold; font-size: 10pt; color: #0C3C60; }
+QLabel#StatusBarCountLabel { padding: 0 8px; font-size: 10pt; color: #1A3C5A; }

@@ -287,12 +287,16 @@ class SceneScoutApp(QMainWindow):
         self.setAcceptDrops(True)
 
         # Status bar permanent widgets (must init before load_saved_paths)
-        self._statusbar_db_label = QLabel()
-        self._statusbar_db_label.setStyleSheet('padding: 0 8px; font-weight: bold;')
+        self._main_status_label = QLabel('Initializing...')
+        self._main_status_label.setObjectName("MainStatusLabel")
+        self.statusBar().addWidget(self._main_status_label, 1)
+
+        self._statusbar_db_label = QLabel('Target DB: none')
+        self._statusbar_db_label.setObjectName("StatusBarDBLabel")
         self.statusBar().addPermanentWidget(self._statusbar_db_label)
 
-        self._statusbar_count_label = QLabel()
-        self._statusbar_count_label.setStyleSheet('padding: 0 8px;')
+        self._statusbar_count_label = QLabel('0 results')
+        self._statusbar_count_label.setObjectName("StatusBarCountLabel")
         self.statusBar().addPermanentWidget(self._statusbar_count_label)
 
         # Load saved databases
@@ -631,12 +635,6 @@ class SceneScoutApp(QMainWindow):
         info_layout.addWidget(about_btn)
         layout.addWidget(info_group)
 
-        # ---- Status ----
-        self._status_label = QLabel('Initializing...')
-        self._status_label.setWordWrap(True)
-        self._status_label.setStyleSheet('padding: 5px;')
-        layout.addWidget(self._status_label)
-
         layout.addStretch()
 
     def _get_available_themes(self):
@@ -853,10 +851,8 @@ class SceneScoutApp(QMainWindow):
 
     @Slot(str)
     def update_status(self, message: str):
-        if hasattr(self, '_status_label') and self._status_label:
-            self._status_label.setText(message)
-        if hasattr(self, 'statusBar'):
-            self.statusBar().showMessage(message, 5000)
+        if hasattr(self, '_main_status_label') and self._main_status_label:
+            self._main_status_label.setText(message)
 
     def force_update_status(self, message: str):
         self.update_status(message)
@@ -2190,6 +2186,37 @@ class SceneScoutApp(QMainWindow):
             if selected.endswith('.xml'):
                 from qt_material import apply_stylesheet
                 apply_stylesheet(app, theme=selected, extra={'density_scale': '0'})
+
+                accent = "#00E5FF" if is_dark else "#0055FF"
+                bg = "rgba(255, 255, 255, 0.15)" if is_dark else "rgba(0, 0, 0, 0.08)"
+                border = "rgba(255, 255, 255, 0.1)" if is_dark else "rgba(0, 0, 0, 0.1)"
+
+                custom_css = f"""
+                QStatusBar {{
+                    border-top: 1px solid {border};
+                    min-height: 32px;
+                }}
+                QLabel#MainStatusLabel {{
+                    color: {accent};
+                    font-family: "Consolas", "Courier New", monospace;
+                    font-weight: bold;
+                    font-size: 11pt;
+                    padding-left: 8px;
+                }}
+                QLabel#StatusBarDBLabel {{
+                    background-color: {bg};
+                    border-radius: 4px;
+                    padding: 3px 10px;
+                    margin: 4px 8px;
+                    font-weight: bold;
+                    font-size: 10pt;
+                }}
+                QLabel#StatusBarCountLabel {{
+                    padding: 0 8px;
+                    font-size: 10pt;
+                }}
+                """
+                app.setStyleSheet(app.styleSheet() + custom_css)
             elif selected.endswith('.qss'):
                 theme_path = config.THEMES_DIR / selected
                 if theme_path.exists():
