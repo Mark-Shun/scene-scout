@@ -112,7 +112,7 @@ if "%user_choice%"=="2" set "EXTRA=cu126"
 if "%user_choice%"=="3" (
     set "EXTRA=dml"
     set "FLAGS=--prerelease=allow"
-    set "PY_VER=--python 3.12"
+    set "PY_VER=--python 3.10"
 )
 if "%user_choice%"=="4" set "EXTRA=xpu"
 if "%user_choice%"=="5" set "EXTRA=cpu"
@@ -152,7 +152,7 @@ if exist "%CUSTOM_ENV_PATH%" (
     echo [SUCCESS] Environment will be installed to: %CUSTOM_ENV_PATH%
     echo ENV_PATH=%CUSTOM_ENV_PATH%>> "%~dp0\.install_state"
 ) else (
-    echo [!] Access Denied. Falling back to local.
+    echo [!] Access Denied. Falling back to installation in scene scout folder.
     set "CUSTOM_ENV_PATH="
 )
 

@@ -140,14 +140,14 @@ echo "EXTRA=$EXTRA" > "$SCRIPT_DIR/.install_state"
 
 # --- Custom Environment Path Setup ---
 echo "------------------------------------------"
-echo "By default, the Python environment is installed in this folder."
+echo "By default, the Python environment is installed in the scene scout folder."
 read -p "Do you want to install it to a different custom path? (y/N): " use_custom
 if [[ "$use_custom" =~ ^[Yy]$ ]]; then
     read -p "Enter full absolute path (e.g., /Volumes/Data/scout_env): " CUSTOM_ENV_PATH
     if mkdir -p "$CUSTOM_ENV_PATH" 2>/dev/null; then
         echo "Environment will be installed to: $CUSTOM_ENV_PATH"
     else
-        echo "Error: Cannot create directory or permission denied. Falling back to local."
+        echo "Error: Cannot create directory or permission denied. Falling back to installation in scene scout folder."
         CUSTOM_ENV_PATH=""
     fi
 fi

@@ -6,6 +6,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Change to the script's directory
 cd "$SCRIPT_DIR" || { echo "Failed to enter directory"; exit 1; }
 
+ARCH=$(uname -m)
+if [ "$ARCH" = "arm64" ]; then
+    export PYTORCH_ENABLE_MPS_FALLBACK=1
+fi
+
 # Read custom environment path if it exists
 if [ -f "$SCRIPT_DIR/.install_state" ]; then
     CUSTOM_ENV_PATH=$(grep "^ENV_PATH=" "$SCRIPT_DIR/.install_state" | cut -d'=' -f2-)
