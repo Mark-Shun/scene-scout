@@ -28,6 +28,7 @@ Besides the already mentioned points in main highlights.
 - **VLC force-reinstall (Mac)**: Opt-in option to force reinstall VLC for Apple Silicon compatibility
 - **ASCII logo**: Installer scripts display an ASCII art logo at startup
 - **Custom themes**: Support for user-provided theme files
+- **Show all missing updates**: When a new update is detected, show information about all the missing updates so far for the user, not just the latest version
 
 ### Changed
 - **Model asynchronous background loading**: The model is now being loaded in a seperate thread, due to this the GUI can launch faster
