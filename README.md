@@ -48,7 +48,7 @@ The focus on this fork has shifted from searching for videos/images in a user's 
 
 ### Setup
 
-- *1: Get the latest release of Scene Scout:*
+## *1: Get the latest release of Scene Scout:*
 
 https://github.com/Mark-Shun/scene-scout/releases/latest
 
@@ -58,15 +58,15 @@ Or clone it on your computer:
 git clone https://github.com/Mark-Shun/scene-scout
 ```
 
-- *2: Install the environment and dependencies with the install script in your preffered terminal:*
-```
+## *2: Use your OS install script:*
+```bash
 Windows run: windows-install.bat
 ```
+```bash
+Linux run: ./linux-install.sh
 ```
-Linux run: linux-install.sh
-```
-```
-Mac run: mac-install.sh
+```bash
+Mac run: ./mac-install.sh
 ```
 During this step the install script will automatically install UV, Python, VLC, Pyside6 and all the required dependencies, depending on which options the user selected.
 
@@ -75,7 +75,7 @@ You will be prompted to choose between a **Standard Update** (fast, updates modi
 Optionally, you can specify a **custom installation path** for the Python environment — useful if your primary drive has limited space and you want to store the environment files on a secondary drive.
 
 
-- *2.5: Choose GPU or CPU option:*
+### *2.5: Choose GPU or CPU option:*
 
 During installation you can choose the appropriate option for your system. If you don't have a graphics card or your setup is not supported, then it's also possible to run the tool with the CPU. However general performance is way slower.
 
@@ -84,18 +84,19 @@ Choosing **NVIDIA CUDA 13.0** will additionally prompt about installing **Tensor
 ! Specifically for Apple Mac with M chips, there is MPS support.
 
 <div style="display: flex; gap: 10px;">
-  <img src="assets/screenshots/install-options-windows.png" width="50%">
-  <img src="assets/screenshots/install-options-linux-mac.png" width="50%">
+  <img src="assets/screenshots/install-options-windows.png" width="33%">
+  <img src="assets/screenshots/install-options-linux.png" width="33%">
+  <img src="assets/screenshots/install-options-mac.png" width="33%">
 </div>
 
-- *3: Launch Scene Scout*
-```
+## *3: Launch Scene Scout*
+```bash
 Windows run: windows-scene-scout.bat (or use the shortcut)
 ```
-```
+```bash
 Linux run: linux-scene-scout.sh
 ```
-```
+```bash
 Mac run: mac-scene-scout.command
 ```
 
@@ -115,32 +116,33 @@ The GUI provides:
 - Result visualization with similarity scores
 - An export window to save selected scenes as video files
 
-<img src="assets/screenshots/export-car-scene.png" width="50%">
+<img src="assets/screenshots/export-car-scene.webp" width="50%">
 
 *Export video scene window*
 
 
 <table align="center" width="100%">
   <tr>
-    <td width="20%"><img src="assets/screenshots/computer-monitor-search.png" style="width: 100%; height: auto;" alt="Immagine 1"></td>
-    <td width="20%"><img src="assets/screenshots/frog-suit-search.png" style="width: 100%; height: auto;" alt="Immagine 2"></td>
-    <td width="20%"><img src="assets/screenshots/glowing-eye-search.png" style="width: 100%; height: auto;" alt="Immagine 3"></td>
+    <td width="20%"><img src="assets/screenshots/computer-monitor-search.webp" style="width: 100%; height: auto;" alt="Search: Computer monitor with a glowing screen"></td>
+    <td width="20%"><img src="assets/screenshots/frog-suit-search.webp" style="width: 100%; height: auto;" alt="Search: Wearing a frog costume"></td>
+    <td width="20%"><img src="assets/screenshots/glowing-eye-search.webp" style="width: 100%; height: auto;" alt="Immagine 3"></td>
+        <td width="20%"><img src="assets/screenshots/pink-flower-pedals-search.webp" style="width: 100%; height: auto;" alt="Immagine 3"></td>
   </tr>
 </table>
 
-*Example queries*
+*Example queries to search for scenes*
 
 <summary><h4>GUI quick start guide</h4></summary>
   
 > **Advice for a more convenient use**  
 >  
-> Model settings (number of patches, video frame parameters, and videos folder) only take effect **during the indexing phase**.  
+> Model settings (number of patches, video frame parameters, and videos folder) only take effect **during the media processing phase**.  
 >  
-> Once files are indexed, the embeddings stored in the database remain fixed and will not change if you adjust the settings later.  
+> Once files are indexed, the embeddings stored in the database remain fixed and will not change if you adjust the settings later.
 >  
 > So, for convenience, you can use the search tool without changing these parameters, and only tweak them when indexing new videos or re-indexing an existing collection.
 >
-> It is supported to drag and drop a database file and a folder in the GUI. It automatically resolves the paths.
+> It is supported to drag and drop a database file, a folder and files in the GUI. It automatically adds them to the queue.
 
 **First Time Setup (Creating a new database):**
  
@@ -191,8 +193,9 @@ The GUI provides:
 - **Threshold Slider**: Filter out low-similarity results (0.0 = show all, higher = more selective)
 - **Cleanup Database**: Remove entries for deleted files to keep the database clean
 - **Result Indicators**: `*` = excellent match (≥0.8), `-` = good match (≥0.6), `.` = lower match
-- **Missing Path Detection**: Queue Manager shows `[MISSING]` tags for deleted paths with a "Clean Missing" button
-- **Enhanced Update Popup**: Richly formatted GitHub release notes displayed in GUI popup when updates are available
+- **Missing Path Detection**: Database Manager detects when video files are move or deleted, giving the user the ability to adjust (find) or remove these files.
+- **Enhanced Update Popup**: Richly formatted GitHub release notes displayed in GUI popup when updates are available.
+- **Automatic update**: If an update is available, the user can automatically download and install it through the terminal.
 
 
 <summary><h3>CLI Mode</h3></summary>
@@ -201,14 +204,14 @@ In this case you need a python environment with the appropriate packages.
 (You can also activate the uv environment in .venv)
 
 **Enter interactive mode**
-```
+```bash
 Windows run: windows-scene-scout-cli.bat
 ```
-```
+```bash
 Linux run: linux-scene-scout-cli.sh
 ```
-```
-Mac run: mac-scene-scout-cli.sh
+```bash
+Mac run: mac-scene-scout-cli.command
 ```
 
 **Index a folder:**
