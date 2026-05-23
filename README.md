@@ -20,7 +20,7 @@
 # Scene Scout - A scene search tool using keywords
 
 A natural language scene search tool powered by [Google's SigLIP 2 model](https://huggingface.co/google/siglip2-so400m-patch16-naflex) with NaFlex architecture. Search through your local video collection using natural language queries or image similarity.
-![alt text](assets/screenshots/big-buck-bunny-search.png)
+![alt text](assets/screenshots/big-buck-bunny-search.webp)
 
 ## Acknowledgement
 This project has been forked from [Gabrjiele's open source SigLip 2 NaFlex project](https://github.com/Gabrjiele/siglip2-naflex-search)
