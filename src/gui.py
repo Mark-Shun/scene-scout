@@ -1712,19 +1712,21 @@ class SceneScoutApp(QMainWindow):
         self._syncing_selection = False
 
     def _sync_selection_from_thumb_to_table(self):
+        """Copies the thumbnail grid's multi-selection over to the table."""
         if getattr(self, '_syncing_selection', False):
             return
+
         self._syncing_selection = True
+        self._ignore_table_selection_events = True
 
         selected_items = self._thumb_list.selectedItems()
         selected_source_rows = {item.data(Qt.UserRole) for item in selected_items}
 
         sel_model = self._results_table.selectionModel()
-        sel_model.blockSignals(True)
+
         sel_model.clearSelection()
 
-        from PySide6.QtCore import QItemSelection, QItemSelectionModel
-        selection = QItemSelection()
+        from PySide6.QtCore import QItemSelectionModel
 
         first_proxy_idx = None
         for row in selected_source_rows:
@@ -1734,17 +1736,15 @@ class SceneScoutApp(QMainWindow):
             if proxy_idx.isValid():
                 if not first_proxy_idx:
                     first_proxy_idx = proxy_idx
-                left_idx = self.results_proxy.index(proxy_idx.row(), 0)
-                right_idx = self.results_proxy.index(proxy_idx.row(), self.results_proxy.columnCount() - 1)
-                selection.select(left_idx, right_idx)
-
-        if not selection.isEmpty():
-            sel_model.select(selection, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+                sel_model.select(proxy_idx, QItemSelectionModel.Select | QItemSelectionModel.Rows)
 
         if first_proxy_idx:
             self._results_table.scrollTo(first_proxy_idx)
 
-        sel_model.blockSignals(False)
+        self._ignore_table_selection_events = False
+
+        self._on_selection_changed()
+
         self._syncing_selection = False
 
     def _scroll_thumb_to_view(self, index: int):
@@ -1757,6 +1757,9 @@ class SceneScoutApp(QMainWindow):
     # ======================================================================
 
     def _on_selection_changed(self):
+        if getattr(self, '_ignore_table_selection_events', False):
+            return
+
         sel_model = self._results_table.selectionModel()
         indexes = sel_model.selectedRows()
         if not indexes:
