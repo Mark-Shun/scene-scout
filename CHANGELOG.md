@@ -9,6 +9,7 @@ What started out as fixing installation issues for Mac users turned into a big r
 ### Main highlights
 - **GUI migration to Qt**: The library used for the GUI has been changed from Tkinter to Qt (Pyside6)
 - **Pool embedding results**: Instead of embedding scene data for one frame, embed data over multiple frames and pool them together (potentially normalizing data throughout the whole scene instead of one spot)
+- **Sharpness frame check**: When selecting multiple frames, the processor now checks and picks frames that are considered sharp (with a minimum distance), preventing blurry frames being processed
 - **Pack/Unpack database archives (`.scdb`)**: Portable archive format for sharing databases between people and devices, available in both the GUI and CLI
 - **Automatic update**: Added the ability to automatically download and install an update
 - **Global logging system**: Global exception hooks for both main and background threads, and configurable log levels. Logs are saved to a file and can more easily be shared
@@ -34,6 +35,7 @@ Besides the already mentioned points in main highlights.
 - **Model asynchronous background loading**: The model is now being loaded in a seperate thread, due to this the GUI can launch faster
 - **Install/launch scripts**: Launcher scripts read `.install_state` for custom environment path; install scripts write `ENV_PATH` before the EXTRA state to prevent file overwrite
 - **Windows installer path validation**: Strips accidental quotes from user input, validates parent directory existence, and re-prompts on bad paths instead of silently falling back
+- **Accurate scene detect speed boost**: Using AV and scene manager to slightly speed up the accurate scene detection method
 
 ### Fixed
 - **Mac install fix**: Migration to Qt fixed the installation for Mac. Mac very specifically could not resolve Tkinterdnd2 due to a mismatch with Tcl 8 and 9
