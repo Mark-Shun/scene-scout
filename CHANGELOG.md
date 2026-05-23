@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-05-23
+
+What started out as fixing installation issues for Mac users turned into a big refactor to a different GUI library. With new features put on top of it while we're at it.
+
+### Main highlights
+- **GUI migration to Qt**: The library used for the GUI has been changed from Tkinter to Qt (Pyside6)
+- **Pool embedding results**: Instead of embedding scene data for one frame, embed data over multiple frames and pool them together (potentially normalizing data throughout the whole scene instead of one spot)
+- **Pack/Unpack database archives (`.scdb`)**: Portable archive format for sharing databases between people and devices, available in both the GUI and CLI
+- **Automatic update**: Added the ability to automatically download and install an update
+- **Global logging system**: Global exception hooks for both main and background threads, and configurable log levels. Logs are saved to a file and can more easily be shared
+- **Seperate OS scripts**: The scripts have further been divided between platforms (Windows, Linux, Mac). This was to make it more clear for users which scripts to launch
+- **Mac Intel support**: Experimental support for older Mac models with intel architecture.
+
+### Added
+
+Besides the already mentioned points in main highlights.
+
+- **CLI Pack/Unpack `.scdb` archives**: `do_pack` and `do_unpack` methods in the interactive shell — packs active databases and their video files into a portable archive, with automatic path recalibration on unpack
+- **Headless utility commands**: `--pack`, `--unpack`, `--verify`, `--relink` arguments for scripted use without entering interactive mode
+- **Custom environment path**: Install scripts prompt for an alternative environment path. With this it is possible to install the environment files at a different place in your system
+- **Custom model path**: Install scripts prompt for an alternative path. With this it is possible to download and use the model files at a different place in your system
+- **Clean install option**: Users can wipe and recreate the virtual environment during installation to fix corrupted dependencies
+- **Reprocess files**: Added the option to reprocess files which were already in the database (for if you changed processing settings and want to pass this to an existing database)
+- **VLC force-reinstall (Mac)**: Opt-in option to force reinstall VLC for Apple Silicon compatibility
+- **ASCII logo**: Installer scripts display an ASCII art logo at startup
+- **Custom themes**: Support for user-provided theme files
+
+### Changed
+- **Model asynchronous background loading**: The model is now being loaded in a seperate thread, due to this the GUI can launch faster
+- **Install/launch scripts**: Launcher scripts read `.install_state` for custom environment path; install scripts write `ENV_PATH` before the EXTRA state to prevent file overwrite
+- **Windows installer path validation**: Strips accidental quotes from user input, validates parent directory existence, and re-prompts on bad paths instead of silently falling back
+
+### Fixed
+- **Mac install fix**: Migration to Qt fixed the installation for Mac. Mac very specifically could not resolve Tkinterdnd2 due to a mismatch with Tcl 8 and 9
+- **TensorRT crash**: `AttributeError: __wrapped__` from `torch.compile` no longer crashes the application — caught and falls back to standard CUDA with a log message
+- **`.install_state` overwrite**: `ENV_PATH` written by the custom path prompt was erased milliseconds later by `echo EXTRA=%EXTRA%>` — state initialization now happens first, appends stack correctly
+- **Disabled close button**: Database Manager, Queue Manager, Missing Files, and About dialogs had a non-functional 'X' button due to a Windows quirk with `WindowContextHelpButtonHint` — added `WindowCloseButtonHint` to restore it
+- **Console overlap in installer**: Custom path prompt output could visually overlap with subsequent UI elements due to missing newline separators
+
 ## [1.2.0] - 2026-05-10
 
 ### Added

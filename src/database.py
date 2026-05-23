@@ -5,6 +5,13 @@ import numpy as np
 from pathlib import Path
 import config
 
+def get_fast_conn(db_path: str, timeout: float = 10.0) -> sqlite3.Connection:
+    """Returns a connection optimized for rapid I/O operations."""
+    conn = sqlite3.connect(db_path, timeout=timeout)
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA temp_store = MEMORY")
+    return conn
+
 DB_SCHEMA = f"""
 -- store image embeddings (searchable items) as before
 CREATE TABLE IF NOT EXISTS image_embeddings (
@@ -547,6 +554,16 @@ def update_video_filepath(db_path: str, video_id: int, new_filepath: str) -> boo
     except sqlite3.IntegrityError:
         return False
 
+def clear_video_data_by_path(db_path: str, filepath: str) -> None:
+    """Deletes a video record and cascades to all associated scene embeddings."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute("DELETE FROM processed_videos WHERE filepath = ?", (filepath,))
+            conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database error clearing video data: {e}")
+
 def delete_video_record(db_path: str, video_id: int) -> bool:
     try:
         with sqlite3.connect(db_path) as conn:
@@ -556,3 +573,26 @@ def delete_video_record(db_path: str, video_id: int) -> bool:
             return True
     except sqlite3.Error:
         return False
+
+
+def remap_all_video_paths(db_path: str, new_base_dir: str) -> None:
+    """
+    Reads all absolute filepaths in a newly imported database,
+    extracts the file names, and rewrites them to the new folder target.
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.execute("SELECT id, filepath FROM processed_videos")
+            videos = cursor.fetchall()
+
+            for video_id, old_path in videos:
+                filename = os.path.basename(old_path)
+                updated_path = os.path.normpath(os.path.join(new_base_dir, filename))
+
+                conn.execute(
+                    "UPDATE processed_videos SET filepath = ? WHERE id = ?",
+                    (updated_path, video_id)
+                )
+            conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database error during path remapping: {e}")

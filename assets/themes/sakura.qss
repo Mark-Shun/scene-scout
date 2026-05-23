@@ -1,0 +1,179 @@
+QWidget {
+    background-color: #FFF0F5; /* Soft pink background */
+    color: #4A4A4A;            /* Warm dark gray text for high contrast */
+    font-family: "Segoe UI", sans-serif;
+    font-size: 10pt;
+}
+
+QGroupBox {
+    background-color: rgba(255, 255, 255, 200);
+    border: 1px solid #FFB7C5; /* Cherry blossom pink border */
+    border-radius: 8px;
+    margin-top: 15px;
+    padding-top: 15px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 15px;
+    padding: 0 5px;
+    color: #D81B60; /* Deeper magenta/pink for headers */
+    font-weight: bold;
+}
+
+QPushButton {
+    background-color: #FFD1DC; /* Pastel pink button surface */
+    border: 1px solid #FFB7C5;
+    border-radius: 5px;
+    color: #5D4037; /* Warm brown text */
+    padding: 6px 14px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #FFE4E1; /* Lighter pink on hover */
+    border: 1px solid #FF9EBB;
+}
+
+QPushButton:pressed {
+    background-color: #FFC0CB;
+    border: 1px solid #FF69B4;
+}
+
+QPushButton:disabled {
+    background-color: #F8F8F8;
+    border: 1px solid #E0E0E0;
+    color: #A0A0A0;
+}
+
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #FFFFFF;
+    border: 1px solid #FFB7C5;
+    border-radius: 4px;
+    padding: 4px 6px;
+    selection-background-color: #FFB7C5;
+    selection-color: #4A4A4A;
+}
+
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border: 1px solid #D81B60;
+    background-color: #FFF9FA;
+}
+
+QTableView, QListWidget {
+    background-color: #fee8f5;
+    gridline-color: #FFE4E1;
+    border: 1px solid #FFB7C5;
+    selection-background-color: #FFD1DC;
+    selection-color: #4A4A4A;
+}
+
+QHeaderView::section {
+    background-color: #FFF0F5;
+    color: #D81B60;
+    border: none;
+    border-right: 1px solid #FFB7C5;
+    border-bottom: 1px solid #FFB7C5;
+    padding: 5px;
+    font-weight: bold;
+}
+
+QScrollBar:vertical {
+    border: none;
+    background: #FFF0F5;
+    width: 12px;
+    margin: 15px 0 15px 0;
+}
+
+QScrollBar::handle:vertical {
+    background: #FFB7C5;
+    min-height: 20px;
+    border-radius: 6px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #FF9EBB;
+}
+
+QCheckBox {
+    color: #4A4A4A;
+    spacing: 6px;
+}
+
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 2px;
+    border: 2px solid #FFB7C5;
+    background-color: #FFFFFF;
+}
+
+QCheckBox::indicator:hover {
+    border: 2px solid #D81B60;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #D81B60;
+    border: 2px solid #D81B60;
+}
+
+QCheckBox:disabled {
+    color: #A0A0A0;
+}
+
+QCheckBox::indicator:disabled {
+    border: 2px solid #E0E0E0;
+    background-color: #F8F8F8;
+}
+
+QRadioButton {
+    color: #4A4A4A;
+    spacing: 6px;
+    font-weight: bold;
+}
+
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 8px; /* Makes it a perfect circle */
+    border: 2px solid #FFB7C5; /* Cherry blossom border */
+    background-color: #FFFFFF; /* Stark white to contrast the pink app background */
+}
+
+QRadioButton::indicator:hover {
+    border: 2px solid #D81B60; /* Magenta border on hover */
+}
+
+QRadioButton::indicator:checked {
+    background-color: #D81B60; /* Solid magenta fill when selected */
+    border: 2px solid #D81B60;
+}
+
+QRadioButton::disabled {
+    color: #A0A0A0;
+}
+
+QRadioButton::indicator:disabled {
+    border: 2px solid #E0E0E0;
+    background-color: #F8F8F8;
+}
+
+QDialog#GlassSplash {
+    background-color: #FFF0F5;
+    border: 2px solid #FFB7C5;
+    border-radius: 12px;
+}
+
+QLabel#SplashStatus {
+    color: #D81B60;
+    font-size: 10pt;
+    margin-top: 15px;
+    font-weight: bold;
+}
+
+/* --- STATUS BAR STYLING --- */
+QStatusBar { border-top: 1px solid #FFB7C5; min-height: 32px; background-color: #FFF0F5; }
+QLabel#MainStatusLabel { color: #D81B60; font-family: "Consolas", "Courier New", monospace; font-weight: bold; font-size: 11pt; padding-left: 8px; }
+QLabel#StatusBarDBLabel { background-color: #FFD1DC; border: 1px solid #FF9EBB; border-radius: 5px; padding: 3px 10px; margin: 4px 8px; font-weight: bold; font-size: 10pt; color: #5D4037; }
+QLabel#StatusBarCountLabel { padding: 0 8px; font-size: 10pt; color: #A0A0A0; }

@@ -2,20 +2,24 @@ import os
 import re
 import sys
 import subprocess
-import tkinter as tk
-from tkinter import ttk
 from typing import Any, Dict, Optional
+from datetime import date
 
 import av
 
 import config
-import gui_utils
-from gui_utils import ToolTip
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox,
+    QProgressBar, QPushButton, QLabel, QSpinBox, QCheckBox,
+    QRadioButton, QFrame, QLineEdit, QGridLayout,
+    QWidget, QFileDialog
+)
 
 _FFMPEG_CACHE = None
 
 
-class BaseExporter(tk.Toplevel):
+class BaseExporter(QDialog):
     RESOLUTION_PRESETS = {
         'Original': None,
         '4K (2160p)': 2160,
@@ -23,7 +27,7 @@ class BaseExporter(tk.Toplevel):
         '1080p': 1080,
         '720p': 720,
         '480p': 480,
-        'Custom': 'custom'
+        'Custom': 'custom',
     }
 
     VIDEO_CODECS = {
@@ -31,346 +35,414 @@ class BaseExporter(tk.Toplevel):
         'H.265 (libx265)': 'libx265',
         'AV1 (libsvtav1)': 'libsvtav1',
         'VP9 (libvpx-vp9)': 'libvpx-vp9',
-        'ProRes 422 (prores_ks)': 'prores_ks'
+        'ProRes 422 (prores_ks)': 'prores_ks',
     }
 
     CONTAINERS = {
         'MP4 (.mp4)': '.mp4',
         'Matroska (.mkv)': '.mkv',
         'QuickTime (.mov)': '.mov',
-        'WebM (.webm)': '.webm'
+        'WebM (.webm)': '.webm',
     }
 
     AUDIO_CODECS = {
         'AAC (aac)': 'aac',
         'MP3 (libmp3lame)': 'libmp3lame',
-        'Opus (libopus)': 'libopus'
+        'Opus (libopus)': 'libopus',
     }
 
     AUDIO_MODES = {
         'Copy Audio (Fast)': 'copy',
         'Re-encode Audio': 'encode',
-        'No Audio (Mute)': 'disable'
+        'No Audio (Mute)': 'disable',
+    }
+
+    CONTAINER_COMPATIBILITY = {
+        'MP4 (.mp4)': {
+            'video': ['H.264 (libx264)', 'H.265 (libx265)', 'AV1 (libsvtav1)'],
+            'audio': ['AAC (aac)', 'MP3 (libmp3lame)']
+        },
+        'Matroska (.mkv)': {
+            'video': ['H.264 (libx264)', 'H.265 (libx265)', 'AV1 (libsvtav1)', 'VP9 (libvpx-vp9)', 'ProRes 422 (prores_ks)'],
+            'audio': ['AAC (aac)', 'MP3 (libmp3lame)', 'Opus (libopus)']
+        },
+        'QuickTime (.mov)': {
+            'video': ['H.264 (libx264)', 'H.265 (libx265)', 'ProRes 422 (prores_ks)'],
+            'audio': ['AAC (aac)', 'MP3 (libmp3lame)']
+        },
+        'WebM (.webm)': {
+            'video': ['VP9 (libvpx-vp9)', 'AV1 (libsvtav1)'],
+            'audio': ['Opus (libopus)']
+        }
     }
 
     def __init__(self, parent):
         super().__init__(parent)
-
         self.parent = parent
+        self.process: Optional[subprocess.Popen] = None
+        self.export_thread = None
+        self.cancelled = False
 
-        gui_utils.apply_window_icon(self, getattr(parent, 'app_icon', None))
-
-        self.transient(parent)
-        self.grab_set()
-        self.resizable(False, False)
-
-        self.style = ttk.Style(self)
-        parent_style = parent.style if hasattr(parent, 'style') else None
-        if parent_style:
-            self.style.theme_use(parent_style.theme_use())
-
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
+        self.setModal(True)
         self.config = config.load_config()
-        self._init_common_vars()
+
+        # Build common widget attributes
+        self.mode = 'encode'
+        self.resolution = 'Original'
+        self.video_codec = self.config.get('export_video_codec', 'H.264 (libx264)')
+        self.crf = self.config.get('export_crf', 23)
+        self.audio_mode = self.config.get('export_audio_mode', 'Copy Audio (Fast)')
+        self.audio_codec = self.config.get('export_audio_codec', 'AAC (aac)')
+        self.audio_bitrate = self.config.get('export_audio_bitrate', '192k')
+        self.open_folder = self.config.get('export_open_folder', True)
+        self.custom_width = self.config.get('export_custom_width', 1920)
+        self.custom_height = self.config.get('export_custom_height', 1080)
+        self.container = self.config.get('export_container', 'MP4 (.mp4)')
+        self.naming_template = self.config.get('naming_template', '{source-name}_scene_{time-start}')
 
     def _get_core_ffmpeg_args(self, metadata: dict) -> list:
-        """Returns encoding, audio, mapping, and sync arguments."""
         args = self._get_video_encode_args()
         args.extend(self._get_audio_args())
-
-        # Standard stream mapping
         args.extend(['-map', '0:v:0'])
         if metadata.get('has_audio'):
             args.extend(['-map', '0:a?'])
-
-        # Global synchronization flags
         args.extend(['-avoid_negative_ts', 'make_zero', '-y'])
         return args
 
-    def _init_common_vars(self):
-        """Initializes all shared state variables to prevent AttributeErrors."""
-        self.cancelled = False
-        self.process: Optional[subprocess.Popen] = None
-        self.export_thread = None
-
-        self.status_var = tk.StringVar(self, value='Ready')
-        self.progress_var = tk.DoubleVar(self, value=0.0)
-        self.template_var = tk.StringVar(self, value=self.config.get('naming_template', '{source-name}_scene_{time-start}'))
-        self.container_var = tk.StringVar(self, value=self.config.get('export_container', 'MP4 (.mp4)'))
-        self.output_path_var = tk.StringVar(self)
-        self.output_dir_var = tk.StringVar(self)
-
     def _build_mode_section(self, parent):
-        frame = ttk.LabelFrame(parent, text='Export Mode', padding='10')
-        frame.pack(fill='x', pady=(0, 10))
+        group = QGroupBox('Export Mode')
+        layout = QVBoxLayout(group)
 
-        self.mode_var = tk.StringVar(self, value=self.config.get('export_mode', 'encode'))
+        self._mode_copy = QRadioButton('Stream Copy (Fast, Lossless)')
+        self._mode_encode = QRadioButton('Re-encode (Exact Frame Accuracy)')
 
-        ttk.Radiobutton(
-            frame,
-            text='Stream Copy (Fast, Lossless)',
-            variable=self.mode_var,
-            value='copy',
-            command=self._update_widget_states
-        ).pack(anchor='w')
+        if self.mode == 'copy':
+            self._mode_copy.setChecked(True)
+        else:
+            self._mode_encode.setChecked(True)
 
-        ttk.Radiobutton(
-            frame,
-            text='Re-encode (Exact Frame Accuracy)',
-            variable=self.mode_var,
-            value='encode',
-            command=self._update_widget_states
-        ).pack(anchor='w')
+        self._mode_copy.toggled.connect(self._update_widget_states)
+        self._mode_encode.toggled.connect(self._update_widget_states)
 
-        ToolTip(
-            frame,
+        layout.addWidget(self._mode_copy)
+        layout.addWidget(self._mode_encode)
+
+        group.setToolTip(
             'Stream Copy cuts on keyframes only. The cut timing may not be exact.\n'
             'Re-encode mode provides exact frame accuracy but takes longer.'
         )
-
-    def _build_video_options(self, parent):
-        self.video_frame = ttk.LabelFrame(parent, text='Video Options', padding='10')
-        self.video_frame.pack(fill='x', pady=(0, 10))
-
-        self._build_resolution_option(self.video_frame)
-        self._build_codec_option(self.video_frame)
-        self._build_crf_option(self.video_frame)
-
-    def _build_resolution_option(self, parent):
-        ttk.Label(parent, text='Resolution:').grid(row=0, column=0, sticky='w', pady=2)
-
-        saved_resolution = self.config.get('export_resolution', 'Original')
-        self.resolution_var = tk.StringVar(self, value=saved_resolution)
-
-        self.res_combo = ttk.Combobox(
-            parent,
-            textvariable=self.resolution_var,
-            values=list(self.RESOLUTION_PRESETS.keys()),
-            state='readonly',
-            width=20
-        )
-        self.res_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
-        self.res_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_widget_states())
-
-        self.custom_res_frame = ttk.Frame(parent)
-        self.width_var = tk.StringVar(self, value=str(self.config.get('export_custom_width', '1920')))
-        self.height_var = tk.StringVar(self, value=str(self.config.get('export_custom_height', '1080')))
-
-        ttk.Entry(self.custom_res_frame, textvariable=self.width_var, width=6).pack(side='left')
-        ttk.Label(self.custom_res_frame, text='x').pack(side='left', padx=2)
-        ttk.Entry(self.custom_res_frame, textvariable=self.height_var, width=6).pack(side='left')
-
-        self.custom_res_frame.grid_forget()
-
-    def _build_codec_option(self, parent):
-        ttk.Label(parent, text='Video Codec:').grid(row=1, column=0, sticky='w', pady=2)
-
-        saved_codec = self.config.get('export_video_codec', 'H.264 (libx264)')
-        self.video_codec_var = tk.StringVar(self, value=saved_codec)
-
-        self.video_codec_combo = ttk.Combobox(
-            parent,
-            textvariable=self.video_codec_var,
-            values=list(self.VIDEO_CODECS.keys()),
-            state='readonly',
-            width=20
-        )
-        self.video_codec_combo.grid(row=1, column=1, sticky='w', padx=(10, 0), pady=2)
-
-    def _build_crf_option(self, parent):
-        ttk.Label(parent, text='Quality (CRF):').grid(row=2, column=0, sticky='w', pady=2)
-
-        saved_crf = self.config.get('export_crf', 23)
-        self.crf_var = tk.IntVar(self, value=saved_crf)
-
-        crf_frame = ttk.Frame(parent)
-        crf_frame.grid(row=2, column=1, sticky='w', padx=(10, 0), pady=2)
-
-        self.crf_spinbox = ttk.Spinbox(
-            crf_frame,
-            from_=0,
-            to=51,
-            textvariable=self.crf_var,
-            width=8
-        )
-        self.crf_spinbox.pack(side='left')
-
-        ttk.Label(crf_frame, text='(0=best, 51=worst, 23=default)').pack(
-            side='left',
-            padx=(5, 0)
-        )
-
-    def _build_audio_options(self, parent):
-        frame = ttk.LabelFrame(parent, text='Audio Options', padding='10')
-        frame.pack(fill='x', pady=(0, 10))
-
-        saved_audio_mode = self.config.get('export_audio_mode', 'Copy Audio (Fast)')
-        self.audio_mode_var = tk.StringVar(self, value=saved_audio_mode)
-
-        ttk.Label(frame, text='Audio Mode:').grid(row=0, column=0, sticky='w', pady=2)
-
-        self.audio_mode_combo = ttk.Combobox(
-            frame,
-            textvariable=self.audio_mode_var,
-            values=list(self.AUDIO_MODES.keys()),
-            state='readonly',
-            width=20
-        )
-        self.audio_mode_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
-        self.audio_mode_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_widget_states())
-
-        saved_audio_codec = self.config.get('export_audio_codec', 'AAC (aac)')
-        self.audio_codec_var = tk.StringVar(self, value=saved_audio_codec)
-        self.audio_bitrate_var = tk.StringVar(
-            self,
-            value=self.config.get('export_audio_bitrate', '192k')
-        )
-
-        ttk.Label(frame, text='Audio Codec:').grid(row=1, column=0, sticky='w', pady=2)
-        self.audio_codec_combo = ttk.Combobox(
-            frame,
-            textvariable=self.audio_codec_var,
-            values=list(self.AUDIO_CODECS.keys()),
-            state='readonly',
-            width=20
-        )
-        self.audio_codec_combo.grid(row=1, column=1, sticky='w', padx=(10, 0), pady=2)
-
-        ttk.Label(frame, text='Audio Bitrate:').grid(row=2, column=0, sticky='w', pady=2)
-        self.audio_bitrate_combo = ttk.Combobox(
-            frame,
-            textvariable=self.audio_bitrate_var,
-            values=['128k', '192k', '256k', '320k'],
-            state='readonly',
-            width=20
-        )
-        self.audio_bitrate_combo.grid(row=2, column=1, sticky='w', padx=(10, 0), pady=2)
+        parent.layout().addWidget(group)
 
     def _build_container_section(self, parent):
-        frame = ttk.LabelFrame(parent, text='Container', padding='10')
-        frame.pack(fill='x', pady=(0, 10))
+        group = QGroupBox('Container')
+        layout = QHBoxLayout(group)
+        
+        layout.addWidget(QLabel('Format:'))
+        self._container_combo = QComboBox()
+        self._container_combo.addItems(list(self.CONTAINERS.keys()))
+        idx = self._container_combo.findText(self.container)
+        if idx >= 0:
+            self._container_combo.setCurrentIndex(idx)
+            
+        self._container_combo.currentTextChanged.connect(self._on_container_changed)
+        layout.addWidget(self._container_combo)
+        layout.addStretch()
+        
+        parent.layout().addWidget(group)
 
-        ttk.Label(frame, text='Format:').grid(row=0, column=0, sticky='w', pady=2)
+    def _on_container_changed(self, text):
+        self._update_codec_dropdowns()
+        self._update_preview_display()
 
-        self.container_combo = ttk.Combobox(
-            frame,
-            textvariable=self.container_var,
-            values=list(self.CONTAINERS.keys()),
-            state='readonly',
-            width=20
-        )
-        self.container_combo.grid(row=0, column=1, sticky='w', padx=(10, 0), pady=2)
-        self.container_combo.bind('<<ComboboxSelected>>', lambda _e: self._update_preview_display())
+    def _update_codec_dropdowns(self, initial_video=None, initial_audio=None):
+        if not hasattr(self, '_codec_combo') or not hasattr(self, '_audio_codec_combo'):
+            return
+
+        container = self._container_combo.currentText()
+        compat = self.CONTAINER_COMPATIBILITY.get(container, {})
+        allowed_v = compat.get('video', list(self.VIDEO_CODECS.keys()))
+        allowed_a = compat.get('audio', list(self.AUDIO_CODECS.keys()))
+
+        current_v = initial_video if initial_video else self._codec_combo.currentText()
+        self._codec_combo.blockSignals(True)
+        self._codec_combo.clear()
+        self._codec_combo.addItems(allowed_v)
+        if current_v in allowed_v:
+            self._codec_combo.setCurrentText(current_v)
+        self._codec_combo.blockSignals(False)
+
+        current_a = initial_audio if initial_audio else self._audio_codec_combo.currentText()
+        self._audio_codec_combo.blockSignals(True)
+        self._audio_codec_combo.clear()
+        self._audio_codec_combo.addItems(allowed_a)
+        if current_a in allowed_a:
+            self._audio_codec_combo.setCurrentText(current_a)
+        self._audio_codec_combo.blockSignals(False)
+
+    def _build_naming_section(self, parent, is_bulk=False):
+        self.is_bulk = is_bulk
+        group = QGroupBox('Output & Naming')
+        layout = QVBoxLayout(group)
+
+        path_layout = QHBoxLayout()
+        self._output_dir_edit = QLineEdit()
+        path_layout.addWidget(self._output_dir_edit)
+        
+        browse_btn = QPushButton('Browse...')
+        browse_btn.clicked.connect(self._browse_output_dir if is_bulk else self._browse_output)
+        path_layout.addWidget(browse_btn)
+        layout.addLayout(path_layout)
+
+        temp_layout = QHBoxLayout()
+        temp_layout.addWidget(QLabel('Template:'))
+        self._template_edit = QLineEdit(self.naming_template)
+        self._template_edit.textChanged.connect(self._update_preview_display)
+        temp_layout.addWidget(self._template_edit)
+
+        self.tag_options = {
+            "Original Name": "{source-name}", "Date": "{date-today}", "Scene ID": "{scene-id}",
+            "Start": "{time-start}", "End": "{time-end}", "Codec": "{codec}", "Res": "{res}",
+        }
+        self._tag_selector = QComboBox()
+        self._tag_selector.addItem("Insert Tag...")
+        self._tag_selector.addItems(list(self.tag_options.keys()))
+        self._tag_selector.activated.connect(self._on_tag_selected)
+        temp_layout.addWidget(self._tag_selector)
+        layout.addLayout(temp_layout)
+
+        layout.addWidget(QLabel("Filename Preview:"))
+        self._preview_label = QLabel()
+        self._preview_label.setWordWrap(True)
+        self._preview_label.setStyleSheet("font-style: italic; color: gray;")
+        layout.addWidget(self._preview_label)
+
+        parent.layout().addWidget(group)
+
+    def _on_tag_selected(self, index):
+        if index <= 0: return
+        tag_key = self._tag_selector.currentText()
+        tag_val = self.tag_options.get(tag_key)
+        if tag_val:
+            # Insert tag at current cursor position
+            self._template_edit.insert(tag_val)
+        
+        # Reset dropdown silently
+        self._tag_selector.blockSignals(True)
+        self._tag_selector.setCurrentIndex(0)
+        self._tag_selector.blockSignals(False)
+
+    def _resolve_naming_template(self, template: str, metadata: dict, video_path: str, start_ms: int, end_ms: int, scene_idx: int = 0) -> str:
+        tags = {
+            '{source-name}': os.path.splitext(os.path.basename(video_path))[0],
+            '{scene-id}': str(scene_idx + 1),
+            '{time-start}': f"{start_ms / 1000.0:.1f}s",
+            '{time-end}': f"{end_ms / 1000.0:.1f}s",
+            '{duration}': f"{(end_ms - start_ms) / 1000.0:.1f}s",
+            '{codec}': metadata.get('video_codec', 'unknown') if metadata else 'unknown',
+            '{res}': f"{metadata.get('width', 0)}x{metadata.get('height', 0)}" if metadata else "0x0",
+            '{date-today}': date.today().isoformat(),
+        }
+        result = template
+        for tag, value in tags.items():
+            result = result.replace(tag, value)
+        
+        # Sanitize OS-invalid characters
+        sanitized = re.sub(r'[*?:"<>|]', "_", result)
+        return os.path.normpath(sanitized)
+
+    def _update_preview_display(self):
+        metadata, v_path, s_ms, e_ms = self._get_preview_params()
+        template = self._template_edit.text() if hasattr(self, '_template_edit') else self.naming_template
+        filename = self._resolve_naming_template(template, metadata, v_path, s_ms, e_ms)
+        
+        combo_text = self._container_combo.currentText() if hasattr(self, '_container_combo') else self.container
+        ext = self.CONTAINERS.get(combo_text, '.mp4')
+        full_name = f"{filename}{ext}"
+        
+        if hasattr(self, '_preview_label'):
+            self._preview_label.setText(full_name)
+
+        # For Single Exporter: Dynamically update the full file path string in the UI
+        if not getattr(self, 'is_bulk', True) and hasattr(self, '_output_dir_edit'):
+            current_path = self._output_dir_edit.text()
+            folder = os.path.dirname(current_path) if current_path else os.path.dirname(v_path)
+            new_path = os.path.join(folder, full_name)
+            if current_path != new_path:
+                self._output_dir_edit.setText(new_path)
+
+    def _get_preview_params(self):
+        # Override in subclasses
+        return {}, 'video.mp4', 0, 10000
+
+    def _browse_output_dir(self):
+        path = QFileDialog.getExistingDirectory(self, 'Choose Bulk Export Folder', self._output_dir_edit.text() or os.getcwd())
+        if path:
+            self._output_dir_edit.setText(path)
+
+    def _browse_output(self):
+        initial = self._output_dir_edit.text()
+        path, _ = QFileDialog.getSaveFileName(self, 'Export Scene As', initial, 'All Files (*.*)')
+        if path:
+            self._output_dir_edit.setText(path)
+
+    def _build_video_options(self, parent):
+        self._video_group = QGroupBox('Video Options')
+        layout = QGridLayout(self._video_group)
+
+        layout.addWidget(QLabel('Resolution:'), 0, 0)
+        self._res_combo = QComboBox()
+        self._res_combo.addItems(list(self.RESOLUTION_PRESETS.keys()))
+        idx = self._res_combo.findText(self.resolution)
+        if idx >= 0:
+            self._res_combo.setCurrentIndex(idx)
+        self._res_combo.currentTextChanged.connect(self._update_widget_states)
+        layout.addWidget(self._res_combo, 0, 1)
+
+        self._custom_res_frame = QWidget()
+        custom_layout = QHBoxLayout(self._custom_res_frame)
+        custom_layout.setContentsMargins(0, 0, 0, 0)
+        self._width_edit = QLineEdit(str(self.custom_width))
+        self._width_edit.setFixedWidth(60)
+        custom_layout.addWidget(self._width_edit)
+        custom_layout.addWidget(QLabel('x'))
+        self._height_edit = QLineEdit(str(self.custom_height))
+        self._height_edit.setFixedWidth(60)
+        custom_layout.addWidget(self._height_edit)
+        self._custom_res_frame.setVisible(self.resolution == 'Custom')
+        layout.addWidget(self._custom_res_frame, 0, 2)
+
+        layout.addWidget(QLabel('Video Codec:'), 1, 0)
+        self._codec_combo = QComboBox()
+        layout.addWidget(self._codec_combo, 1, 1)
+
+        layout.addWidget(QLabel('Quality (CRF):'), 2, 0)
+        crf_frame = QWidget()
+        crf_layout = QHBoxLayout(crf_frame)
+        crf_layout.setContentsMargins(0, 0, 0, 0)
+        self._crf_spin = QSpinBox()
+        self._crf_spin.setRange(0, 51)
+        self._crf_spin.setValue(self.crf)
+        crf_layout.addWidget(self._crf_spin)
+        crf_layout.addWidget(QLabel('(0=best, 51=worst, 23=default)'))
+        layout.addWidget(crf_frame, 2, 1)
+
+        parent.layout().addWidget(self._video_group)
+
+    def _build_audio_options(self, parent):
+        group = QGroupBox('Audio Options')
+        layout = QGridLayout(group)
+
+        layout.addWidget(QLabel('Audio Mode:'), 0, 0)
+        self._audio_mode_combo = QComboBox()
+        self._audio_mode_combo.addItems(list(self.AUDIO_MODES.keys()))
+        idx = self._audio_mode_combo.findText(self.audio_mode)
+        if idx >= 0:
+            self._audio_mode_combo.setCurrentIndex(idx)
+        self._audio_mode_combo.currentTextChanged.connect(self._update_widget_states)
+        layout.addWidget(self._audio_mode_combo, 0, 1)
+
+        layout.addWidget(QLabel('Audio Codec:'), 1, 0)
+        self._audio_codec_combo = QComboBox()
+        layout.addWidget(self._audio_codec_combo, 1, 1)
+
+        layout.addWidget(QLabel('Audio Bitrate:'), 2, 0)
+        self._audio_bitrate_combo = QComboBox()
+        self._audio_bitrate_combo.addItems(['128k', '192k', '256k', '320k'])
+        idx = self._audio_bitrate_combo.findText(self.audio_bitrate)
+        if idx >= 0:
+            self._audio_bitrate_combo.setCurrentIndex(idx)
+        layout.addWidget(self._audio_bitrate_combo, 2, 1)
+
+        parent.layout().addWidget(group)
+
+        self._update_codec_dropdowns(initial_video=self.video_codec, initial_audio=self.audio_codec)
 
     def _build_button_section(self, parent, export_text='Export'):
-        frame = ttk.Frame(parent)
-        frame.pack(fill='x')
+        self._open_folder_check = QCheckBox('Open folder after export')
+        self._open_folder_check.setChecked(self.open_folder)
+        parent.layout().addWidget(self._open_folder_check)
 
-        self.open_folder_var = tk.BooleanVar(
-            self,
-            value=self.config.get('export_open_folder', True)
-        )
-        self.open_folder_check = ttk.Checkbutton(
-            frame,
-            text='Open folder after export',
-            variable=self.open_folder_var
-        )
-        self.open_folder_check.pack(side='top', anchor='w', pady=(0, 5))
+        btn_layout = QHBoxLayout()
+        self._export_btn = QPushButton(export_text)
+        self._export_btn.clicked.connect(self._start_export)
+        btn_layout.addWidget(self._export_btn)
 
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill='x')
+        self._cancel_btn = QPushButton('Cancel')
+        self._cancel_btn.clicked.connect(self._on_cancel)
+        btn_layout.addWidget(self._cancel_btn)
 
-        self.export_btn = ttk.Button(btn_frame, text=export_text, command=self._start_export)
-        self.export_btn.pack(side='left', fill='x', expand=True, padx=(0, 5))
-
-        self.cancel_btn = ttk.Button(btn_frame, text='Cancel', command=self._on_cancel)
-        self.cancel_btn.pack(side='left', fill='x', expand=True, padx=(5, 0))
+        parent.layout().addLayout(btn_layout)
 
     def _update_widget_states(self):
-        is_encode = self.mode_var.get() == 'encode'
-        audio_mode = self.audio_mode_var.get()
+        is_encode = self._mode_encode.isChecked()
+        audio_mode = self._audio_mode_combo.currentText()
 
-        if hasattr(self, 'res_combo'):
-            self.res_combo.config(state='readonly' if is_encode else 'disabled')
+        self._res_combo.setEnabled(is_encode)
+        self._codec_combo.setEnabled(is_encode)
+        self._crf_spin.setEnabled(is_encode)
 
-        if hasattr(self, 'video_codec_combo'):
-            self.video_codec_combo.config(state='readonly' if is_encode else 'disabled')
+        is_reencode_audio = (audio_mode == 'Re-encode Audio')
+        self._audio_codec_combo.setEnabled(is_reencode_audio)
+        self._audio_bitrate_combo.setEnabled(is_reencode_audio)
 
-        if hasattr(self, 'crf_spinbox'):
-            self.crf_spinbox.config(state='normal' if is_encode else 'disabled')
+        res = self._res_combo.currentText()
+        self._custom_res_frame.setVisible(res == 'Custom' and is_encode)
 
-        is_reencode_audio = audio_mode == 'Re-encode Audio'
-
-        if hasattr(self, 'audio_codec_combo'):
-            self.audio_codec_combo.config(state='readonly' if is_reencode_audio else 'disabled')
-
-        if hasattr(self, 'audio_bitrate_combo'):
-            self.audio_bitrate_combo.config(state='readonly' if is_reencode_audio else 'disabled')
-
-        if hasattr(self, 'custom_res_frame') and hasattr(self, 'resolution_var'):
-            if self.resolution_var.get() == 'Custom' and is_encode:
-                self.custom_res_frame.grid(row=0, column=2, padx=(8, 0), sticky='w')
-            else:
-                self.custom_res_frame.grid_forget()
-
-        if hasattr(self, 'keyframe_info_var'):
-            self.keyframe_info_var.set(self._get_keyframe_info())
+        if hasattr(self, '_keyframe_info_label') and self._keyframe_info_label:
+            self._keyframe_info_label.setText(self._get_keyframe_info())
 
     def _save_common_settings(self):
-        self.config['export_mode'] = self.mode_var.get()
-        self.config['export_resolution'] = self.resolution_var.get()
-        self.config['export_audio_mode'] = self.audio_mode_var.get()
-        self.config['export_video_codec'] = self.video_codec_var.get()
-        self.config['export_audio_codec'] = self.audio_codec_var.get()
-        self.config['export_crf'] = self.crf_var.get()
-        self.config['export_audio_bitrate'] = self.audio_bitrate_var.get()
-        self.config['export_open_folder'] = self.open_folder_var.get()
-        self.config['export_custom_width'] = self.width_var.get()
-        self.config['export_custom_height'] = self.height_var.get()
+        self.config['export_mode'] = 'copy' if self._mode_copy.isChecked() else 'encode'
+        self.config['export_resolution'] = self._res_combo.currentText()
+        self.config['export_audio_mode'] = self._audio_mode_combo.currentText()
+        self.config['export_video_codec'] = self._codec_combo.currentText()
+        self.config['export_audio_codec'] = self._audio_codec_combo.currentText()
+        self.config['export_crf'] = self._crf_spin.value()
+        self.config['export_audio_bitrate'] = self._audio_bitrate_combo.currentText()
+        self.config['export_open_folder'] = self._open_folder_check.isChecked()
+        self.config['export_custom_width'] = int(self._width_edit.text())
+        self.config['export_custom_height'] = int(self._height_edit.text())
+        
+        # New Settings to Save
+        self.config['export_container'] = self._container_combo.currentText()
+        self.config['naming_template'] = self._template_edit.text()
 
     def _get_ffmpeg_path(self) -> str:
         global _FFMPEG_CACHE
-
         if _FFMPEG_CACHE:
             return _FFMPEG_CACHE
-
         try:
             import imageio_ffmpeg
             path = imageio_ffmpeg.get_ffmpeg_exe()
         except ImportError:
             import shutil
             path = shutil.which('ffmpeg') or 'ffmpeg'
-
         _FFMPEG_CACHE = path
         return path
 
     def _get_video_encode_args(self) -> list:
         args = []
-        codec_name = self.VIDEO_CODECS.get(self.video_codec_var.get(), 'libx264')
+        codec_name = self.VIDEO_CODECS.get(self._codec_combo.currentText(), 'libx264')
+        args.extend(['-c:v', codec_name, '-crf', str(self._crf_spin.value())])
 
-        args.extend(['-c:v', codec_name])
-        args.extend(['-crf', str(self.crf_var.get())])
-
-        res_choice = self.resolution_var.get()
+        res_choice = self._res_combo.currentText()
         if res_choice == 'Custom':
-            args.extend(['-vf', f'scale={self.width_var.get()}:{self.height_var.get()}'])
+            args.extend(['-vf', f'scale={self._width_edit.text()}:{self._height_edit.text()}'])
         else:
             target_height = self.RESOLUTION_PRESETS.get(res_choice)
             if target_height:
                 args.extend(['-vf', f'scale=-2:{target_height}'])
-
         return args
 
     def _get_audio_args(self) -> list:
-        audio_mode = self.AUDIO_MODES.get(self.audio_mode_var.get())
-
+        audio_mode = self.AUDIO_MODES.get(self._audio_mode_combo.currentText())
         if audio_mode == 'disable':
             return ['-an']
-
         if audio_mode == 'copy':
             return ['-c:a', 'copy']
-
-        codec_name = self.AUDIO_CODECS.get(self.audio_codec_var.get(), 'aac')
-        return ['-c:a', codec_name, '-b:a', self.audio_bitrate_var.get()]
+        codec_name = self.AUDIO_CODECS.get(self._audio_codec_combo.currentText(), 'aac')
+        return ['-c:a', codec_name, '-b:a', self._audio_bitrate_combo.currentText()]
 
     def _parse_time_to_ms(self, time_str: str) -> int:
         parts = time_str.split(':')
@@ -379,7 +451,6 @@ class BaseExporter(tk.Toplevel):
         sec_parts = parts[2].split('.')
         seconds = int(sec_parts[0])
         milliseconds = int(sec_parts[1]) if len(sec_parts) > 1 else 0
-
         return ((hours * 3600 + minutes * 60 + seconds) * 1000) + milliseconds
 
     def _format_ms(self, ms: int) -> str:
@@ -387,10 +458,8 @@ class BaseExporter(tk.Toplevel):
         mins = (ms % 3600000) // 60000
         secs = (ms % 60000) // 1000
         ms_remainder = ms % 1000
-
         if hours > 0:
             return f'{hours}:{mins:02d}:{secs:02d}.{ms_remainder:03d}'
-
         return f'{mins}:{secs:02d}.{ms_remainder:03d}'
 
     def _start_export(self):
@@ -402,246 +471,57 @@ class BaseExporter(tk.Toplevel):
     def _get_keyframe_info(self) -> str:
         return ''
 
-    def _resolve_naming_template(self, template: str, metadata: dict, video_path: str, start_ms: int, end_ms: int, scene_idx: int = 0) -> str:
-        from datetime import date
-
-        tags = {
-            '{source-name}': os.path.splitext(os.path.basename(video_path))[0],
-            '{scene-id}': str(scene_idx + 1),
-            '{time-start}': f"{start_ms / 1000.0:.1f}s",
-            '{time-end}': f"{end_ms / 1000.0:.1f}s",
-            '{duration}': f"{(end_ms - start_ms) / 1000.0:.1f}s",
-            '{codec}': metadata.get('video_codec', 'unknown'),
-            '{res}': f"{metadata.get('width', 0)}x{metadata.get('height', 0)}",
-            '{date-today}': date.today().isoformat(),
-        }
-
-        result = template
-        for tag, value in tags.items():
-            result = result.replace(tag, value)
-
-        sanitized = re.sub(r'[*?:"<>|]', "_", result)
-        return os.path.normpath(sanitized)
-
-    def _setup_scrollable_container(self):
-        """Creates a scrollable area for the dialog content."""
-        self.main_canvas = tk.Canvas(self, highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.main_canvas.yview)
-
-        self.scrollable_frame = ttk.Frame(self.main_canvas, padding="10")
-
-        self.canvas_window = self.main_canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-
-        self.main_canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.scrollable_frame.bind("<Configure>", lambda e: self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all")))
-        self.main_canvas.bind("<Configure>", lambda e: self.main_canvas.itemconfig(self.canvas_window, width=e.width))
-
-        self.main_canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-
-        self.main_canvas.bind_all("<MouseWheel>", lambda e: self.main_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-
-        return self.scrollable_frame
-
-    def _build_naming_section(self, parent, is_bulk=False):
-        """Merged naming UI for both Single and Bulk dialogs."""
-        frame = ttk.LabelFrame(parent, text='Output & Naming', padding='10')
-        frame.pack(fill='x', pady=(0, 10))
-
-        path_row = ttk.Frame(frame)
-        path_row.pack(fill='x', pady=(0, 5))
-        target_var = self.output_dir_var if is_bulk else self.output_path_var
-        ttk.Entry(path_row, textvariable=target_var).pack(side='left', fill='x', expand=True)
-        browse_cmd = self._browse_output_dir if is_bulk else self._browse_output
-        ttk.Button(path_row, text='Browse...', command=browse_cmd).pack(side='left', padx=(5, 0))
-
-        temp_row = ttk.Frame(frame)
-        temp_row.pack(fill='x', pady=5)
-        ttk.Label(temp_row, text="Template:").pack(side='left')
-        self.template_entry = ttk.Entry(temp_row, textvariable=self.template_var)
-        self.template_entry.pack(side='left', fill='x', expand=True, padx=5)
-        self.template_var.trace_add('write', lambda *args: self._update_preview_display())
-
-        self.tag_options = {
-            "Original Name": "{source-name}", "Date": "{date-today}", "Scene ID": "{scene-id}",
-            "Start": "{time-start}", "End": "{time-end}", "Codec": "{codec}", "Res": "{res}",
-        }
-        self.tag_selector = ttk.Combobox(temp_row, values=list(self.tag_options.keys()), state='readonly', width=10)
-        self.tag_selector.set("Insert...")
-        self.tag_selector.pack(side='left')
-        self.tag_selector.bind("<<ComboboxSelected>>", self._on_tag_selected)
-
-        ttk.Label(frame, text="Filename Preview:", font=('', 8, 'bold')).pack(anchor='w', pady=(5, 0))
-        preview_box = ttk.Frame(frame)
-        preview_box.pack(fill='x', pady=(2, 0))
-
-        self.preview_text = tk.Text(preview_box, height=2, wrap='char', font=('', 8, 'italic'),
-                                    padx=5, pady=5, bg=self.style.lookup('TFrame', 'background'), relief='flat')
-        scroll = ttk.Scrollbar(preview_box, orient="vertical", command=self.preview_text.yview)
-        self.preview_text.configure(yscrollcommand=scroll.set)
-        self.preview_text.pack(side='left', fill='x', expand=True)
-        scroll.pack(side='right', fill='y')
-
-    def _on_tag_selected(self, event):
-        tag = self.tag_options.get(self.tag_selector.get())
-        if tag:
-            self.template_entry.insert(tk.INSERT, tag)
-            self.tag_selector.set("Insert...")
-
-    def _update_preview_display(self):
-        """Internal helper to refresh the preview text box."""
-        if not hasattr(self, 'preview_text'):
-            return
-
-        metadata, v_path, s_ms, e_ms = self._get_preview_params()
-        filename = self._resolve_naming_template(self.template_var.get(), metadata, v_path, s_ms, e_ms)
-        ext = self.CONTAINERS.get(self.container_var.get(), '.mp4')
-        full_name = f"{filename}{ext}"
-
-        self.preview_text.config(state='normal')
-        self.preview_text.delete('1.0', tk.END)
-        self.preview_text.insert(tk.END, full_name)
-        self.preview_text.config(state='disabled')
-
-        if hasattr(self, 'output_path_var') and not self.output_path_var.get().endswith(full_name):
-            folder = os.path.dirname(self.output_path_var.get() or v_path)
-            self.output_path_var.set(os.path.join(folder, full_name))
-
-    def _get_preview_params(self):
-        """Override in subclasses to provide scene-specific preview data."""
-        return {}, 'video.mp4', 0, 10000
-
-    def _run_ffmpeg_base(self, cmd: list, duration_ms: int, progress_callback):
-        """Universal FFmpeg runner with regex progress parsing.
-        Returns 'success', 'cancelled', or the last 50 lines of stderr on error.
-        """
-        creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
-        self.process = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=creation_flags, bufsize=1, universal_newlines=True
-        )
-
-        time_regex = re.compile(r'time=(\d+:\d+:\d+\.\d+)')
-        stderr_lines = []
-
-        assert self.process.stderr is not None
-        for line in self.process.stderr:
-            stderr_lines.append(line)
-            if self.cancelled:
-                self.process.terminate()
-                return "cancelled"
-
-            match = time_regex.search(line)
-            if match:
-                current_ms = self._parse_time_to_ms(match.group(1))
-                percent = min(100.0, (current_ms / duration_ms) * 100.0) if duration_ms else 0.0
-                self.after(0, lambda ms=current_ms, p=percent: progress_callback(ms, p))
-
-        self.process.wait()
-        if self.process.returncode != 0:
-            return "".join(stderr_lines[-50:])
-        return "success"
-
-    def _on_export_error(self, error_msg: str):
-        self.status_var.set('Export failed!')
-        messagebox.showerror('Export Error', error_msg, parent=self)
-        self.export_btn.config(state='normal')
-        self.cancel_btn.config(state='normal')
-
-    def _on_export_cancelled(self):
-        self.status_var.set('Export cancelled.')
-        self.export_btn.config(state='normal')
-        self.cancel_btn.config(state='normal')
-
-    def _open_target_explorer(self, path: str):
-        """Universal platform-aware 'Show in Folder' logic."""
-        abs_path = os.path.abspath(path)
-        try:
-            if sys.platform == 'win32':
-                cmd = ['explorer', '/select,', abs_path] if os.path.isfile(abs_path) else ['explorer', abs_path]
-                subprocess.run(cmd)
-            elif sys.platform == 'darwin':
-                subprocess.run(['open', '-R', abs_path])
-            else:
-                folder = abs_path if os.path.isdir(abs_path) else os.path.dirname(abs_path)
-                subprocess.run(['xdg-open', folder])
-        except Exception as e:
-            print(f"Failed to open explorer: {e}")
-
 
 def get_video_info_and_keyframe(video_path: str, target_ms: int) -> Dict[str, Any]:
     info = {
-        'width': 1920,
-        'height': 1080,
-        'framerate': 30.0,
-        'has_audio': False,
-        'audio_codec': None,
-        'video_codec': None,
-        'duration_ms': 0,
-        'keyframe_ms': target_ms,
-        'error': None
+        'width': 1920, 'height': 1080, 'framerate': 30.0,
+        'has_audio': False, 'audio_codec': None, 'video_codec': None,
+        'duration_ms': 0, 'keyframe_ms': target_ms, 'error': None,
     }
-
     container = None
-
     try:
         container = av.open(video_path)
         video_stream = container.streams.video[0]
-
         info['width'] = video_stream.width
         info['height'] = video_stream.height
         info['framerate'] = float(video_stream.average_rate) if video_stream.average_rate else 30.0
         info['video_codec'] = video_stream.codec.name
-
         audio_streams = [s for s in container.streams if s.type == 'audio']
         info['has_audio'] = len(audio_streams) > 0
-
         if info['has_audio']:
             info['audio_codec'] = audio_streams[0].codec.name
-
         if container.duration:
             info['duration_ms'] = int((container.duration / av.time_base) * 1000)
-
         target_pts = int((target_ms / 1000.0) / float(video_stream.time_base))
-
         try:
             container.seek(target_pts, stream=video_stream, backward=True, any_frame=False)
         except Exception:
             pass
-
         for packet in container.demux(video_stream):
             if packet.pts is not None:
                 info['keyframe_ms'] = int(packet.pts * float(video_stream.time_base) * 1000)
                 break
-
         return info
-
     except Exception as e:
         info['error'] = str(e)
         return info
-
     finally:
         if container:
             container.close()
 
 
 VIDEO_CODEC_MAP = {
-    'H.264 (libx264)': 'libx264',
-    'H.265 (libx265)': 'libx265',
-    'AV1 (libsvtav1)': 'libsvtav1',
-    'VP9 (libvpx-vp9)': 'libvpx-vp9',
-    'ProRes 422 (prores_ks)': 'prores_ks'
+    'H.264 (libx264)': 'libx264', 'H.265 (libx265)': 'libx265',
+    'AV1 (libsvtav1)': 'libsvtav1', 'VP9 (libvpx-vp9)': 'libvpx-vp9',
+    'ProRes 422 (prores_ks)': 'prores_ks',
 }
 
 
 def build_ffmpeg_args_headless(config_dict: dict, metadata: dict) -> list:
-    """Generates encoding arguments based on a config dictionary for CLI/Headless use."""
     args = []
-
     codec = config_dict.get('export_video_codec', 'H.264 (libx264)')
     codec_name = VIDEO_CODEC_MAP.get(codec, 'libx264')
     args.extend(['-c:v', codec_name, '-crf', str(config_dict.get('export_crf', 23))])
-
     res_choice = config_dict.get('export_resolution', 'Original')
     if res_choice == 'Custom':
         args.extend(['-vf', f"scale={config_dict.get('export_custom_width', 1920)}:{config_dict.get('export_custom_height', 1080)}"])
@@ -649,7 +529,6 @@ def build_ffmpeg_args_headless(config_dict: dict, metadata: dict) -> list:
         h = re.search(r'\d+', res_choice)
         if h:
             args.extend(['-vf', f'scale=-2:{h.group()}'])
-
     audio_mode_raw = config_dict.get('export_audio_mode', 'Copy Audio (Fast)')
     is_no_audio = audio_mode_raw in ('disable', 'No Audio (Mute)')
     is_copy = audio_mode_raw in ('copy', 'Copy Audio', 'Copy Audio (Fast)')
@@ -660,7 +539,6 @@ def build_ffmpeg_args_headless(config_dict: dict, metadata: dict) -> list:
     else:
         acodec = config_dict.get('export_audio_codec', 'AAC (aac)')
         args.extend(['-c:a', acodec, '-b:a', config_dict.get('export_audio_bitrate', '192k')])
-
     return args
 
 
@@ -668,7 +546,6 @@ def export_video_scene(video_path: str, start_ms: int, end_ms: int, output_path:
     duration_ms = end_ms - start_ms
     start_sec = start_ms / 1000.0
     duration_sec = duration_ms / 1000.0
-
     buffer_sec = 10.0
     if start_sec > buffer_sec:
         fast_seek = start_sec - buffer_sec
@@ -676,51 +553,36 @@ def export_video_scene(video_path: str, start_ms: int, end_ms: int, output_path:
     else:
         fast_seek = 0.0
         exact_seek = start_sec
-
     app_config = config.load_config()
     metadata = get_video_info_and_keyframe(video_path, start_ms)
-
     cmd = [
         _get_cached_ffmpeg_path(),
-        '-ss', str(fast_seek),
-        '-i', video_path,
+        '-ss', str(fast_seek), '-i', video_path,
         '-ss', str(exact_seek),
     ]
-
     cmd.extend(build_ffmpeg_args_headless(app_config, metadata))
     cmd.extend(['-map', '0:v:0'])
     if metadata.get('has_audio'):
         cmd.extend(['-map', '0:a?'])
     cmd.extend(['-t', str(duration_sec), '-avoid_negative_ts', 'make_zero', '-y', output_path])
-
     creation_flags = 0
     if sys.platform == 'win32':
         creation_flags = subprocess.CREATE_NO_WINDOW
-
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        creationflags=creation_flags
-    )
+    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=creation_flags)
     _stdout, stderr = process.communicate()
-
     if process.returncode != 0:
         raise RuntimeError(f'FFmpeg failed with code {process.returncode}: {stderr.decode()}')
 
 
 def _get_cached_ffmpeg_path() -> str:
     global _FFMPEG_CACHE
-
     if _FFMPEG_CACHE:
         return _FFMPEG_CACHE
-
     try:
         import imageio_ffmpeg
         path = imageio_ffmpeg.get_ffmpeg_exe()
     except ImportError:
         import shutil
         path = shutil.which('ffmpeg') or 'ffmpeg'
-
     _FFMPEG_CACHE = path
     return path

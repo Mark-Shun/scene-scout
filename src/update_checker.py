@@ -1,3 +1,4 @@
+import sys
 import logging
 import re
 from pathlib import Path
@@ -9,6 +10,19 @@ from packaging.version import InvalidVersion, parse
 from config import load_config
 
 logger = logging.getLogger(__name__)
+
+
+def extract_image_url(text: str) -> str:
+    """Extracts the first markdown or HTML image URL from the text."""
+    md_match = re.search(r'!\[.*?\]\((.*?)\)', text)
+    if md_match:
+        return md_match.group(1)
+
+    html_match = re.search(r'<img[^>]+src=["\'](.*?)["\']', text, flags=re.IGNORECASE)
+    if html_match:
+        return html_match.group(1)
+
+    return ""
 
 
 def clean_release_notes(text: str) -> str:
@@ -76,13 +90,50 @@ def check_for_update():
 
         if latest_parsed > current_parsed:
             raw_body = data.get("body", "No release notes available.")
-            
+
+            # --- Download URL Extraction Scaffold ---
+            is_compiled = getattr(sys, 'frozen', False)
+            download_url = ""
+            is_source_zip = False
+
+            if is_compiled:
+                assets = data.get("assets", [])
+                for asset in assets:
+                    name = asset.get("name", "").lower()
+                    if sys.platform == 'win32' and name.endswith('.exe'):
+                        download_url = asset.get("browser_download_url")
+                        break
+                    elif sys.platform == 'darwin' and (name.endswith('.dmg') or name.endswith('.app.zip')):
+                        download_url = asset.get("browser_download_url")
+                        break
+                    elif sys.platform.startswith('linux') and name.endswith('.appimage'):
+                        download_url = asset.get("browser_download_url")
+                        break
+
+            if not download_url:
+                download_url = data.get("zipball_url", "")
+                is_source_zip = True
+            # ----------------------------------------
+
+            image_url = extract_image_url(raw_body)
+            image_bytes = None
+            if image_url:
+                try:
+                    img_resp = requests.get(image_url, timeout=5)
+                    if img_resp.status_code == 200:
+                        image_bytes = img_resp.content
+                except requests.RequestException as e:
+                    logger.warning(f"Failed to fetch update image: {e}")
+
             return {
                 "update_available": True,
                 "current_version": current_version,
                 "latest_version": latest_version,
                 "url": "https://github.com/Mark-Shun/scene-scout/releases/latest",
-                "notes": clean_release_notes(raw_body)
+                "download_url": download_url,
+                "is_source_zip": is_source_zip,
+                "notes": clean_release_notes(raw_body),
+                "image_bytes": image_bytes,
             }
             
         return {"update_available": False}

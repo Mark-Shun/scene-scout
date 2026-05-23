@@ -1,0 +1,160 @@
+QWidget {
+    background-color: #D4D0C8;
+    color: #000000;
+    font-family: "MS Sans Serif", "Tahoma", sans-serif;
+    font-size: 10pt;
+}
+
+QGroupBox {
+    border: 2px groove #FFFFFF;
+    margin-top: 15px;
+    padding-top: 10px;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0 3px;
+}
+
+/* Hard 3D Outset Border */
+QPushButton {
+    background-color: #D4D0C8;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-bottom: 2px solid #404040;
+    border-right: 2px solid #404040;
+    padding: 4px 10px;
+}
+
+QPushButton:hover {
+    background-color: #DFDFDF;
+}
+
+/* Inset border when clicked */
+QPushButton:pressed {
+    border-top: 2px solid #404040;
+    border-left: 2px solid #404040;
+    border-bottom: 2px solid #FFFFFF;
+    border-right: 2px solid #FFFFFF;
+    padding: 5px 9px 3px 11px; /* Shifts text down-right slightly */
+}
+
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #FFFFFF;
+    border-top: 2px solid #404040;
+    border-left: 2px solid #404040;
+    border-bottom: 2px solid #FFFFFF;
+    border-right: 2px solid #FFFFFF;
+    padding: 2px;
+    selection-background-color: #000080; /* Classic Navy Blue */
+    selection-color: #FFFFFF;
+}
+
+QTableView, QListWidget {
+    background-color: #FFFFFF;
+    border-top: 2px solid #404040;
+    border-left: 2px solid #404040;
+    border-bottom: 2px solid #FFFFFF;
+    border-right: 2px solid #FFFFFF;
+    gridline-color: #C0C0C0;
+    selection-background-color: #000080;
+    selection-color: #FFFFFF;
+}
+
+QHeaderView::section {
+    background-color: #D4D0C8;
+    border-top: 1px solid #FFFFFF;
+    border-left: 1px solid #FFFFFF;
+    border-bottom: 1px solid #404040;
+    border-right: 1px solid #404040;
+    padding: 3px;
+}
+
+QCheckBox {
+    color: #000000;
+    spacing: 6px;
+}
+
+QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 2px;
+    border: 2px solid #808080;
+    background-color: #FFFFFF;
+}
+
+QCheckBox::indicator:hover {
+    border: 2px solid #000080;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #000080;
+    border: 2px solid #000080;
+}
+
+QCheckBox:disabled {
+    color: #808080;
+}
+
+QCheckBox::indicator:disabled {
+    border: 2px solid #C0C0C0;
+    background-color: #D4D0C8;
+}
+
+QRadioButton {
+    color: #000000;
+    spacing: 6px;
+    font-weight: bold;
+}
+
+QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border-radius: 8px;
+    border-top: 2px solid #FFFFFF;
+    border-left: 2px solid #FFFFFF;
+    border-bottom: 2px solid #808080;
+    border-right: 2px solid #808080;
+    background-color: #FFFFFF;
+}
+
+QRadioButton::indicator:hover {
+    border-top: 2px solid #000080;
+    border-left: 2px solid #000080;
+    border-bottom: 2px solid #FFFFFF;
+    border-right: 2px solid #FFFFFF;
+}
+
+QRadioButton::indicator:checked {
+    background-color: #000080;
+    border: 2px solid #000080;
+}
+
+QRadioButton:disabled {
+    color: #808080;
+}
+
+QRadioButton::indicator:disabled {
+    border: 2px solid #C0C0C0;
+    background-color: #D4D0C8;
+}
+
+QDialog#GlassSplash {
+    background-color: #D4D0C8;
+    border: 2px solid #000080;
+    border-radius: 12px;
+}
+
+QLabel#SplashStatus {
+    color: #000080;
+    font-size: 10pt;
+    margin-top: 15px;
+    font-weight: bold;
+}
+
+/* --- STATUS BAR STYLING --- */
+QStatusBar { border-top: 1px solid #808080; min-height: 32px; background-color: #D4D0C8; border-bottom: 1px solid #FFFFFF; }
+QLabel#MainStatusLabel { color: #000080; font-family: "Consolas", "Courier New", monospace; font-weight: bold; font-size: 11pt; padding-left: 8px; }
+QLabel#StatusBarDBLabel { background-color: #D4D0C8; border-top: 1px solid #404040; border-left: 1px solid #404040; border-bottom: 1px solid #FFFFFF; border-right: 1px solid #FFFFFF; padding: 3px 10px; margin: 4px 8px; font-weight: bold; font-size: 10pt; color: #000000; }
+QLabel#StatusBarCountLabel { padding: 0 8px; font-size: 10pt; color: #808080; }

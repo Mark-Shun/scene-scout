@@ -1,371 +1,283 @@
 import os
-import re
 import sys
 import subprocess
-import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, Optional
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import (
+    QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QPushButton,
+    QProgressBar, QLineEdit, QFileDialog, QMessageBox,
+    QWidget, QGridLayout, QScrollArea, QFrame,
+)
 
 import config
-import gui_utils
-
 from .base_exporter import BaseExporter, get_video_info_and_keyframe
+from workers import FFmpegWorker
 
 
 class BulkExportDialog(BaseExporter):
-    def __init__(self, parent, scenes: list):
+    def __init__(self, parent, search_results: list):
         super().__init__(parent)
 
-        self.failed_exports = []
+        self.search_results = search_results
+        self._metadata = []
+        self._export_count = 0
+        self._total_exports = 0
+        self._current_worker = None
+        self._metadata_worker = None
+        self._current_scene_idx = 0
+        self.planned_outputs = []
 
-        self.scenes = scenes
-        self.current_output_path: Optional[str] = None
-        self.completed_outputs: list[str] = []
-        self.current_scene_idx = 0
-        self.current_scene_total = len(scenes)
-        self.metadata_by_scene: list[Dict[str, Any]] = []
-        self.planned_outputs: list[str] = []
+        self.setWindowTitle('Bulk Export Scenes')
+        self.setMinimumWidth(600)
+        self.resize(800, 800)
 
-        self.output_dir_var.set(self._generate_default_output_dir())
-        self.title(f'Bulk Export — {len(scenes)} Scene(s)')
+        self._start_metadata_analysis()
         self._build_ui()
 
-        self.export_btn.config(state='disabled')
-        self._start_metadata_analysis() # Threaded analysis
-
-        gui_utils.center_window(self, 540, 960)
-        self.protocol('WM_DELETE_WINDOW', self._on_cancel)
-
-    def _extract_metadata(self):
-        self.metadata_by_scene = []
-
-        for video_path, start_ms, _end_ms in self.scenes:
-            self.metadata_by_scene.append(
-                get_video_info_and_keyframe(video_path, start_ms)
-            )
-
     def _build_ui(self):
-        main = self._setup_scrollable_container()
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
 
-        self._build_container_section(main)
-        self._build_mode_section(main)
-        self._build_naming_section(main, is_bulk=True)
-        self._build_video_options(main)
-        self._build_audio_options(main)
-        self._build_progress_section(main)
-        self._build_button_section(main, export_text='Export All')
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 10, 0, 0)
+
+        self._build_container_section(scroll_layout)
+        self._build_mode_section(scroll_layout)
+        self._build_naming_section(scroll_layout, is_bulk=True)
+        self._build_video_options(scroll_layout)
+        self._build_audio_options(scroll_layout)
+        scroll_layout.addStretch()
+
+        scroll.setWidget(scroll_content)
+        main_layout.addWidget(scroll, stretch=1)
+
+        self._build_progress_section(main_layout)
+        self._build_button_section(main_layout, export_text='Export Selected')
+
+        self._output_dir_edit.setText(self._get_initial_output_dir())
         self._update_widget_states()
-
-    def _get_preview_params(self):
-        v_path, s_ms, e_ms = self.scenes[0] if self.scenes else ('video.mp4', 0, 10000)
-        meta = self.metadata_by_scene[0] if self.metadata_by_scene else {}
-        return meta, v_path, s_ms, e_ms
+        self._update_preview_display()
 
     def _start_metadata_analysis(self):
-        """Initializes the background thread for scene analysis."""
-        self.status_var.set("Analyzing video files...")
-        thread = threading.Thread(target=self._threaded_metadata_task, daemon=True)
-        thread.start()
+        self._metadata = [
+            get_video_info_and_keyframe(vp, st)
+            for vp, _, _, _, _, st, _, _, _ in self.search_results
+        ]
 
-    def _threaded_metadata_task(self):
-        """Background task to extract metadata for all scenes."""
-        temp_metadata = []
-        total = len(self.scenes)
-        
-        for i, (video_path, start_ms, _end_ms) in enumerate(self.scenes):
-            if self.cancelled:
-                return
+    def _get_preview_params(self):
+        v_path = self.search_results[0][0]
+        s_ms = self.search_results[0][5]
+        e_ms = self.search_results[0][6]
+        return self._metadata[0], v_path, s_ms, e_ms
 
-            # Update status on main thread
-            msg = f"Analyzing scene {i+1}/{total}: {os.path.basename(video_path)}"
-            self.after(0, lambda m=msg: self.status_var.set(m))
-            
-            # Perform the heavy lifting
-            meta = get_video_info_and_keyframe(video_path, start_ms)
-            temp_metadata.append(meta)
+    def _get_initial_output_dir(self) -> str:
+        if self.search_results:
+            first_path = self.search_results[0][0]
+            base_dir = os.path.dirname(first_path)
+            return os.path.join(base_dir, 'SceneScout_Exports')
+        return os.getcwd()
 
-        # Finalize on the main thread
-        self.after(0, lambda: self._on_metadata_finished(temp_metadata))
+    def _build_progress_section(self, layout):
+        self._scene_progress = QProgressBar()
+        self._scene_progress.setMaximum(100)
+        layout.addWidget(self._scene_progress)
 
-    def _on_metadata_finished(self, metadata_list):
-        """Callback when analysis is complete to re-enable the UI."""
-        self.metadata_by_scene = metadata_list
-        self.export_btn.config(state='normal')
-        self.status_var.set("Ready to export")
-        # Refresh the keyframe info for the first scene
-        self.keyframe_info_var.set(self._get_keyframe_info())
+        self._overall_progress = QProgressBar()
+        self._overall_progress.setMaximum(100)
+        layout.addWidget(self._overall_progress)
 
-    def _build_progress_section(self, parent):
-        frame = ttk.LabelFrame(parent, text='Progress', padding='10')
-        frame.pack(fill='x', pady=(0, 10))
+        self._status_label = QLabel('Ready')
+        layout.addWidget(self._status_label)
 
-        self.scene_label_var = tk.StringVar(
-            self,
-            value=f'Ready to export {len(self.scenes)} scene(s)'
-        )
-        ttk.Label(frame, textvariable=self.scene_label_var, font=('', 10, 'bold')).pack(
-            anchor='w',
-            pady=(0, 5)
-        )
+        self._keyframe_info_label = QLabel()
+        self._keyframe_info_label.setStyleSheet('font-size: 8pt;')
+        layout.addWidget(self._keyframe_info_label)
 
-        ttk.Label(frame, text='Current scene:').pack(anchor='w')
-        self.scene_progress_var = tk.DoubleVar(self, value=0.0)
-        ttk.Progressbar(
-            frame,
-            variable=self.scene_progress_var,
-            maximum=100
-        ).pack(fill='x', pady=(2, 8))
-
-        ttk.Label(frame, text='Overall:').pack(anchor='w')
-        self.overall_progress_var = tk.DoubleVar(self, value=0.0)
-        ttk.Progressbar(
-            frame,
-            variable=self.overall_progress_var,
-            maximum=100
-        ).pack(fill='x', pady=(2, 8))
-
-        ttk.Label(frame, textvariable=self.status_var, wraplength=500).pack(anchor='w')
-
-        self.keyframe_info_var = tk.StringVar(self, value=self._get_keyframe_info())
-        self.keyframe_label = ttk.Label(
-            frame,
-            textvariable=self.keyframe_info_var,
-            font=('', 8),
-            wraplength=500
-        )
-        self.keyframe_label.pack(anchor='w', pady=(3, 0))
-
-    def _generate_default_output_dir(self) -> str:
-        if not self.scenes:
-            return os.getcwd()
-
-        return os.path.dirname(self.scenes[0][0])
+    def _save_settings(self):
+        self._save_common_settings()
+        config.save_config(self.config)
 
     def _generate_default_output_path(self, video_path: str, start_ms: int, end_ms: int, scene_idx: int = 0) -> str:
-        metadata = self.metadata_by_scene[scene_idx] if scene_idx < len(self.metadata_by_scene) else {}
-        template = self.template_var.get()
+        metadata = self._metadata[scene_idx] if scene_idx < len(self._metadata) else {}
+        template = self._template_edit.text()
         filename = self._resolve_naming_template(template, metadata, video_path, start_ms, end_ms, scene_idx)
-        ext = self.CONTAINERS.get(self.container_var.get(), '.mp4')
-        return os.path.join(self.output_dir_var.get(), f"{filename}{ext}")
+        ext = self.CONTAINERS.get(self._container_combo.currentText(), '.mp4')
+        return os.path.join(self._output_dir_edit.text(), f"{filename}{ext}")
 
-    def _make_unique_output_path(self, output_path: str, reserved_paths: Optional[set[str]] = None) -> str:
-        reserved_paths = reserved_paths or set()
-
+    def _make_unique_output_path(self, output_path: str, reserved_paths: set) -> str:
         if output_path not in reserved_paths and not os.path.exists(output_path):
             return output_path
-
         folder = os.path.dirname(output_path)
         stem, ext = os.path.splitext(os.path.basename(output_path))
         counter = 2
-
         while True:
             candidate = os.path.join(folder, f'{stem}_{counter}{ext}')
             if candidate not in reserved_paths and not os.path.exists(candidate):
                 return candidate
             counter += 1
 
-    def _browse_output_dir(self):
-        path = filedialog.askdirectory(
-            title='Choose Bulk Export Folder',
-            initialdir=self.output_dir_var.get() or os.getcwd()
-        )
-
-        if path:
-            self.output_dir_var.set(path)
-
-    def _get_keyframe_info(self) -> str:
-        if not self.scenes:
-            return ''
-
-        _video_path, start_ms, _end_ms = self.scenes[self.current_scene_idx]
-        metadata = (
-            self.metadata_by_scene[self.current_scene_idx]
-            if self.current_scene_idx < len(self.metadata_by_scene)
-            else {}
-        )
-
-        if self.mode_var.get() == 'copy':
-            keyframe_ms = metadata.get('keyframe_ms', start_ms)
-            return (
-                f'Note: Stream Copy snaps each scene to its nearest keyframe. '
-                f'Current scene keyframe: {self._format_ms(keyframe_ms)}'
-            )
-
-        return f'Exact frame accuracy for current scene: {self._format_ms(start_ms)}'
-
-    def _save_settings(self):
-        self._save_common_settings()
-        self.config['export_container'] = self.container_var.get()
-        self.config['naming_template'] = self.template_var.get()
-        config.save_config(self.config)
-
     def _start_export(self):
-        output_dir = self.output_dir_var.get()
+        selected_indices = list(range(len(self.search_results)))
 
+        if not selected_indices:
+            QMessageBox.information(self, 'No Scenes', 'No scenes to export.')
+            return
+
+        output_dir = self._output_dir_edit.text()
         if not output_dir:
-            messagebox.showerror('Error', 'Please specify an output folder.', parent=self)
+            QMessageBox.critical(self, 'Error', 'Please specify an output folder.')
             return
 
-        try:
-            os.makedirs(output_dir, exist_ok=True)
-        except Exception as e:
-            messagebox.showerror(
-                'Error',
-                f'Could not create output folder:\n{output_dir}\n\n{e}',
-                parent=self
-            )
-            return
-
-        if not os.path.isdir(output_dir):
-            messagebox.showerror('Error', 'Output path must be a folder.', parent=self)
-            return
-
-        if not self.scenes:
-            messagebox.showerror('Error', 'No scenes selected for export.', parent=self)
-            return
+        os.makedirs(output_dir, exist_ok=True)
 
         planned_outputs = []
         reserved_paths = set()
-
-        for idx, (video_path, start_ms, end_ms) in enumerate(self.scenes):
+        
+        for row in selected_indices:
+            video_path, score, ftype, rescore, scene_idx_raw, scene_time, scene_end, thumb_bytes, scene_source_db = self.search_results[row]
             output_path = self._make_unique_output_path(
-                self._generate_default_output_path(video_path, start_ms, end_ms, idx),
+                self._generate_default_output_path(video_path, scene_time, scene_end, row),
                 reserved_paths
             )
             planned_outputs.append(output_path)
             reserved_paths.add(output_path)
-
+            
         existing_outputs = [p for p in planned_outputs if os.path.exists(p)]
         if existing_outputs:
             shown = '\n'.join(os.path.basename(p) for p in existing_outputs[:8])
             if len(existing_outputs) > 8:
                 shown += f'\n...and {len(existing_outputs) - 8} more'
 
-            if not messagebox.askyesno(
-                'Overwrite?',
+            reply = QMessageBox.question(
+                self, 'Overwrite?',
                 f'{len(existing_outputs)} output file(s) already exist:\n\n{shown}\n\nOverwrite them?',
-                parent=self
-            ):
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
                 return
-
+                
         self.planned_outputs = planned_outputs
-        self.completed_outputs = []
-        self.current_output_path = None
-
         self._save_settings()
 
-        self.export_btn.config(state='disabled')
-        self.cancel_btn.config(text='Cancel', state='normal')
+        self._export_btn.setEnabled(False)
+        self._mode_copy.setEnabled(False)
+        self._mode_encode.setEnabled(False)
+        self._cancel_btn.setText('Cancel')
+        self._cancel_btn.setEnabled(True)
         self.cancelled = False
 
-        self.scene_progress_var.set(0)
-        self.overall_progress_var.set(0)
-        self.status_var.set('Starting bulk export...')
+        self._total_exports = len(selected_indices)
+        self._export_count = 0
+        self._export_queue = selected_indices.copy()
 
-        self.export_thread = threading.Thread(target=self._export_task, daemon=True)
-        self.export_thread.start()
+        self._overall_progress.setMaximum(self._total_exports)
+        self._overall_progress.setValue(0)
 
-        self.after(100, self._check_export_progress)
+        self._export_next()
 
-    def _export_task(self):
-        total = len(self.scenes)
-        self.failed_exports = []
+    def _export_next(self):
+        if not self._export_queue or self.cancelled:
+            self._on_bulk_finished()
+            return
 
-        for idx, (video_path, start_ms, end_ms) in enumerate(self.scenes):
-            if self.cancelled:
-                break
+        queue_index = self._total_exports - len(self._export_queue) 
+        self._current_scene_idx = self._export_queue.pop(0)
+        output_path = self.planned_outputs[queue_index]
+        
+        video_path, score, ftype, rescore, scene_idx_raw, scene_time, scene_end, thumb_bytes, scene_source_db = \
+            self.search_results[self._current_scene_idx]
 
-            self.current_scene_idx = idx
-            output_path = self.planned_outputs[idx]
-            self.current_output_path = output_path
+        self._status_label.setText(f'Exporting scene {self._export_count + 1}/{self._total_exports}: '
+                                   f'{os.path.basename(video_path)}')
+        self._scene_progress.setValue(0)
 
-            self.after(0, lambda i=idx, t=total, vp=video_path:
-                    self.scene_label_var.set(f'Exporting {i+1}/{total}: {os.path.basename(vp)}'))
+        start_ms = scene_time
+        end_ms = scene_end
+        duration_ms = end_ms - start_ms
 
-            try:
-                os.makedirs(os.path.dirname(output_path), exist_ok=True)
-                cmd = self._build_ffmpeg_command(idx, video_path, start_ms, end_ms, output_path)
+        cmd = self._build_scene_command(video_path, start_ms, end_ms, duration_ms, output_path, self._current_scene_idx)
+        
+        self._current_worker = FFmpegWorker(cmd, duration_ms)
+        self._current_worker.progress_updated.connect(self._on_scene_progress, type=Qt.QueuedConnection)
+        self._current_worker.export_finished.connect(self._on_scene_finished, type=Qt.QueuedConnection)
+        self._current_worker.error.connect(self._on_scene_error, type=Qt.QueuedConnection)
+        self._current_worker.start()
 
-                def bulk_progress(_ms, _p):
-                    overall = ((idx + (_p / 100.0)) / total) * 100.0
-                    self._update_progress(_p, overall, f"Exporting {idx+1}/{total}...")
-
-                res = self._run_ffmpeg_base(cmd, end_ms - start_ms, bulk_progress)
-                if res == "success":
-                    self.completed_outputs.append(output_path)
-                else:
-                    self.failed_exports.append((idx, res))
-
-            except Exception as e:
-                print(f"Error exporting scene {idx + 1}: {e}")
-                self.failed_exports.append((idx, str(e)))
-                continue
-
-        self.after(0, self._on_export_complete)
-
-    def _build_ffmpeg_command(self, scene_idx: int, video_path: str, start_ms: int, end_ms: int, output_path: str) -> list:
-        duration_sec = (end_ms - start_ms) / 1000.0
-        metadata = self.metadata_by_scene[scene_idx] if scene_idx < len(self.metadata_by_scene) else {}
-
+    def _build_scene_command(self, video_path: str, start_ms: int, end_ms: int,
+                              duration_ms: int, output_path: str, scene_idx: int) -> list:
         cmd = [self._get_ffmpeg_path()]
-
-        if self.mode_var.get() == 'copy':
-            # Bulk Copy: Use pre-calculated metadata keyframe
-            keyframe_ms = metadata.get('keyframe_ms', start_ms)
-            cmd.extend(['-ss', str(keyframe_ms / 1000.0), '-i', video_path, '-c', 'copy'])
+        meta = self._metadata[scene_idx] if scene_idx < len(self._metadata) else {}
+        
+        if self._mode_copy.isChecked():
+            start_sec = meta.get('keyframe_ms', start_ms) / 1000.0
+            cmd.extend(['-ss', str(start_sec), '-i', video_path, '-c', 'copy'])
         else:
-            # Bulk Re-encode: Two-step seek
             start_sec = start_ms / 1000.0
             buffer_sec = 10.0
             fast_seek = max(0.0, start_sec - buffer_sec)
             exact_seek = start_sec - fast_seek
-
             cmd.extend(['-ss', str(fast_seek), '-i', video_path, '-ss', str(exact_seek)])
+            cmd.extend(self._get_core_ffmpeg_args(meta))
             
-            # Inject shared core arguments
-            cmd.extend(self._get_core_ffmpeg_args(metadata))
-
-        # Add bulk-specific output path
+        duration_sec = duration_ms / 1000.0
         cmd.extend(['-t', str(duration_sec), output_path])
-
         return cmd
 
-    def _update_progress(self, scene_progress: float, overall_progress: float, status: str):
-        self.scene_progress_var.set(scene_progress)
-        self.overall_progress_var.set(overall_progress)
-        self.status_var.set(status)
+    def _on_scene_progress(self, progress: float, status: str):
+        self._scene_progress.setValue(int(progress))
+        self._status_label.setText(f'Exporting scene {self._export_count + 1}/{self._total_exports}: {status}')
 
-    def _check_export_progress(self):
-        if self.export_thread and self.export_thread.is_alive():
-            self.after(100, self._check_export_progress)
+    def _on_scene_finished(self):
+        self._export_count += 1
+        self._overall_progress.setValue(self._export_count)
+        self._status_label.setText(f'Completed {self._export_count}/{self._total_exports}')
+        QTimer.singleShot(0, self._export_next)
+
+    def _on_scene_error(self, error_msg: str):
+        self._status_label.setText(f'Error on scene {self._export_count + 1}')
+        QMessageBox.critical(self, 'Export Error', error_msg)
+        self._export_count += 1
+        self._overall_progress.setValue(self._export_count)
+        QTimer.singleShot(0, self._export_next)
+
+    def _on_bulk_finished(self):
+        if self.cancelled:
+            self._status_label.setText('Cancelled')
         else:
-            self.export_btn.config(state='normal')
+            self._status_label.setText(f'Exported {self._export_count}/{self._total_exports} scenes')
+            if self._open_folder_check.isChecked():
+                output_dir = self._output_dir_edit.text()
+                try:
+                    if sys.platform == 'win32':
+                        subprocess.run(['explorer', output_dir])
+                    elif sys.platform == 'darwin':
+                        subprocess.run(['open', output_dir])
+                    else:
+                        subprocess.run(['xdg-open', output_dir])
+                except Exception as e:
+                    print(f'Failed to open output directory: {e}')
 
-    def _on_export_complete(self):
-        success_count = len(self.completed_outputs)
-        fail_count = len(self.failed_exports)
+            QMessageBox.information(
+                self, 'Bulk Export Complete',
+                f'Successfully exported {self._export_count} of {self._total_exports} scenes.'
+            )
 
-        self.scene_progress_var.set(100)
-        self.overall_progress_var.set(100)
-
-        if fail_count == 0:
-            self.status_var.set('Bulk export complete!')
-            msg = f'Successfully exported all {success_count} scene(s).'
-        else:
-            self.status_var.set(f'Export finished with {fail_count} failure(s).')
-            msg = f'Exported {success_count} scene(s).\n{fail_count} scene(s) failed to export.'
-
-        output_dir = os.path.abspath(self.output_dir_var.get())
-        messagebox.showinfo('Bulk Export Results', f'{msg}\n\nFolder: {output_dir}', parent=self)
-
-        if self.open_folder_var.get():
-            self._open_target_explorer(output_dir)
-
-        self.destroy()
+        self._export_btn.setEnabled(True)
+        self._mode_copy.setEnabled(True)
+        self._mode_encode.setEnabled(True)
+        self._cancel_btn.setEnabled(True)
+        self._current_worker = None
 
     def _on_cancel(self):
-        self.cancelled = True
-        if self.process:
-            self.process.terminate()
-        self.destroy()
+        if self._current_worker and self._current_worker.isRunning():
+            self._status_label.setText('Cancelling...')
+            self._cancel_btn.setEnabled(False)
+            self.cancelled = True
+            self._current_worker.cancel()
+        else:
+            self.reject()
