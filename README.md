@@ -24,10 +24,10 @@ A natural language scene search tool powered by [Google's SigLIP 2 model](https:
 
 ## Acknowledgement
 This project has been forked from [Gabrjiele's open source SigLip 2 NaFlex project](https://github.com/Gabrjiele/siglip2-naflex-search)
-The focus on this fork has shifted from searching for videos/images in a user's collection to specifically searching for scenes through natural language queries. Further adjustments has been made both on the frontend and backend where the two projects are no longer compatible.
+The focus on this fork has shifted from searching for videos/images in a user's collection to specifically searching for scenes through natural language queries. Further adjustments has been made both on the frontend and backend, due to this the two projects are no longer compatible.
 
 ## Features
-- **Multiplatform support**: Through the usage of install scripts and UV, support for: Windows, Linux and Mac platforms.
+- **Multiplatform support**: Through the usage of seperate install scripts and UV, support for: Windows, Linux and Mac platforms.
 - **Natural language search**: Find video scenes using text descriptions
 - **Multi-Database Search**: Query multiple databases simultaneously with merged, deduplicated results and source database labels
 - **Image-to-Scene search**: Search a scene using reference images
@@ -41,6 +41,8 @@ The focus on this fork has shifted from searching for videos/images in a user's 
 - **Media Queue System**: Index multiple files/folders at once with a persistent queue, drag-and-drop support, and per-item settings
 - **Database Manager**: Popup interface to manage databases, set search targets, and view scene/video/image statistics
 - **Interactive Shell**: REPL mode with command aliases, tab completion, persistent history, and built-in database management commands
+- **Logging & Diagnostics**: Global logging with rotating file handler captures all crashes and stack traces to `scene_scout.log`, with configurable log levels
+- **Database Archiving (`.scdb`)**: Pack databases into portable archives for sharing or backup, with automatic path recalibration on import
 
 ## Installation
 
@@ -58,19 +60,28 @@ git clone https://github.com/Mark-Shun/scene-scout
 
 - *2: Install the environment and dependencies with the install script in your preffered terminal:*
 ```
-Windows run: install.bat
+Windows run: windows-install.bat
 ```
 ```
-Mac/Linux run: install.sh
+Linux run: linux-install.sh
 ```
-During this step the install script will automatically install UV, Python, VLC, tkinter and all the required dependencies, depending on which options the user selected.
+```
+Mac run: mac-install.sh
+```
+During this step the install script will automatically install UV, Python, VLC, Pyside6 and all the required dependencies, depending on which options the user selected.
+
+You will be prompted to choose between a **Standard Update** (fast, updates modified packages only) or a **Clean Install** (wipes and recreates the environment to fix corrupted dependencies).
+
+Optionally, you can specify a **custom installation path** for the Python environment — useful if your primary drive has limited space and you want to store the environment files on a secondary drive.
 
 
 - *2.5: Choose GPU or CPU option:*
 
 During installation you can choose the appropriate option for your system. If you don't have a graphics card or your setup is not supported, then it's also possible to run the tool with the CPU. However general performance is way slower.
 
-! Specifically for Apple Mac with M chips, there is MPS support which is faster (choose the CPU option if that is the case).
+Choosing **NVIDIA CUDA 13.0** will additionally prompt about installing **TensorRT optimization** (~1GB extra) for significant compress/search speedups on RTX GPUs.
+
+! Specifically for Apple Mac with M chips, there is MPS support.
 
 <div style="display: flex; gap: 10px;">
   <img src="assets/screenshots/install-options-windows.png" width="50%">
@@ -79,10 +90,13 @@ During installation you can choose the appropriate option for your system. If yo
 
 - *3: Launch Scene Scout*
 ```
-Windows run: scene-scout.bat
+Windows run: windows-scene-scout.bat (or use the shortcut)
 ```
 ```
-Mac/Linux run: scene-scout.sh
+Linux run: linux-scene-scout.sh
+```
+```
+Mac run: mac-scene-scout.command
 ```
 
 ## Usage
@@ -99,6 +113,7 @@ The GUI provides:
 - Model configuration (patches, video settings)
 - A video playback viewer to watch the scene
 - Result visualization with similarity scores
+- An export window to save selected scenes as video files
 
 <img src="assets/screenshots/export-car-scene.png" width="50%">
 
@@ -187,10 +202,13 @@ In this case you need a python environment with the appropriate packages.
 
 **Enter interactive mode**
 ```
-Windows run: scene-scout-cli.bat
+Windows run: windows-scene-scout-cli.bat
 ```
 ```
-Mac/Linux run: scene-scout-cli.sh
+Linux run: linux-scene-scout-cli.sh
+```
+```
+Mac run: mac-scene-scout-cli.sh
 ```
 
 **Index a folder:**
@@ -230,7 +248,9 @@ python src/scenescout.py --search-text "red car" --search-image car.jpg --db my_
 - `--db PATH`: Database file path(s) - can specify multiple times for multi-database search (default: siglip2_embeddings.db)
 - `--target-db PATH`: Target database for indexing operations when using multiple databases
 - `--verify`: Check the target database for missing or moved video files
-- `--relink`: ID PATH: Update the file path of a database entry using its ID
+- `--relink ID PATH`: Update the file path of a database entry using its ID
+- `--pack PATH`: Pack active databases into a `.scdb` portable archive
+- `--unpack ARCHIVE DEST`: Unpack a `.scdb` archive to a destination folder (auto-adds databases to workspace)
 - `--device {cuda,cpu,dml,xpu,mps}`: Force specific device
 - `--max-patches N`: Max patches for model (default: 256)
 - `--batch-size N`: Inference batch size (default: 16)
@@ -269,6 +289,8 @@ When in REPL mode (`--interactive`), use these commands:
 - `db clear`: Clear all databases
 - `v`: Check the target database for missing or moved video files
 - `rl <ID> <PATH>`: Update the file path of a database entry
+- `p <output.scdb>` / `pack <output.scdb>`: Pack active databases into a `.scdb` portable archive (includes video files)
+- `up <archive> <dest>` / `unpack <archive> <dest>`: Unpack a `.scdb` archive and auto-add databases to workspace
 - `ex <indices> <output>`: Export scene(s) from last search results (e.g. `ex 1,2,5-8 ./exports/` for bulk)
 - `rs <query>`: Rescore last search results with a new text query
 - `update` / `u`: View full patch notes from latest release
@@ -283,7 +305,7 @@ The tool supports common video formats:
 - MP4, AVI, MOV, MKV, FLV, WMV, WebM
 
 Videos are indexed by extracting the timecodes of every (detected) scene.
-Afterwards visual data for the first frame of the scene is embedded into the database.
+Afterwards visual data for various frames of the scene is embedded into the database.
 
 
 <summary><h2>Model configuration</h2></summary>
@@ -303,6 +325,7 @@ Embeddings are stored in SQLite with automatic management:
 - **Active databases**: Configure multiple active databases with a primary target for indexing operations
 - **Queue persistence**: Index queue is stored per-database in SQLite and persists across sessions
 - **Automatic migration**: Old `folder_path` and `db_path` config values are automatically migrated to the new queue and multi-database format
+- **Portable archives (`.scdb`)**: Pack and unpack databases with their video files into a single archive for easy sharing, backup, or transferring between devices
 
 
 <summary><h2>Performance tips</h2></summary>
