@@ -764,17 +764,23 @@ class SceneScoutApp(QMainWindow):
 
         self._thumb_list = QListWidget()
         self._thumb_list.setViewMode(QListWidget.IconMode)
+        self._thumb_list.setIconSize(QSize(200, 200))
         self._thumb_list.setResizeMode(QListWidget.Adjust)
-        self._thumb_list.setFlow(QListWidget.LeftToRight)
-        self._thumb_list.setWordWrap(True)
-        self._thumb_list.setIconSize(QSize(120, 68))
-        self._thumb_list.setSpacing(4)
+        self._thumb_list.setSpacing(10)
         self._thumb_list.setFrameShape(QFrame.NoFrame)
-        self._thumb_list.itemClicked.connect(self._on_thumbnail_click)
+        self._thumb_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self._thumb_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._thumb_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self._thumb_list.customContextMenuRequested.connect(self._show_thumb_context_menu)
-        self._thumb_list.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._thumb_list.itemDoubleClicked.connect(lambda item: self.open_current_file())
+
         media_splitter.addWidget(self._thumb_list)
+
+        # --- Bi-Directional Selection Sync ---
+        self._syncing_selection = False
+        self._results_table.selectionModel().selectionChanged.connect(self._sync_selection_from_table_to_thumb)
+        self._thumb_list.itemSelectionChanged.connect(self._sync_selection_from_thumb_to_table)
 
         media_splitter.setSizes([400, 400])
         preview_layout.addWidget(media_splitter)
@@ -1680,19 +1686,70 @@ class SceneScoutApp(QMainWindow):
     # Thumbnail interaction
     # ======================================================================
 
-    def _on_thumbnail_click(self, item):
-        scene_index = item.data(Qt.UserRole)
-        if scene_index is None:
+    # ======================================================================
+    # Selection Synchronization (Bi-Directional)
+    # ======================================================================
+
+    def _sync_selection_from_table_to_thumb(self):
+        if getattr(self, '_syncing_selection', False):
             return
-        source_index = self.results_model.index(scene_index, 0)
-        proxy_index = self.results_proxy.mapFromSource(source_index)
-        if proxy_index.isValid():
-            self._results_table.selectionModel().select(
-                proxy_index,
-                QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows,
-            )
-            self._results_table.scrollTo(proxy_index)
-            self._on_selection_changed()
+        self._syncing_selection = True
+
+        selected_proxy_indexes = self._results_table.selectionModel().selectedRows()
+        selected_source_rows = {self.results_proxy.mapToSource(idx).row() for idx in selected_proxy_indexes}
+
+        self._thumb_list.blockSignals(True)
+        self._thumb_list.clearSelection()
+
+        first_selected = None
+        for i in range(self._thumb_list.count()):
+            item = self._thumb_list.item(i)
+            if item.data(Qt.UserRole) in selected_source_rows:
+                item.setSelected(True)
+                if not first_selected:
+                    first_selected = item
+
+        if first_selected:
+            self._thumb_list.scrollToItem(first_selected)
+
+        self._thumb_list.blockSignals(False)
+        self._syncing_selection = False
+
+    def _sync_selection_from_thumb_to_table(self):
+        if getattr(self, '_syncing_selection', False):
+            return
+        self._syncing_selection = True
+
+        selected_items = self._thumb_list.selectedItems()
+        selected_source_rows = {item.data(Qt.UserRole) for item in selected_items}
+
+        sel_model = self._results_table.selectionModel()
+        sel_model.blockSignals(True)
+        sel_model.clearSelection()
+
+        from PySide6.QtCore import QItemSelection, QItemSelectionModel
+        selection = QItemSelection()
+
+        first_proxy_idx = None
+        for row in selected_source_rows:
+            source_idx = self.results_model.index(row, 0)
+            proxy_idx = self.results_proxy.mapFromSource(source_idx)
+
+            if proxy_idx.isValid():
+                if not first_proxy_idx:
+                    first_proxy_idx = proxy_idx
+                left_idx = self.results_proxy.index(proxy_idx.row(), 0)
+                right_idx = self.results_proxy.index(proxy_idx.row(), self.results_proxy.columnCount() - 1)
+                selection.select(left_idx, right_idx)
+
+        if not selection.isEmpty():
+            sel_model.select(selection, QItemSelectionModel.Select | QItemSelectionModel.Rows)
+
+        if first_proxy_idx:
+            self._results_table.scrollTo(first_proxy_idx)
+
+        sel_model.blockSignals(False)
+        self._syncing_selection = False
 
     def _scroll_thumb_to_view(self, index: int):
         if index < len(self._thumbnail_refs):
@@ -1741,14 +1798,6 @@ class SceneScoutApp(QMainWindow):
             path, _, ftype, _, _, start_ms, end_ms, _, _ = self.search_results[source_row]
             self.display_media(path, is_video=(ftype == 'video'), start_ms=start_ms, end_ms=end_ms)
 
-        # Highlight thumbnail in list
-        for ref in self._thumbnail_refs:
-            if ref.data(Qt.UserRole) == source_row:
-                self._thumb_list.setCurrentItem(ref)
-                break
-
-        self._scroll_thumb_to_view(source_row)
-
     def _on_result_double_click(self, index):
         source_row = self.results_proxy.mapToSource(index).row()
         if source_row >= len(self.search_results):
@@ -1772,7 +1821,9 @@ class SceneScoutApp(QMainWindow):
         if not item:
             return
 
-        self._on_thumbnail_click(item)
+        if not item.isSelected():
+            self._thumb_list.clearSelection()
+            item.setSelected(True)
 
         global_pos = self._thumb_list.viewport().mapToGlobal(position)
         self._exec_shared_context_menu(global_pos)
