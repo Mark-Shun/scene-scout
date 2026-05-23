@@ -1,6 +1,9 @@
 @echo off
 setlocal
 
+:: Teleport to the script's actual directory
+cd /d "%~dp0"
+
 set "LOGO_ASCII=assets\logo\logo.txt"
 
 cls
@@ -11,9 +14,6 @@ if exist "%LOGO_ASCII%" (
 )
 echo.
 echo ---Windows installation script for Scene Scout---
-
-:: Teleport to the script's actual directory
-cd /d "%~dp0"
 
 :: --- START UPDATE CHECK ---
 echo Checking for updates...
@@ -156,10 +156,8 @@ if exist "%CUSTOM_ENV_PATH%" (
     set "CUSTOM_ENV_PATH="
 )
 
-:: --- CRITICAL FIX: ADD THESE LINES BEFORE THE PROMPT ---
 echo.
 echo ------------------------------------------
-:: This ensures the next prompt has a fresh line
 
 :SKIP_CUSTOM_PATH
 
