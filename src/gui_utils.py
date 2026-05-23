@@ -47,7 +47,7 @@ class UpdateDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
 
-        header = QLabel(f"Version {update_info['latest_version']} is available!")
+        header = QLabel(f"Version {update_info['latest_version']} is available! (Current: v{update_info['current_version']})")
         header.setStyleSheet("font-size: 16px; font-weight: bold;")
         layout.addWidget(header)
 

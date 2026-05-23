@@ -46,7 +46,7 @@ def clean_release_notes(text: str) -> str:
 
 
 def check_for_update():
-    """Check GitHub releases API and return update details if a newer version exists."""
+    """Check GitHub releases API and return aggregated update details if newer versions exist."""
     try:
         current_config = load_config()
         github_token = current_config.get("github_token", "")
@@ -64,7 +64,8 @@ def check_for_update():
             logger.error("Version not found in pyproject.toml.")
             return {"update_available": False}
 
-        api_url = "https://api.github.com/repos/Mark-Shun/scene-scout/releases/latest"
+        # Fetch all releases (newest first, up to 30)
+        api_url = "https://api.github.com/repos/Mark-Shun/scene-scout/releases"
         headers = {"Accept": "application/vnd.github+json"}
         if github_token:
             headers["Authorization"] = f"token {github_token}"
@@ -73,31 +74,47 @@ def check_for_update():
         resp.raise_for_status()
 
         data = resp.json()
-        latest_version = data.get("tag_name", "")
-        if not latest_version:
-            logger.error("GitHub release response missing tag_name.")
+        if not data or not isinstance(data, list):
             return {"update_available": False}
 
-        latest_version = latest_version.lstrip("v")
+        latest_release = data[0]
+        latest_version = latest_release.get("tag_name", "")
+        if not latest_version:
+            return {"update_available": False}
+
+        latest_version_clean = latest_version.lstrip("v")
         current_version_clean = str(current_version).lstrip("v")
 
         try:
             current_parsed = parse(current_version_clean)
-            latest_parsed = parse(latest_version)
+            latest_parsed = parse(latest_version_clean)
         except InvalidVersion as exc:
             logger.error("Invalid version format during update check: %s", exc)
             return {"update_available": False}
 
         if latest_parsed > current_parsed:
-            raw_body = data.get("body", "No release notes available.")
+            # Aggregate release notes for all versions newer than current
+            aggregated_notes = []
+            for release in data:
+                rel_ver_str = release.get("tag_name", "").lstrip("v")
+                try:
+                    rel_parsed = parse(rel_ver_str)
+                    if rel_parsed > current_parsed:
+                        raw_body = release.get("body", "No release notes available.")
+                        cleaned_body = clean_release_notes(raw_body)
+                        aggregated_notes.append(f"## Version {release.get('tag_name')}\n{cleaned_body}")
+                except InvalidVersion:
+                    continue
 
-            # --- Download URL Extraction Scaffold ---
+            final_notes = "\n\n---\n\n".join(aggregated_notes)
+
+            # Extract download links from the latest release only
             is_compiled = getattr(sys, 'frozen', False)
             download_url = ""
             is_source_zip = False
 
             if is_compiled:
-                assets = data.get("assets", [])
+                assets = latest_release.get("assets", [])
                 for asset in assets:
                     name = asset.get("name", "").lower()
                     if sys.platform == 'win32' and name.endswith('.exe'):
@@ -111,11 +128,12 @@ def check_for_update():
                         break
 
             if not download_url:
-                download_url = data.get("zipball_url", "")
+                download_url = latest_release.get("zipball_url", "")
                 is_source_zip = True
-            # ----------------------------------------
 
-            image_url = extract_image_url(raw_body)
+            # Extract image from the absolute latest release body
+            latest_raw_body = latest_release.get("body", "")
+            image_url = extract_image_url(latest_raw_body)
             image_bytes = None
             if image_url:
                 try:
@@ -128,14 +146,14 @@ def check_for_update():
             return {
                 "update_available": True,
                 "current_version": current_version,
-                "latest_version": latest_version,
+                "latest_version": latest_version_clean,
                 "url": "https://github.com/Mark-Shun/scene-scout/releases/latest",
                 "download_url": download_url,
                 "is_source_zip": is_source_zip,
-                "notes": clean_release_notes(raw_body),
+                "notes": final_notes,
                 "image_bytes": image_bytes,
             }
-            
+
         return {"update_available": False}
 
     except requests.RequestException as exc:
