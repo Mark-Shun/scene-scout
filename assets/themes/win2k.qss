@@ -160,5 +160,5 @@ QLabel#StatusBarDBLabel { background-color: #D4D0C8; border-top: 1px solid #4040
 QLabel#StatusBarCountLabel { padding: 0 8px; font-size: 10pt; color: #808080; }
 
 /* --- SEARCH INPUT STYLING --- */
-QLineEdit#MainSearchInput { border-top: 2px solid #000080; border-left: 2px solid #000080; border-bottom: 2px solid #FFFFFF; border-right: 2px solid #FFFFFF; padding: 8px 12px; background-color: #FFFFFF; font-size: 12pt; min-height: 28px; }
-QLineEdit#MainSearchInput:focus { background-color: #FFF8E7; }
+QLineEdit#MainSearchInput { border-top: 2px solid #505050; border-left: 2px solid #505050; border-bottom: 2px solid #FFFFFF; border-right: 2px solid #FFFFFF; padding: 8px 12px; background-color: #FFFFFF; font-size: 12pt; min-height: 28px; }
+QLineEdit#MainSearchInput:focus { border-top: 2px solid #505050; border-left: 2px solid #505050; border-bottom: 2px solid #FFFFFF; border-right: 2px solid #FFFFFF; background-color: #FFFFFF; }
