@@ -29,7 +29,7 @@ class BulkExportDialog(BaseExporter):
 
         self.setWindowTitle('Bulk Export Scenes')
         self.setMinimumWidth(600)
-        self.resize(800, 700)
+        self.resize(800, 800)
 
         self._start_metadata_analysis()
         self._build_ui()

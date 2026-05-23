@@ -57,6 +57,25 @@ class BaseExporter(QDialog):
         'No Audio (Mute)': 'disable',
     }
 
+    CONTAINER_COMPATIBILITY = {
+        'MP4 (.mp4)': {
+            'video': ['H.264 (libx264)', 'H.265 (libx265)', 'AV1 (libsvtav1)'],
+            'audio': ['AAC (aac)', 'MP3 (libmp3lame)']
+        },
+        'Matroska (.mkv)': {
+            'video': ['H.264 (libx264)', 'H.265 (libx265)', 'AV1 (libsvtav1)', 'VP9 (libvpx-vp9)', 'ProRes 422 (prores_ks)'],
+            'audio': ['AAC (aac)', 'MP3 (libmp3lame)', 'Opus (libopus)']
+        },
+        'QuickTime (.mov)': {
+            'video': ['H.264 (libx264)', 'H.265 (libx265)', 'ProRes 422 (prores_ks)'],
+            'audio': ['AAC (aac)', 'MP3 (libmp3lame)']
+        },
+        'WebM (.webm)': {
+            'video': ['VP9 (libvpx-vp9)', 'AV1 (libsvtav1)'],
+            'audio': ['Opus (libopus)']
+        }
+    }
+
     def __init__(self, parent):
         super().__init__(parent)
         self.parent = parent
@@ -126,11 +145,40 @@ class BaseExporter(QDialog):
         if idx >= 0:
             self._container_combo.setCurrentIndex(idx)
             
-        self._container_combo.currentTextChanged.connect(self._update_preview_display)
+        self._container_combo.currentTextChanged.connect(self._on_container_changed)
         layout.addWidget(self._container_combo)
         layout.addStretch()
         
         parent.layout().addWidget(group)
+
+    def _on_container_changed(self, text):
+        self._update_codec_dropdowns()
+        self._update_preview_display()
+
+    def _update_codec_dropdowns(self, initial_video=None, initial_audio=None):
+        if not hasattr(self, '_codec_combo') or not hasattr(self, '_audio_codec_combo'):
+            return
+
+        container = self._container_combo.currentText()
+        compat = self.CONTAINER_COMPATIBILITY.get(container, {})
+        allowed_v = compat.get('video', list(self.VIDEO_CODECS.keys()))
+        allowed_a = compat.get('audio', list(self.AUDIO_CODECS.keys()))
+
+        current_v = initial_video if initial_video else self._codec_combo.currentText()
+        self._codec_combo.blockSignals(True)
+        self._codec_combo.clear()
+        self._codec_combo.addItems(allowed_v)
+        if current_v in allowed_v:
+            self._codec_combo.setCurrentText(current_v)
+        self._codec_combo.blockSignals(False)
+
+        current_a = initial_audio if initial_audio else self._audio_codec_combo.currentText()
+        self._audio_codec_combo.blockSignals(True)
+        self._audio_codec_combo.clear()
+        self._audio_codec_combo.addItems(allowed_a)
+        if current_a in allowed_a:
+            self._audio_codec_combo.setCurrentText(current_a)
+        self._audio_codec_combo.blockSignals(False)
 
     def _build_naming_section(self, parent, is_bulk=False):
         self.is_bulk = is_bulk
@@ -266,10 +314,6 @@ class BaseExporter(QDialog):
 
         layout.addWidget(QLabel('Video Codec:'), 1, 0)
         self._codec_combo = QComboBox()
-        self._codec_combo.addItems(list(self.VIDEO_CODECS.keys()))
-        idx = self._codec_combo.findText(self.video_codec)
-        if idx >= 0:
-            self._codec_combo.setCurrentIndex(idx)
         layout.addWidget(self._codec_combo, 1, 1)
 
         layout.addWidget(QLabel('Quality (CRF):'), 2, 0)
@@ -300,10 +344,6 @@ class BaseExporter(QDialog):
 
         layout.addWidget(QLabel('Audio Codec:'), 1, 0)
         self._audio_codec_combo = QComboBox()
-        self._audio_codec_combo.addItems(list(self.AUDIO_CODECS.keys()))
-        idx = self._audio_codec_combo.findText(self.audio_codec)
-        if idx >= 0:
-            self._audio_codec_combo.setCurrentIndex(idx)
         layout.addWidget(self._audio_codec_combo, 1, 1)
 
         layout.addWidget(QLabel('Audio Bitrate:'), 2, 0)
@@ -315,6 +355,8 @@ class BaseExporter(QDialog):
         layout.addWidget(self._audio_bitrate_combo, 2, 1)
 
         parent.layout().addWidget(group)
+
+        self._update_codec_dropdowns(initial_video=self.video_codec, initial_audio=self.audio_codec)
 
     def _build_button_section(self, parent, export_text='Export'):
         self._open_folder_check = QCheckBox('Open folder after export')

@@ -27,7 +27,7 @@ class SingleExportDialog(BaseExporter):
 
         self.setWindowTitle('Export Scene')
         self.setMinimumWidth(500)
-        self.resize(500, 450)
+        self.resize(500, 700)
 
         self._build_ui()
 
