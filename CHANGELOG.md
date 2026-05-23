@@ -39,10 +39,8 @@ Besides the already mentioned points in main highlights.
 
 ### Fixed
 - **Mac install fix**: Migration to Qt fixed the installation for Mac. Mac very specifically could not resolve Tkinterdnd2 due to a mismatch with Tcl 8 and 9
-- **TensorRT crash**: `AttributeError: __wrapped__` from `torch.compile` no longer crashes the application — caught and falls back to standard CUDA with a log message
-- **`.install_state` overwrite**: `ENV_PATH` written by the custom path prompt was erased milliseconds later by `echo EXTRA=%EXTRA%>` — state initialization now happens first, appends stack correctly
-- **Disabled close button**: Database Manager, Queue Manager, Missing Files, and About dialogs had a non-functional 'X' button due to a Windows quirk with `WindowContextHelpButtonHint` — added `WindowCloseButtonHint` to restore it
-- **Console overlap in installer**: Custom path prompt output could visually overlap with subsequent UI elements due to missing newline separators
+- **TensorRT crash**: `AttributeError: __wrapped__` from `torch.compile` no longer crashes the application  caught and falls back to standard CUDA with a log message
+- **Disabled close button**: Database Manager, Queue Manager, Missing Files, and About dialogs had a non-functional 'X' button due to a Windows quirk with `WindowContextHelpButtonHint`  added `WindowCloseButtonHint` to restore it
 
 ## [1.2.0] - 2026-05-10
 
