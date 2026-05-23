@@ -148,7 +148,7 @@ echo "EXTRA=$EXTRA" > "$SCRIPT_DIR/.install_state"
 
 # --- Custom Environment Path Setup ---
 echo "------------------------------------------"
-echo "By default, the Python environment is installed in the scene scout folder."
+echo "By default, the Python environment with packages is installed in the scene scout folder."
 CUSTOM_ENV_PATH=""
 if [ -n "$OLD_ENV_PATH" ]; then
     echo "Currently set to: $OLD_ENV_PATH"
@@ -174,7 +174,7 @@ echo "------------------------------------------"
 
 # --- HuggingFace Cache Path Setup ---
 echo "------------------------------------------"
-echo "HuggingFace models (SigLIP2) are cached locally for offline use."
+echo "HuggingFace models are downloaded and cached locally for offline use."
 CUSTOM_HF_HOME=""
 if [ -n "$OLD_HF_HOME" ]; then
     echo "Currently set to: $OLD_HF_HOME"

@@ -173,3 +173,7 @@ QStatusBar { border-top: 1px solid #DCDCDC; min-height: 32px; background-color: 
 QLabel#MainStatusLabel { color: #E95420; font-family: "Ubuntu Mono", "Consolas", monospace; font-weight: bold; font-size: 11pt; padding-left: 8px; }
 QLabel#StatusBarDBLabel { background-color: #FFFFFF; border: 1px solid #DCDCDC; border-radius: 4px; padding: 3px 10px; margin: 4px 8px; font-weight: bold; font-size: 10pt; color: #3D3D3D; }
 QLabel#StatusBarCountLabel { padding: 0 8px; font-size: 10pt; color: #777777; }
+
+/* --- SEARCH INPUT STYLING --- */
+QLineEdit#MainSearchInput { border: 2px solid #E6E6E6; border-radius: 8px; padding: 8px 12px; background-color: #FFFFFF; font-size: 12pt; }
+QLineEdit#MainSearchInput:focus { border: 2px solid #E6E6E6; background-color: #FFFFFF; }

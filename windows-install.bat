@@ -150,7 +150,7 @@ if defined OLD_ENV_PATH (
     goto ENV_PATH_DONE
 )
 
-choice /C YN /M "Do you want to install the Python environment to a different drive/folder?"
+choice /C YN /M "Do you want to install the Python environment with packages to a different directory than the current scene scout folder?"
 if errorlevel 2 goto ENV_PATH_DONE
 
 :PROMPT_ENV_PATH
@@ -179,14 +179,14 @@ if exist "%CUSTOM_ENV_PATH%" (
 :: --- HuggingFace Cache Path Setup ---
 set "CUSTOM_HF_HOME="
 if defined OLD_HF_HOME (
-    echo [INFO] HuggingFace cache is currently at: %OLD_HF_HOME%
+    echo [INFO] HuggingFace model cache is currently at: %OLD_HF_HOME%
     choice /C KC /M "(K)eep or (C)hange?"
     if errorlevel 2 goto PROMPT_HF_HOME
     set "CUSTOM_HF_HOME=%OLD_HF_HOME%"
     goto HF_HOME_DONE
 )
 
-choice /C YN /M "Do you want to set a custom HuggingFace cache directory?"
+choice /C YN /M "Do you want to set a custom HuggingFace cache directory (where the model is downloaded)?"
 if errorlevel 2 goto HF_HOME_DONE
 
 :PROMPT_HF_HOME

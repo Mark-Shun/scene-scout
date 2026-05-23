@@ -448,7 +448,13 @@ class SceneScoutApp(QMainWindow):
 
         query_layout.addWidget(QLabel('Text:'))
         self._query_text_edit = QLineEdit()
-        self._query_text_edit.setPlaceholderText('Enter natural language text to search for matching scenes.')
+        self._query_text_edit.setObjectName("MainSearchInput")
+        self._query_text_edit.setPlaceholderText('Describe the scene you are looking for here...')
+        self._query_text_edit.setClearButtonEnabled(True)
+        self._query_text_edit.setMinimumHeight(45)
+        font = self._query_text_edit.font()
+        font.setPointSize(12)
+        self._query_text_edit.setFont(font)
         self._query_text_edit.returnPressed.connect(self.threaded_search)
         query_layout.addWidget(self._query_text_edit)
 
@@ -516,10 +522,12 @@ class SceneScoutApp(QMainWindow):
 
         self._fast_radio = QRadioButton('Fast')
         self._fast_radio.setChecked(self.config.get('fast_detect', True))
+        self._fast_radio.setToolTip('Extract I-frames from video metadata to know when a scene starts and stops (very fast but can be innacurate depending on te file)')
         self._fast_radio.toggled.connect(lambda checked: self._on_detect_method_changed(checked))
 
         self._accurate_radio = QRadioButton('Accurate')
         self._accurate_radio.setChecked(not self.config.get('fast_detect', True))
+        self._accurate_radio.setToolTip('Use Pyscenedetect to detect when a scene cut occurs (way slower but potentially more accurate)')
 
         detect_layout.addWidget(self._fast_radio)
         detect_layout.addWidget(self._accurate_radio)
@@ -555,17 +563,19 @@ class SceneScoutApp(QMainWindow):
         self._batch_size_spin.setRange(8, 160)
         self._batch_size_spin.setValue(self.config.get('batch_size', 16))
         self._batch_size_spin.valueChanged.connect(lambda v: self.save_config_key('batch_size', v))
-        self._batch_size_spin.setToolTip('Number of images processed at once when computing scene embeddings.')
+        self._batch_size_spin.setToolTip('Number of scenes processed at once when computing scene embeddings.')
         opts_layout.addWidget(self._batch_size_spin)
 
         self._vlc_open_check = QCheckBox('Open video in VLC')
         self._vlc_open_check.setChecked(self.config.get('use_vlc_open', True))
         self._vlc_open_check.toggled.connect(lambda v: self.save_config_key('use_vlc_open', v))
+        self._vlc_open_check.setToolTip('When opening a video scene, do so through VLC when checked or platform configured media player when unchecked (exact time open only supported through VLC)')
         opts_layout.addWidget(self._vlc_open_check)
 
         self._thumb_check = QCheckBox('Generate Thumbnails (increases DB size)')
         self._thumb_check.setChecked(self.config.get('generate_thumbnails', True))
         self._thumb_check.toggled.connect(lambda v: self.save_config_key('generate_thumbnails', v))
+        self._thumb_check.setToolTip('Store small thumbnail images in the database to show during search results.')
         opts_layout.addWidget(self._thumb_check)
 
         self._reprocess_check = QCheckBox('Force overwrite/reprocess indexed files')
@@ -2217,6 +2227,16 @@ class SceneScoutApp(QMainWindow):
                 QLabel#StatusBarCountLabel {{
                     padding: 0 8px;
                     font-size: 10pt;
+                }}
+                QLineEdit#MainSearchInput {{
+                    border: 2px solid {bg};
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    min-height: 28px;
+                    font-size: 12pt;
+                }}
+                QLineEdit#MainSearchInput:focus {{
+                    border: 2px solid {bg};
                 }}
                 """
                 app.setStyleSheet(app.styleSheet() + custom_css)
