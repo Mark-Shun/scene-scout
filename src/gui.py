@@ -2189,7 +2189,7 @@ class SceneScoutApp(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle('Database Manager')
-        dlg.resize(700, 480)
+        dlg.resize(780, 480)
         dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint | Qt.WindowCloseButtonHint)
         layout = QVBoxLayout(dlg)
 
@@ -2208,16 +2208,34 @@ class SceneScoutApp(QMainWindow):
             for db_path in self.active_databases:
                 row = table.rowCount()
                 table.insertRow(row)
-                table.setItem(row, 0, QTableWidgetItem(db_path))
+
+                display_text = f"★ {db_path}" if db_path == self.primary_db else db_path
+
+                db_item = QTableWidgetItem(display_text)
+                db_item.setData(Qt.UserRole, db_path)
+                db_item.setFlags(db_item.flags() & ~Qt.ItemIsEditable)
+                table.setItem(row, 0, db_item)
+
                 try:
                     stats = get_db_stats(db_path)
                     v_count = stats.get('video_count', 0)
                     s_count = stats.get('scene_count', 0)
-                    table.setItem(row, 1, QTableWidgetItem(str(v_count)))
-                    table.setItem(row, 2, QTableWidgetItem(str(s_count)))
+
+                    v_item = QTableWidgetItem(str(v_count))
+                    v_item.setFlags(v_item.flags() & ~Qt.ItemIsEditable)
+                    table.setItem(row, 1, v_item)
+
+                    s_item = QTableWidgetItem(str(s_count))
+                    s_item.setFlags(s_item.flags() & ~Qt.ItemIsEditable)
+                    table.setItem(row, 2, s_item)
                 except Exception:
-                    table.setItem(row, 1, QTableWidgetItem('?'))
-                    table.setItem(row, 2, QTableWidgetItem('?'))
+                    v_item = QTableWidgetItem('?')
+                    v_item.setFlags(v_item.flags() & ~Qt.ItemIsEditable)
+                    table.setItem(row, 1, v_item)
+
+                    s_item = QTableWidgetItem('?')
+                    s_item.setFlags(s_item.flags() & ~Qt.ItemIsEditable)
+                    table.setItem(row, 2, s_item)
 
         def add():
             paths, _ = QFileDialog.getOpenFileNames(
@@ -2231,7 +2249,7 @@ class SceneScoutApp(QMainWindow):
         def remove_selected():
             rows = sorted(set(index.row() for index in table.selectedIndexes()), reverse=True)
             for row in rows:
-                db_path = table.item(row, 0).text()
+                db_path = table.item(row, 0).data(Qt.UserRole)
                 if db_path in self.active_databases:
                     self.active_databases.remove(db_path)
                 if db_path == self.primary_db:
@@ -2242,9 +2260,25 @@ class SceneScoutApp(QMainWindow):
             self.update_queue_status()
             refresh()
 
+        def set_target():
+            indexes = table.selectedIndexes()
+            if not indexes:
+                QMessageBox.warning(dlg, "No Selection", "Please select a database to set as target.")
+                return
+
+            row = indexes[0].row()
+            db_path = table.item(row, 0).data(Qt.UserRole)
+
+            self.primary_db = db_path
+            self._update_db_section()
+            self.save_db_config()
+            self._update_button_states()
+            self.update_queue_status()
+            refresh()
+
         def get_selected_db_paths():
             rows = sorted(set(index.row() for index in table.selectedIndexes()))
-            return [table.item(row, 0).text() for row in rows] if rows else self.active_databases
+            return [table.item(row, 0).data(Qt.UserRole) for row in rows] if rows else self.active_databases
 
         def pack_selected_dbs():
             selected_dbs = get_selected_db_paths()
@@ -2360,22 +2394,32 @@ class SceneScoutApp(QMainWindow):
         add_btn.setToolTip('Add existing Scene Scout database (.db) files to the search list.')
         add_btn.clicked.connect(add)
         btn_layout.addWidget(add_btn)
+
         remove_btn = QPushButton('Remove Selected')
         remove_btn.setToolTip('Remove the selected database(s) from the workspace.')
         remove_btn.clicked.connect(remove_selected)
         btn_layout.addWidget(remove_btn)
+
+        target_btn = QPushButton('Set Target')
+        target_btn.setToolTip('Set the selected database as the primary target for indexing.')
+        target_btn.clicked.connect(set_target)
+        btn_layout.addWidget(target_btn)
+
         pack_btn = QPushButton('Pack Selected to Archive')
         pack_btn.setToolTip('Package the selected database(s) and their video assets into a portable .scdb archive.')
         pack_btn.clicked.connect(pack_selected_dbs)
         btn_layout.addWidget(pack_btn)
+
         unpack_btn = QPushButton('Unpack Database Archive')
         unpack_btn.setToolTip('Extract a .scdb archive and register the unpacked database(s) in the workspace.')
         unpack_btn.clicked.connect(lambda: trigger_archive_unpack())
         btn_layout.addWidget(unpack_btn)
+
         refresh_btn = QPushButton('Refresh')
         refresh_btn.setToolTip('Reload the table to reflect current database stats.')
         refresh_btn.clicked.connect(refresh)
         btn_layout.addWidget(refresh_btn)
+
         btn_layout.addStretch()
         close_btn = QPushButton('Close')
         close_btn.setToolTip('Close the Database Manager.')
