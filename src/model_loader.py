@@ -1,5 +1,7 @@
+import platform
+import sys
 import torch
-from transformers import AutoProcessor, Siglip2Model
+from transformers import AutoProcessor, AutoModel
 import config
 import os
 
@@ -90,11 +92,13 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
     else:
         update(f"Downloading model weights...") 
 
-    model = Siglip2Model.from_pretrained(
+    is_intel_mac = sys.platform == 'darwin' and platform.machine() == 'x86_64'
+    attn_impl = 'eager' if is_intel_mac else ('sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager')
+    model = AutoModel.from_pretrained(
             config.DEFAULT_MODEL, 
             token=config.get_hf_token(), 
             torch_dtype=dtype, 
-            attn_implementation='sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager'
+            attn_implementation=attn_impl
         ).to(device)
     update(f"Model loaded on {device_str}.")
 
