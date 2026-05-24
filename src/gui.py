@@ -162,7 +162,7 @@ class IndexProgressDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Processing Media')
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(520)
         self.setModal(True)
         self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
 
@@ -178,6 +178,11 @@ class IndexProgressDialog(QDialog):
         self.file_label.setStyleSheet('color: gray;')
         self.file_label.setWordWrap(True)
         layout.addWidget(self.file_label)
+
+        self.terminal_hint = QLabel('Check the terminal for more details')
+        self.terminal_hint.setStyleSheet('color: gray; font-style: italic; font-size: 9pt;')
+        self.terminal_hint.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.terminal_hint)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
