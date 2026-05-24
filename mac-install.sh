@@ -148,54 +148,56 @@ echo "EXTRA=$EXTRA" > "$SCRIPT_DIR/.install_state"
 
 # --- Custom Environment Path Setup ---
 echo "------------------------------------------"
-echo "By default, the Python environment with packages is installed in the scene scout folder."
 CUSTOM_ENV_PATH=""
 if [ -n "$OLD_ENV_PATH" ]; then
-    echo "Currently set to: $OLD_ENV_PATH"
-    read -p "(K)eep or (C)hange? [k/C]: " env_choice
+    read -p "App files: $OLD_ENV_PATH - (K)eep / (C)hange? [K/c]: " env_choice
+    if [ -z "$env_choice" ]; then
+        env_choice="K"
+    fi
     if [[ "$env_choice" =~ ^[Kk]$ ]]; then
         CUSTOM_ENV_PATH="$OLD_ENV_PATH"
     fi
 fi
 if [ -z "$CUSTOM_ENV_PATH" ]; then
-    read -p "Do you want to install it to a different custom path? (y/N): " use_custom
+    read -p "Use custom folder for app files? [y/N]: " use_custom
+    if [ -z "$use_custom" ]; then
+        use_custom="N"
+    fi
     if [[ "$use_custom" =~ ^[Yy]$ ]]; then
         read -p "Enter full absolute path (e.g., /Volumes/Data/scout_env): " CUSTOM_ENV_PATH
         if ! mkdir -p "$CUSTOM_ENV_PATH" 2>/dev/null; then
-            echo "Error: Cannot create directory or permission denied. Falling back to installation in scene scout folder."
+            echo "[!] Access Denied. Falling back to default."
             CUSTOM_ENV_PATH=""
         fi
     fi
 fi
-if [ -n "$CUSTOM_ENV_PATH" ]; then
-    echo "Environment will be installed to: $CUSTOM_ENV_PATH"
-fi
-echo "------------------------------------------"
+[ -n "$CUSTOM_ENV_PATH" ] && echo "[SUCCESS] App files will be installed to: $CUSTOM_ENV_PATH"
 
 # --- HuggingFace Cache Path Setup ---
-echo "------------------------------------------"
-echo "HuggingFace models are downloaded and cached locally for offline use."
 CUSTOM_HF_HOME=""
 if [ -n "$OLD_HF_HOME" ]; then
-    echo "Currently set to: $OLD_HF_HOME"
-    read -p "(K)eep or (C)hange? [k/C]: " hf_choice
+    read -p "AI models: $OLD_HF_HOME - (K)eep / (C)hange? [K/c]: " hf_choice
+    if [ -z "$hf_choice" ]; then
+        hf_choice="K"
+    fi
     if [[ "$hf_choice" =~ ^[Kk]$ ]]; then
         CUSTOM_HF_HOME="$OLD_HF_HOME"
     fi
 fi
 if [ -z "$CUSTOM_HF_HOME" ]; then
-    read -p "Do you want to set a custom HuggingFace cache directory? (y/N): " use_hf
+    read -p "Use custom folder for AI models? [y/N]: " use_hf
+    if [ -z "$use_hf" ]; then
+        use_hf="N"
+    fi
     if [[ "$use_hf" =~ ^[Yy]$ ]]; then
         read -p "Enter full absolute path (e.g., /Volumes/Data/scout_cache/hf): " CUSTOM_HF_HOME
         if ! mkdir -p "$CUSTOM_HF_HOME" 2>/dev/null; then
-            echo "Error: Cannot create directory or permission denied. Falling back to default cache location."
+            echo "[!] Access Denied. Falling back to default."
             CUSTOM_HF_HOME=""
         fi
     fi
 fi
-if [ -n "$CUSTOM_HF_HOME" ]; then
-    echo "HuggingFace cache will be set to: $CUSTOM_HF_HOME"
-fi
+[ -n "$CUSTOM_HF_HOME" ] && echo "[SUCCESS] AI models cache will be set to: $CUSTOM_HF_HOME"
 echo "------------------------------------------"
 
 # --- Installation Mode Selection ---
@@ -206,12 +208,13 @@ if [ -n "$CUSTOM_ENV_PATH" ]; then
 fi
 
 if [ -d "$ACTUAL_ENV_PATH" ]; then
-    echo "------------------------------------------"
     echo "Existing Python environment detected."
     echo "1) Standard Update (Fast - updates modified packages only)"
     echo "2) Clean Install (Fixes corrupted environments and broken dependencies)"
-    echo "------------------------------------------"
-    read -p "Select installation mode [1-2]: " install_mode
+    read -p "Select installation mode [1/2] (Default: 1): " install_mode
+    if [ -z "$install_mode" ]; then
+        install_mode="1"
+    fi
     if [ "$install_mode" = "2" ]; then
         echo "Wiping old environment..."
         rm -rf "$ACTUAL_ENV_PATH"

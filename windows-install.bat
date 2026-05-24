@@ -80,7 +80,56 @@ if errorlevel 1 (
 echo VLC installed successfully.
 echo.
 
+:: --- Backend Acceleration Installation ---
 :MENU
+echo ------------------------------------------
+echo Detecting GPU hardware...
+set "SUGGEST_OPT=5"
+set "SUGGEST_NAME=5 (CPU)"
+set "GPU_FOUND="
+
+for /f "delims=" %%I in ('powershell -NoProfile -Command "(Get-CimInstance Win32_VideoController).Name" 2^>nul') do (
+    echo %%I | findstr /i "NVIDIA" >nul
+    if not errorlevel 1 (
+        set "GPU_FOUND=NVIDIA"
+        
+        :: Check nvidia-smi for supported CUDA version
+        nvidia-smi >nul 2>&1
+        if not errorlevel 1 (
+            nvidia-smi | findstr /c:"CUDA Version: 13" >nul
+            if not errorlevel 1 (
+                set "SUGGEST_OPT=1"
+                set "SUGGEST_NAME=1 (NVIDIA CUDA 13.0)"
+            ) else (
+                set "SUGGEST_OPT=2"
+                set "SUGGEST_NAME=2 (NVIDIA CUDA 12.6)"
+            )
+        ) else (
+            :: Fallback if nvidia-smi is unavailable
+            set "SUGGEST_OPT=1"
+            set "SUGGEST_NAME=1 (NVIDIA CUDA - Auto-detect failed)"
+            echo [!] NVIDIA GPU detected, but driver version check failed. Please verify your selection manually.
+        )
+    )
+    echo %%I | findstr /i "AMD" >nul
+    if not errorlevel 1 if not defined GPU_FOUND (
+        set "SUGGEST_OPT=3"
+        set "SUGGEST_NAME=3 (DirectML)"
+        set "GPU_FOUND=AMD"
+    )
+    echo %%I | findstr /i "Intel" >nul
+    if not errorlevel 1 if not defined GPU_FOUND (
+        set "SUGGEST_OPT=4"
+        set "SUGGEST_NAME=4 (Intel Arc/Xe)"
+        set "GPU_FOUND=Intel"
+    )
+)
+
+if defined GPU_FOUND (
+    echo [Detected %GPU_FOUND% GPU]
+) else (
+    echo [No dedicated GPU recognized - Defaulting to CPU]
+)
 echo ------------------------------------------
 echo Install options for graphics card acceleration:
 echo 1) NVIDIA CUDA 13.0 (RTX, newer GPUs)
@@ -90,7 +139,8 @@ echo 4) Intel Arc/Xe (XPU)
 echo 5) CPU (Slow)
 echo ------------------------------------------
 
-set /p user_choice="Select an option [1-5]: " 
+set /p "user_choice=Select an option [1-5] (Press Enter for Default: %SUGGEST_NAME%): "
+if "%user_choice%"=="" set "user_choice=%SUGGEST_OPT%"
 
 if "%user_choice%"=="1" goto :TRT_PROMPT
 goto :PROCEED_NORMAL
@@ -98,14 +148,14 @@ goto :PROCEED_NORMAL
 :TRT_PROMPT
 echo.
 echo TensorRT can significantly speed up search on NVIDIA GPUs.
-echo Note: This requires an extra ~1GB download and dynamic initial compile time for search and index. 
-choice /C YN /M "Would you like to install with TensorRT optimization?" 
+echo Note: This requires an extra ~1GB download and dynamic initial compile time for search and index.
+choice /C YN /M "Would you like to install with TensorRT optimization?"
 if errorlevel 2 (
     set "EXTRA=cu130"
 ) else (
     set "EXTRA=cu130-trt"
 )
-goto :INSTALL_START
+goto :CHECK_OPTION
 
 :PROCEED_NORMAL
 if "%user_choice%"=="2" set "EXTRA=cu126"
@@ -117,7 +167,7 @@ if "%user_choice%"=="3" (
 if "%user_choice%"=="4" set "EXTRA=xpu"
 if "%user_choice%"=="5" set "EXTRA=cpu"
 
-:INSTALL_START
+:CHECK_OPTION
 if "%EXTRA%"=="" (
     echo Error: Invalid selection. 
     pause 
@@ -143,18 +193,17 @@ if not "%PY_VER%"=="" echo PY_VER=%PY_VER%>> "%BASE_DIR%.install_state"
 echo.
 set "CUSTOM_ENV_PATH="
 if defined OLD_ENV_PATH (
-    echo [INFO] Python environment is currently at: %OLD_ENV_PATH%
-    choice /C KC /M "(K)eep or (C)hange?"
+    choice /C KC /N /M "App files: %OLD_ENV_PATH% - (K)eep / (C)hange? [K/c]: "
     if errorlevel 2 goto PROMPT_ENV_PATH
     set "CUSTOM_ENV_PATH=%OLD_ENV_PATH%"
     goto ENV_PATH_DONE
 )
 
-choice /C YN /M "Do you want to install the Python environment with packages to a different directory than the current scene scout folder?"
+choice /C YN /N /M "Use custom folder for app files? [y/N]: "
 if errorlevel 2 goto ENV_PATH_DONE
 
 :PROMPT_ENV_PATH
-set /p "CUSTOM_ENV_PATH=Enter the full absolute path (e.g., D:\scout_env): "
+set /p "CUSTOM_ENV_PATH=Enter full absolute path (e.g., D:\scout_env): "
 set "CUSTOM_ENV_PATH=%CUSTOM_ENV_PATH:"=%"
 
 :: Validate Path
@@ -168,7 +217,7 @@ if not exist "%PARENT_DIR%" (
 
 mkdir "%CUSTOM_ENV_PATH%" 2>nul
 if exist "%CUSTOM_ENV_PATH%" (
-    echo [SUCCESS] Environment will be installed to: %CUSTOM_ENV_PATH%
+    echo [SUCCESS] App files will be installed to: %CUSTOM_ENV_PATH%
 ) else (
     echo [!] Access Denied. Falling back to installation in scene scout folder.
     set "CUSTOM_ENV_PATH="
@@ -179,18 +228,17 @@ if exist "%CUSTOM_ENV_PATH%" (
 :: --- HuggingFace Cache Path Setup ---
 set "CUSTOM_HF_HOME="
 if defined OLD_HF_HOME (
-    echo [INFO] HuggingFace model cache is currently at: %OLD_HF_HOME%
-    choice /C KC /M "(K)eep or (C)hange?"
+    choice /C KC /N /M "AI models: %OLD_HF_HOME% - (K)eep / (C)hange? [K/c]: "
     if errorlevel 2 goto PROMPT_HF_HOME
     set "CUSTOM_HF_HOME=%OLD_HF_HOME%"
     goto HF_HOME_DONE
 )
 
-choice /C YN /M "Do you want to set a custom HuggingFace cache directory (where the model is downloaded)?"
+choice /C YN /N /M "Use custom folder for AI models? [y/N]: "
 if errorlevel 2 goto HF_HOME_DONE
 
 :PROMPT_HF_HOME
-set /p "CUSTOM_HF_HOME=Enter the full absolute path (e.g., D:\scene_scout_cache\hf): "
+set /p "CUSTOM_HF_HOME=Enter full absolute path (e.g., D:\scout_cache\hf): "
 set "CUSTOM_HF_HOME=%CUSTOM_HF_HOME:"=%"
 
 set "PARENT_DIR=%~dp0"
@@ -203,9 +251,9 @@ if not exist "%PARENT_DIR%" (
 
 mkdir "%CUSTOM_HF_HOME%" 2>nul
 if exist "%CUSTOM_HF_HOME%" (
-    echo [SUCCESS] HuggingFace cache will be set to: %CUSTOM_HF_HOME%
+    echo [SUCCESS] AI models cache will be set to: %CUSTOM_HF_HOME%
 ) else (
-    echo [!] Access Denied. Falling back to default HuggingFace cache location.
+    echo [!] Access Denied. Falling back to default cache location.
     set "CUSTOM_HF_HOME="
 )
 
@@ -233,7 +281,7 @@ if exist "%ACTUAL_ENV_PATH%" (
     echo [1] Standard Update (Fast - updates modified packages only)
     echo [2] Clean Install (Fixes corrupted environments and broken dependencies)
     echo ==========================================
-    choice /C 12 /M "Select installation mode:"
+    choice /C 12 /M "Select installation mode [1 (Fast) / 2 (Clean)]:"
     if errorlevel 2 (
         echo.
         echo Wiping old environment...
@@ -241,6 +289,8 @@ if exist "%ACTUAL_ENV_PATH%" (
         echo Old environment removed. Proceeding with clean install.
     )
 )
+
+:: --- Actual installation ---
 
 echo.
 
