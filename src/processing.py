@@ -96,14 +96,14 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, video_i
         fps = float(video_stream.average_rate) if video_stream.average_rate and video_stream.average_rate > 0 else 30.0
         safe_margin_ms = int((1000 / fps) * 2)
 
-        pbar = tqdm(total=total_duration_ms / 60000, position=1, unit='min', unit_scale=True,
-                    desc=f'Progress video', disable=silent)
+        pbar = tqdm(total=100, position=1, desc='Progress scenes',
+                    bar_format='{desc}: {percentage:3.0f}%|{bar}| [{elapsed}<{remaining}]',
+                    disable=silent)
         
         batch_scene_data = []
         pending_frame = None
         pending_start_ms = None
         scene_idx = 0
-        last_pbar_update = 0
 
         for frame in container.decode(video=0):
             if cancel_check and cancel_check():
@@ -126,9 +126,11 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, video_i
                 pending_start_ms = current_ms
 
                 if len(batch_scene_data) >= batch_size:
-                    _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
-                    pbar.update((batch_scene_data[-1][2] - last_pbar_update) / 60000)
-                    last_pbar_update = batch_scene_data[-1][2]
+                    _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None)
+                    current_pct = (batch_scene_data[-1][2] / total_duration_ms) * 100
+                    update_amount = current_pct - pbar.n
+                    if update_amount > 0:
+                        pbar.update(update_amount)
                     batch_scene_data = []
 
             except (av.AVError, ValueError) as e:
@@ -138,8 +140,10 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, video_i
             batch_scene_data.append((scene_idx, pending_start_ms, total_duration_ms, [pending_frame]))
 
         if batch_scene_data:
-            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
-            pbar.update((batch_scene_data[-1][2] - last_pbar_update) / 60000)
+            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None)
+            update_amount = 100 - pbar.n
+            if update_amount > 0:
+                pbar.update(update_amount)
 
         container.close()
         pbar.close()
