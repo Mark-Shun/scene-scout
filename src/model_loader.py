@@ -6,6 +6,7 @@ from transformers import AutoProcessor, AutoModel
 import config
 import os
 import logging
+import warnings
 
 # Hardware Backend Imports
 try:
@@ -149,8 +150,6 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
     update(f"Model loaded on {device_str}.")
 
     if use_trt and device_str == 'cuda' and TRT_AVAILABLE:
-        import logging
-        import warnings
         update("Applying TorchDynamo TensorRT optimization...")
         try:
             with warnings.catch_warnings():
