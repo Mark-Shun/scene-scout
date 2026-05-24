@@ -192,6 +192,14 @@ class RescoreWorker(QThread):
             updated = []
             with sqlite3.connect(self.primary_db) as conn:
                 cursor = conn.cursor()
+
+                def compute_safe_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
+                    """Calculates strict Cosine Similarity to prevent float drift across models."""
+                    e1_norm = emb1 / (np.linalg.norm(emb1) + 1e-8)
+                    e2_norm = emb2 / (np.linalg.norm(emb2) + 1e-8)
+                    sim = float(np.dot(e1_norm, e2_norm.T).squeeze())
+                    return float(np.clip(sim, -1.0, 1.0))
+
                 for path, score, ftype, _, scene_idx, scene_time, scene_end, thumb_bytes, source_db in self.search_results:
                     new_score = None
                     if ftype == 'image':
@@ -201,7 +209,7 @@ class RescoreWorker(QThread):
                         row = cursor.fetchone()
                         if row:
                             emb = np.frombuffer(row[0], dtype=np.float32)
-                            new_score = float(np.dot(emb, rescore_embedding.T).squeeze())
+                            new_score = compute_safe_similarity(emb, rescore_embedding)
                     elif ftype == 'video':
                         if isinstance(scene_idx, tuple):
                             start_idx, end_idx = scene_idx
@@ -215,7 +223,7 @@ class RescoreWorker(QThread):
                                 max_sim = -1.0
                                 for row in rows:
                                     emb = np.frombuffer(row[0], dtype=np.float32)
-                                    sim = float(np.dot(emb, rescore_embedding.T).squeeze())
+                                    sim = compute_safe_similarity(emb, rescore_embedding)
                                     if sim > max_sim:
                                         max_sim = sim
                                 new_score = max_sim
@@ -228,7 +236,7 @@ class RescoreWorker(QThread):
                             row = cursor.fetchone()
                             if row:
                                 emb = np.frombuffer(row[0], dtype=np.float32)
-                                new_score = float(np.dot(emb, rescore_embedding.T).squeeze())
+                                new_score = compute_safe_similarity(emb, rescore_embedding)
                     updated.append((path, score, ftype, new_score, scene_idx,
                                     scene_time, scene_end, thumb_bytes, source_db))
             self.signals.finished.emit(updated)

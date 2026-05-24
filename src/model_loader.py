@@ -40,6 +40,11 @@ def get_compute_device(device_choice=None):
     Determines the best available device and optimal precision.
     Returns (device_str, msg, torch_device, torch_dtype).
     """
+    # --- NEW: Architectural Circuit Breaker ---
+    is_intel_mac = sys.platform == 'darwin' and platform.machine() == 'x86_64'
+    if is_intel_mac:
+        return 'cpu', 'Intel Mac detected. Forcing CPU (FP32) for compatibility.', torch.device('cpu'), torch.float32
+
     # 1. Handle forced devices
     if device_choice:
         if device_choice == 'dml' and (torch_directml is None or not torch_directml.is_available()):
@@ -63,7 +68,7 @@ def get_compute_device(device_choice=None):
             
         return 'cuda', msg, torch.device('cuda'), dtype
     if hasattr(torch, 'xpu') and torch.xpu.is_available():
-        return 'xpu', 'Intel GPU (XPU) detected.', torch.device('xpu'), torch.float16
+        return 'xpu', 'Intel GPU (XPU) detected.', torch.device('xpu'), torch.float32
     if torch_directml and torch_directml.is_available():
         return 'dml', 'AMD/Intel GPU (DirectML) detected.', torch_directml.device(), torch.float32
     if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
@@ -92,13 +97,11 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
     else:
         update(f"Downloading model weights...") 
 
-    is_intel_mac = sys.platform == 'darwin' and platform.machine() == 'x86_64'
-    attn_impl = 'eager' if is_intel_mac else ('sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager')
     model = AutoModel.from_pretrained(
             config.DEFAULT_MODEL, 
             token=config.get_hf_token(), 
             torch_dtype=dtype, 
-            attn_implementation=attn_impl
+            attn_implementation=config.ATTENTION_IMPL
         ).to(device)
     update(f"Model loaded on {device_str}.")
 
