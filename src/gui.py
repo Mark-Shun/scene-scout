@@ -409,6 +409,12 @@ class SceneScoutApp(QMainWindow):
         query_group = QGroupBox("Search Query")
         query_layout = QVBoxLayout(query_group)
 
+        self._search_warning_label = QLabel()
+        self._search_warning_label.setWordWrap(True)
+        self._search_warning_label.setStyleSheet("color: #e67e22; font-weight: bold; font-style: italic;")
+        self._search_warning_label.hide()
+        query_layout.addWidget(self._search_warning_label)
+
         query_layout.addWidget(QLabel('Text:'))
         self._query_text_edit = QLineEdit()
         self._query_text_edit.setObjectName("MainSearchInput")
@@ -421,20 +427,26 @@ class SceneScoutApp(QMainWindow):
         self._query_text_edit.returnPressed.connect(self.threaded_search)
         query_layout.addWidget(self._query_text_edit)
 
+        self._search_button = QPushButton('Search Scene')
+        self._search_button.clicked.connect(self.threaded_search)
+        self._search_button.setToolTip('Run the search using the current text and/or image query.')
+        self._search_button.setEnabled(False)
+        query_layout.addWidget(self._search_button)
+
         self._query_image_label = QLabel('No query image')
         self._query_image_label.setWordWrap(True)
         query_layout.addWidget(self._query_image_label)
 
         query_btn_row = QHBoxLayout()
-        load_query_btn = QPushButton('Load...')
-        load_query_btn.clicked.connect(self.browse_query_image)
-        load_query_btn.setToolTip('Load an image to use as the search query.')
-        query_btn_row.addWidget(load_query_btn)
+        self._load_query_btn = QPushButton('Load...')
+        self._load_query_btn.clicked.connect(self.browse_query_image)
+        self._load_query_btn.setToolTip('Load an image to use as the search query.')
+        query_btn_row.addWidget(self._load_query_btn)
 
-        clear_query_btn = QPushButton('Clear')
-        clear_query_btn.clicked.connect(self.clear_query_image)
-        clear_query_btn.setToolTip('Clear the current query image from the search form.')
-        query_btn_row.addWidget(clear_query_btn)
+        self._clear_query_btn = QPushButton('Clear')
+        self._clear_query_btn.clicked.connect(self.clear_query_image)
+        self._clear_query_btn.setToolTip('Clear the current query image from the search form.')
+        query_btn_row.addWidget(self._clear_query_btn)
         query_layout.addLayout(query_btn_row)
 
         query_layout.addWidget(QLabel('Results:'))
@@ -444,12 +456,6 @@ class SceneScoutApp(QMainWindow):
         self._top_k_spin.valueChanged.connect(lambda v: self.save_config_key('top_k', v))
         self._top_k_spin.setToolTip('How many matching scenes to return for each search.')
         query_layout.addWidget(self._top_k_spin)
-
-        self._search_button = QPushButton('Search Scene')
-        self._search_button.clicked.connect(self.threaded_search)
-        self._search_button.setToolTip('Run the search using the current text and/or image query.')
-        self._search_button.setEnabled(False)
-        query_layout.addWidget(self._search_button)
 
         layout.addWidget(query_group)
 
@@ -467,7 +473,7 @@ class SceneScoutApp(QMainWindow):
         processing_layout.addWidget(self._queue_status_label)
 
         queue_btn_row = QHBoxLayout()
-        add_folder_btn = QPushButton('Add Folder(s)')
+        add_folder_btn = QPushButton('Add Folder')
         add_folder_btn.clicked.connect(self.add_folder_to_queue)
         add_folder_btn.setToolTip('Add a directory to the index queue. Recursive by default.')
         queue_btn_row.addWidget(add_folder_btn)
@@ -482,6 +488,12 @@ class SceneScoutApp(QMainWindow):
         inspect_btn.clicked.connect(self.open_queue_manager)
         inspect_btn.setToolTip('Open the queue manager to view, modify, or remove queued items.')
         processing_layout.addWidget(inspect_btn)
+
+        self._index_button = QPushButton('Process Media')
+        self._index_button.clicked.connect(self.threaded_index)
+        self._index_button.setToolTip('Process all files in the queue and update the scene database.')
+        self._index_button.setEnabled(False)
+        processing_layout.addWidget(self._index_button)
 
         processing_layout.addWidget(QLabel('Detection method:'))
         detect_frame = QFrame()
@@ -541,12 +553,6 @@ class SceneScoutApp(QMainWindow):
         self._reprocess_check.toggled.connect(lambda v: self.save_config_key('force_reprocess', v))
         self._reprocess_check.setToolTip('If checked, queued files that already exist in the database will be re-analyzed and overwritten using the current settings.')
         processing_layout.addWidget(self._reprocess_check)
-
-        self._index_button = QPushButton('Process Media')
-        self._index_button.clicked.connect(self.threaded_index)
-        self._index_button.setToolTip('Process all files in the queue and update the scene database.')
-        self._index_button.setEnabled(False)
-        processing_layout.addWidget(self._index_button)
 
         layout.addWidget(processing_group)
 
@@ -911,6 +917,7 @@ class SceneScoutApp(QMainWindow):
                 self.primary_db = added[0]
             self._update_db_section()
             self.save_db_config()
+            self._evaluate_search_readiness()
             self._update_button_states()
             self.update_status(f'Added {len(added)} database(s).')
             if self.db_manager_dlg and hasattr(self.db_manager_dlg, 'isVisible') and self.db_manager_dlg.isVisible():
@@ -953,6 +960,7 @@ class SceneScoutApp(QMainWindow):
 
         self._update_db_section()
         self.update_queue_status()
+        self._evaluate_search_readiness()
         self._update_button_states()
         self.verify_database_paths()
 
@@ -995,6 +1003,26 @@ class SceneScoutApp(QMainWindow):
     # Button state management
     # ======================================================================
 
+    def _evaluate_search_readiness(self):
+        if not self.active_databases:
+            self._search_dbs_ready = False
+            self._search_warning_reason = "No databases with scenes loaded. Please add or process a database."
+            return
+
+        from database import db_is_empty
+        all_empty = True
+        for db in self.active_databases:
+            if not db_is_empty(db):
+                all_empty = False
+                break
+
+        if all_empty:
+            self._search_dbs_ready = False
+            self._search_warning_reason = "Databases are empty. Please process media first."
+        else:
+            self._search_dbs_ready = True
+            self._search_warning_reason = ""
+
     def set_controls_enabled(self, enabled: bool):
         if hasattr(self, '_load_model_button'):
             self._load_model_button.setEnabled(enabled)
@@ -1007,20 +1035,37 @@ class SceneScoutApp(QMainWindow):
         self._update_button_states()
 
     def _update_button_states(self):
-        has_search_dbs = len(self.active_databases) > 0
         has_target = self.primary_db is not None
         model_loaded = self.model is not None
-
         is_idle = not getattr(self, '_is_background_task_running', False)
 
+        search_ready = getattr(self, '_search_dbs_ready', False)
+
+        if not search_ready:
+            self._search_warning_label.setText(getattr(self, '_search_warning_reason', ''))
+            self._search_warning_label.show()
+        else:
+            self._search_warning_label.hide()
+
+        inputs_enabled = search_ready and is_idle
+
+        if hasattr(self, '_query_text_edit') and self._query_text_edit:
+            self._query_text_edit.setEnabled(inputs_enabled)
+        if hasattr(self, '_load_query_btn') and self._load_query_btn:
+            self._load_query_btn.setEnabled(inputs_enabled)
+        if hasattr(self, '_clear_query_btn') and self._clear_query_btn:
+            self._clear_query_btn.setEnabled(inputs_enabled)
+        if hasattr(self, '_top_k_spin') and self._top_k_spin:
+            self._top_k_spin.setEnabled(inputs_enabled)
+
         if hasattr(self, '_search_button') and self._search_button:
-            self._search_button.setEnabled(has_search_dbs and model_loaded and is_idle)
+            self._search_button.setEnabled(inputs_enabled and model_loaded)
+
         if hasattr(self, '_index_button') and self._index_button:
             from database import queue_count
             q_count = queue_count(self.primary_db) if has_target else 0
             self._index_button.setEnabled(has_target and q_count > 0 and is_idle)
-        if hasattr(self, '_query_text_edit') and self._query_text_edit:
-            self._query_text_edit.setEnabled(has_search_dbs and model_loaded and is_idle)
+
         if hasattr(self, '_load_model_button') and self._load_model_button:
             self._load_model_button.setEnabled(is_idle)
 
@@ -1169,6 +1214,7 @@ class SceneScoutApp(QMainWindow):
                 self.update_queue_status()
             self.update_status('Indexing complete!')
             QMessageBox.information(self, 'Complete', 'Indexing has finished.')
+        self._evaluate_search_readiness()
         self._update_button_states()
 
     # ======================================================================
@@ -2408,6 +2454,7 @@ class SceneScoutApp(QMainWindow):
                     self.primary_db = self.active_databases[0] if self.active_databases else None
             self._update_db_section()
             self.save_db_config()
+            self._evaluate_search_readiness()
             self._update_button_states()
             self.update_queue_status()
             refresh()
