@@ -118,12 +118,15 @@ for /f "delims=" %%I in ('powershell -NoProfile -Command "(Get-CimInstance Win32
         set "GPU_FOUND=AMD"
     )
     echo %%I | findstr /i "Intel" >nul
-    if not errorlevel 1 if not defined GPU_FOUND (
-        set "SUGGEST_OPT=4"
-        set "SUGGEST_NAME=4 (Intel Arc/Xe)"
-        set "GPU_FOUND=Intel"
-    )
-)
+        if not errorlevel 1 if not defined GPU_FOUND (
+            :: Refine check to only catch Arc or Xe graphics, ignoring generic UHD/HD
+            echo %%I | findstr /i "Arc Xe" >nul
+            if not errorlevel 1 (
+                set "SUGGEST_OPT=4"
+                set "SUGGEST_NAME=4 (Intel Arc/Xe)"
+                set "GPU_FOUND=Intel Arc/Xe"
+            )
+        )
 
 if defined GPU_FOUND (
     echo [Detected %GPU_FOUND% GPU]

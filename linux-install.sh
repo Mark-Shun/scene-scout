@@ -120,9 +120,14 @@ elif echo "$GPU_INFO" | grep -qi "amd\|radeon"; then
     SUGGEST_NAME="4 (AMD ROCm)"
     echo "[Detected AMD GPU]"
 elif echo "$GPU_INFO" | grep -qi "intel"; then
-    SUGGEST_OPT="3"
-    SUGGEST_NAME="3 (Intel Arc/Xe)"
-    echo "[Detected Intel GPU]"
+    # Refine check to ensure it is actually an Arc or Xe chip
+    if echo "$GPU_INFO" | grep -qiE "arc|xe"; then
+        SUGGEST_OPT="3"
+        SUGGEST_NAME="3 (Intel Arc/Xe)"
+        echo "[Detected Intel Arc/Xe GPU]"
+    else
+        echo "[Detected Intel Integrated Graphics - Defaulting to CPU]"
+    fi
 else
     echo "[No dedicated GPU recognized - Defaulting to CPU]"
 fi
