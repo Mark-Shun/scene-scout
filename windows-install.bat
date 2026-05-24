@@ -149,7 +149,7 @@ goto :PROCEED_NORMAL
 echo.
 echo TensorRT can significantly speed up search on NVIDIA GPUs.
 echo Note: This requires an extra ~1GB download and dynamic initial compile time for search and index.
-choice /C YN /M "Would you like to install with TensorRT optimization?"
+choice /C YN /N /M "Would you like to install with TensorRT optimization? [Y/n]: "
 if errorlevel 2 (
     set "EXTRA=cu130"
 ) else (
@@ -325,8 +325,7 @@ if not exist "%DESKTOP_SHORTCUT_PATH%" (
 
 :EXIT_PROMPT
 echo.
-choice /C YN /M "Would you like to launch %NAME% now?"
-
+choice /C YN /N /M "Would you like to launch %NAME% now? [y/N]: "
 :: If 'N' is chosen (errorlevel 2), the script will simply exit.
 if errorlevel 2 exit
 
