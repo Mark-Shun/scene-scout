@@ -13,13 +13,15 @@ Hotfix update for a few problems
 - **Moved/removed database**: If a database that was previously loaded can no longer be loaded at start up, it now gracefully handles this situation.
 
 ### Added
-- **Experimental old Mac**: For older Intel Macs specifically, the tool now utilizes Siglip 1 model to make it possible to use the program. (Caution: Siglip 2 databases can not be searched/used with Siglip 1 and vice versa). This is an experimental feature at the moment and may not persist/be supported int he future.
+- **Experimental old Macbook**: For older Intel Macs specifically, the tool now utilizes Siglip 1 model to make it possible to use the program. (Caution: Siglip 2 databases can not be searched/used with Siglip 1 and vice versa). This is an experimental feature at the moment and may not persist/be supported in the future as it seems very slow.
+- **Package checker**: At the start of the program, check if the main critical packages are available, otherwise return the instruction to use the platform installer.
 
 ### Changed
 - **Install scripts**: Install scripts are now more dynamic and automatically try to detect your GPU hardware
 - **Search field styling**: The search field now has distinct styling to make it more stand out
 - **Checks**: The search field can only be used if a database with scenes is loaded
 - **GUI options rearranged**: Different options have been placed in their own specific section, to make it more apparent to the user which process it affects.
+- **GUI highlight main buttons**: The three main buttons: database management, process media and search are now highlighted differently, making them stand out more.
 
 
 ## [1.3.0] - 2026-05-23

@@ -3,8 +3,6 @@ import sys
 import threading
 from logging.handlers import RotatingFileHandler
 
-import torch
-
 import config
 
 
@@ -66,7 +64,35 @@ def setup_logging():
     logging.info("=" * 50)
 
 
-def normalize_embedding(features: torch.Tensor) -> torch.Tensor:
+def check_environment_packages():
+    import importlib.util
+    missing = []
+    for pkg in config.CRITICAL_DEPENDENCIES:
+        # Use importlib.util for a cleaner, non-intrusive check
+        if importlib.util.find_spec(pkg) is None:
+            missing.append(pkg)
+            
+    if missing:
+        # Construct a detailed error message
+        if sys.platform == 'win32':
+            install_script="windows-install.bat"
+        elif sys.platform == 'linux':
+            install_script="linux-install.sh"
+        elif sys.platform == 'darwin':
+            install_script="mac-install.sh"
+        msg = (
+            "Scene Scout encountered a critical environment error.\n\n"
+            f"Missing packages: {', '.join(missing)}\n\n"
+            "This usually happens if the environment was moved or updated manually.\n"
+            f"Repair by running the {install_script} again."
+        )
+        # Log to file before printing to console, ensuring developers have the record
+        logging.critical(msg)
+        sys.exit(1)
+
+
+def normalize_embedding(features):
+    import torch
     return features / torch.linalg.norm(features, ord=2, dim=-1, keepdim=True)
 
 

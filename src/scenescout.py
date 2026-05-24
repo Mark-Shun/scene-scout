@@ -12,6 +12,7 @@ import utils
 
 if __name__ == '__main__':
     utils.setup_logging()
+    utils.check_environment_packages()
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
