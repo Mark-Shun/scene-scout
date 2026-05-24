@@ -127,6 +127,7 @@ for /f "delims=" %%I in ('powershell -NoProfile -Command "(Get-CimInstance Win32
                 set "GPU_FOUND=Intel Arc/Xe"
             )
         )
+)
 
 if defined GPU_FOUND (
     echo [Detected %GPU_FOUND% GPU]
