@@ -405,44 +405,6 @@ class SceneScoutApp(QMainWindow):
 
         layout.addWidget(db_group)
 
-        # ---- Media Queue Section ----
-        queue_group = QGroupBox("Media Queue")
-        queue_layout = QVBoxLayout(queue_group)
-
-        self._drop_zone = DropZoneFrame()
-        self._drop_zone.files_dropped.connect(self._on_dropzone_drop)
-        self._drop_zone.click_enabled = True
-        queue_layout.addWidget(self._drop_zone)
-
-        self._queue_status_label = QLabel('[0] items in queue')
-        self._queue_status_label.setStyleSheet('font-weight: bold;')
-        queue_layout.addWidget(self._queue_status_label)
-
-        queue_btn_row = QHBoxLayout()
-        add_folder_btn = QPushButton('Add Folder(s)')
-        add_folder_btn.clicked.connect(self.add_folder_to_queue)
-        add_folder_btn.setToolTip('Add a directory to the index queue. Recursive by default.')
-        queue_btn_row.addWidget(add_folder_btn)
-
-        add_file_btn = QPushButton('Add File(s)')
-        add_file_btn.clicked.connect(self.add_files_to_queue)
-        add_file_btn.setToolTip('Add individual media files to the index queue.')
-        queue_btn_row.addWidget(add_file_btn)
-        queue_layout.addLayout(queue_btn_row)
-
-        inspect_btn = QPushButton('Inspect Queue...')
-        inspect_btn.clicked.connect(self.open_queue_manager)
-        inspect_btn.setToolTip('Open the queue manager to view, modify, or remove queued items.')
-        queue_layout.addWidget(inspect_btn)
-
-        self._index_button = QPushButton('Process Media')
-        self._index_button.clicked.connect(self.threaded_index)
-        self._index_button.setToolTip('Process all files in the queue and update the scene database.')
-        self._index_button.setEnabled(False)
-        queue_layout.addWidget(self._index_button)
-
-        layout.addWidget(queue_group)
-
         # ---- Search Query Section ----
         query_group = QGroupBox("Search Query")
         query_layout = QVBoxLayout(query_group)
@@ -475,6 +437,14 @@ class SceneScoutApp(QMainWindow):
         query_btn_row.addWidget(clear_query_btn)
         query_layout.addLayout(query_btn_row)
 
+        query_layout.addWidget(QLabel('Results:'))
+        self._top_k_spin = QSpinBox()
+        self._top_k_spin.setRange(1, 999)
+        self._top_k_spin.setValue(self.config.get('top_k', 20))
+        self._top_k_spin.valueChanged.connect(lambda v: self.save_config_key('top_k', v))
+        self._top_k_spin.setToolTip('How many matching scenes to return for each search.')
+        query_layout.addWidget(self._top_k_spin)
+
         self._search_button = QPushButton('Search Scene')
         self._search_button.clicked.connect(self.threaded_search)
         self._search_button.setToolTip('Run the search using the current text and/or image query.')
@@ -482,6 +452,103 @@ class SceneScoutApp(QMainWindow):
         query_layout.addWidget(self._search_button)
 
         layout.addWidget(query_group)
+
+        # ---- Media Processing Section ----
+        processing_group = QGroupBox("Media Processing")
+        processing_layout = QVBoxLayout(processing_group)
+
+        self._drop_zone = DropZoneFrame()
+        self._drop_zone.files_dropped.connect(self._on_dropzone_drop)
+        self._drop_zone.click_enabled = True
+        processing_layout.addWidget(self._drop_zone)
+
+        self._queue_status_label = QLabel('[0] items in queue')
+        self._queue_status_label.setStyleSheet('font-weight: bold;')
+        processing_layout.addWidget(self._queue_status_label)
+
+        queue_btn_row = QHBoxLayout()
+        add_folder_btn = QPushButton('Add Folder(s)')
+        add_folder_btn.clicked.connect(self.add_folder_to_queue)
+        add_folder_btn.setToolTip('Add a directory to the index queue. Recursive by default.')
+        queue_btn_row.addWidget(add_folder_btn)
+
+        add_file_btn = QPushButton('Add File(s)')
+        add_file_btn.clicked.connect(self.add_files_to_queue)
+        add_file_btn.setToolTip('Add individual media files to the index queue.')
+        queue_btn_row.addWidget(add_file_btn)
+        processing_layout.addLayout(queue_btn_row)
+
+        inspect_btn = QPushButton('Inspect Queue...')
+        inspect_btn.clicked.connect(self.open_queue_manager)
+        inspect_btn.setToolTip('Open the queue manager to view, modify, or remove queued items.')
+        processing_layout.addWidget(inspect_btn)
+
+        processing_layout.addWidget(QLabel('Detection method:'))
+        detect_frame = QFrame()
+        detect_layout = QHBoxLayout(detect_frame)
+        detect_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._fast_radio = QRadioButton('Fast')
+        self._fast_radio.setChecked(self.config.get('fast_detect', True))
+        self._fast_radio.setToolTip('Extract I-frames from video metadata to know when a scene starts and stops (very fast but can be innacurate depending on te file)')
+        self._fast_radio.toggled.connect(lambda checked: self._on_detect_method_changed(checked))
+
+        self._accurate_radio = QRadioButton('Accurate')
+        self._accurate_radio.setChecked(not self.config.get('fast_detect', True))
+        self._accurate_radio.setToolTip('Use Pyscenedetect to detect when a scene cut occurs (way slower but potentially more accurate)')
+
+        detect_layout.addWidget(self._fast_radio)
+        detect_layout.addWidget(self._accurate_radio)
+        processing_layout.addWidget(detect_frame)
+
+        self._max_patches_label = QLabel('Max patches:')
+        processing_layout.addWidget(self._max_patches_label)
+        self._max_patches_spin = QSpinBox()
+        self._max_patches_spin.setRange(128, 1024)
+        self._max_patches_spin.setSingleStep(128)
+        self._max_patches_spin.setValue(self.config.get('max_patches', 256))
+        self._max_patches_spin.valueChanged.connect(lambda v: self.save_config_key('max_patches', v))
+        self._max_patches_spin.setToolTip('Number of patches to evaluate per scene; higher values may improve accuracy but increase runtime.')
+        processing_layout.addWidget(self._max_patches_spin)
+        if sys.platform == 'darwin' and platform.machine() == 'x86_64':
+            self._max_patches_label.hide()
+            self._max_patches_spin.hide()
+
+        processing_layout.addWidget(QLabel('Frames to pool per scene:'))
+        self._frames_pool_spin = QSpinBox()
+        self._frames_pool_spin.setRange(1, 20)
+        self._frames_pool_spin.setValue(self.config.get('frames_per_scene', 3))
+        self._frames_pool_spin.valueChanged.connect(lambda v: self.save_config_key('frames_per_scene', v))
+        self._frames_pool_spin.setToolTip('Extracts N frames evenly across a scene and combines them (Max Pooling) for higher accuracy. 1 is fastest, 3-5 is optimal.')
+        processing_layout.addWidget(self._frames_pool_spin)
+
+        processing_layout.addWidget(QLabel('Scene embed batch size:'))
+        self._batch_size_spin = QSpinBox()
+        self._batch_size_spin.setRange(8, 160)
+        self._batch_size_spin.setValue(self.config.get('batch_size', 16))
+        self._batch_size_spin.valueChanged.connect(lambda v: self.save_config_key('batch_size', v))
+        self._batch_size_spin.setToolTip('Number of scenes processed at once when computing scene embeddings.')
+        processing_layout.addWidget(self._batch_size_spin)
+
+        self._thumb_check = QCheckBox('Generate Thumbnails (increases DB size)')
+        self._thumb_check.setChecked(self.config.get('generate_thumbnails', True))
+        self._thumb_check.toggled.connect(lambda v: self.save_config_key('generate_thumbnails', v))
+        self._thumb_check.setToolTip('Store small thumbnail images in the database to show during search results.')
+        processing_layout.addWidget(self._thumb_check)
+
+        self._reprocess_check = QCheckBox('Force overwrite/reprocess indexed files')
+        self._reprocess_check.setChecked(self.config.get('force_reprocess', False))
+        self._reprocess_check.toggled.connect(lambda v: self.save_config_key('force_reprocess', v))
+        self._reprocess_check.setToolTip('If checked, queued files that already exist in the database will be re-analyzed and overwritten using the current settings.')
+        processing_layout.addWidget(self._reprocess_check)
+
+        self._index_button = QPushButton('Process Media')
+        self._index_button.clicked.connect(self.threaded_index)
+        self._index_button.setToolTip('Process all files in the queue and update the scene database.')
+        self._index_button.setEnabled(False)
+        processing_layout.addWidget(self._index_button)
+
+        layout.addWidget(processing_group)
 
         # ---- Options Section ----
         options_group = QGroupBox("Options")
@@ -516,78 +583,11 @@ class SceneScoutApp(QMainWindow):
             self._trt_check.toggled.connect(self.save_trt_preference)
             opts_layout.addWidget(self._trt_check)
 
-        opts_layout.addWidget(QLabel('Detection method:'))
-        detect_frame = QFrame()
-        detect_layout = QHBoxLayout(detect_frame)
-        detect_layout.setContentsMargins(0, 0, 0, 0)
-
-        self._fast_radio = QRadioButton('Fast')
-        self._fast_radio.setChecked(self.config.get('fast_detect', True))
-        self._fast_radio.setToolTip('Extract I-frames from video metadata to know when a scene starts and stops (very fast but can be innacurate depending on te file)')
-        self._fast_radio.toggled.connect(lambda checked: self._on_detect_method_changed(checked))
-
-        self._accurate_radio = QRadioButton('Accurate')
-        self._accurate_radio.setChecked(not self.config.get('fast_detect', True))
-        self._accurate_radio.setToolTip('Use Pyscenedetect to detect when a scene cut occurs (way slower but potentially more accurate)')
-
-        detect_layout.addWidget(self._fast_radio)
-        detect_layout.addWidget(self._accurate_radio)
-        opts_layout.addWidget(detect_frame)
-
-        self._max_patches_label = QLabel('Max patches:')
-        opts_layout.addWidget(self._max_patches_label)
-        self._max_patches_spin = QSpinBox()
-        self._max_patches_spin.setRange(128, 1024)
-        self._max_patches_spin.setSingleStep(128)
-        self._max_patches_spin.setValue(self.config.get('max_patches', 256))
-        self._max_patches_spin.valueChanged.connect(lambda v: self.save_config_key('max_patches', v))
-        self._max_patches_spin.setToolTip('Number of patches to evaluate per scene; higher values may improve accuracy but increase runtime.')
-        opts_layout.addWidget(self._max_patches_spin)
-        if sys.platform == 'darwin' and platform.machine() == 'x86_64':
-            self._max_patches_label.hide()
-            self._max_patches_spin.hide()
-
-        opts_layout.addWidget(QLabel('Frames to pool per scene:'))
-        self._frames_pool_spin = QSpinBox()
-        self._frames_pool_spin.setRange(1, 20)
-        self._frames_pool_spin.setValue(self.config.get('frames_per_scene', 3))
-        self._frames_pool_spin.valueChanged.connect(lambda v: self.save_config_key('frames_per_scene', v))
-        self._frames_pool_spin.setToolTip('Extracts N frames evenly across a scene and combines them (Max Pooling) for higher accuracy. 1 is fastest, 3-5 is optimal.')
-        opts_layout.addWidget(self._frames_pool_spin)
-
-        opts_layout.addWidget(QLabel('Results:'))
-        self._top_k_spin = QSpinBox()
-        self._top_k_spin.setRange(1, 999)
-        self._top_k_spin.setValue(self.config.get('top_k', 20))
-        self._top_k_spin.valueChanged.connect(lambda v: self.save_config_key('top_k', v))
-        self._top_k_spin.setToolTip('How many matching scenes to return for each search.')
-        opts_layout.addWidget(self._top_k_spin)
-
-        opts_layout.addWidget(QLabel('Scene embed batch size:'))
-        self._batch_size_spin = QSpinBox()
-        self._batch_size_spin.setRange(8, 160)
-        self._batch_size_spin.setValue(self.config.get('batch_size', 16))
-        self._batch_size_spin.valueChanged.connect(lambda v: self.save_config_key('batch_size', v))
-        self._batch_size_spin.setToolTip('Number of scenes processed at once when computing scene embeddings.')
-        opts_layout.addWidget(self._batch_size_spin)
-
         self._vlc_open_check = QCheckBox('Open video in VLC')
         self._vlc_open_check.setChecked(self.config.get('use_vlc_open', True))
         self._vlc_open_check.toggled.connect(lambda v: self.save_config_key('use_vlc_open', v))
         self._vlc_open_check.setToolTip('When opening a video scene, do so through VLC when checked or platform configured media player when unchecked (exact time open only supported through VLC)')
         opts_layout.addWidget(self._vlc_open_check)
-
-        self._thumb_check = QCheckBox('Generate Thumbnails (increases DB size)')
-        self._thumb_check.setChecked(self.config.get('generate_thumbnails', True))
-        self._thumb_check.toggled.connect(lambda v: self.save_config_key('generate_thumbnails', v))
-        self._thumb_check.setToolTip('Store small thumbnail images in the database to show during search results.')
-        opts_layout.addWidget(self._thumb_check)
-
-        self._reprocess_check = QCheckBox('Force overwrite/reprocess indexed files')
-        self._reprocess_check.setChecked(self.config.get('force_reprocess', False))
-        self._reprocess_check.toggled.connect(lambda v: self.save_config_key('force_reprocess', v))
-        self._reprocess_check.setToolTip('If checked, queued files that already exist in the database will be re-analyzed and overwritten using the current settings.')
-        opts_layout.addWidget(self._reprocess_check)
 
         self._standby_check = QCheckBox('GPU Standby when minimized')
         self._standby_check.setChecked(self.config.get('gpu_standby', True))
