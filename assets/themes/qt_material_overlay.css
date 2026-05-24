@@ -1,0 +1,44 @@
+QStatusBar {
+    border-top: 1px solid BORDER_COLOR;
+    min-height: 32px;
+}
+QLabel#MainStatusLabel {
+    color: ACCENT_COLOR;
+    font-family: "Consolas", "Courier New", monospace;
+    font-weight: bold;
+    font-size: 11pt;
+    padding-left: 8px;
+}
+QLabel#StatusBarDBLabel {
+    background-color: BG_COLOR;
+    border-radius: 4px;
+    padding: 3px 10px;
+    margin: 4px 8px;
+    font-weight: bold;
+    font-size: 10pt;
+}
+QLabel#StatusBarCountLabel {
+    padding: 0 8px;
+    font-size: 10pt;
+}
+QLineEdit#MainSearchInput {
+    border: 2px solid BORDER_COLOR;
+    border-radius: 8px;
+    padding: 8px 12px;
+    min-height: 28px;
+    font-size: 12pt;
+}
+QLineEdit#MainSearchInput:focus {
+    border: 2px solid BORDER_COLOR;
+}
+QPushButton#PrimaryButton {
+    border: 2px solid ACCENT_COLOR;
+    border-radius: 6px;
+    padding: 6px 16px;
+}
+QPushButton#PrimaryButton:hover {
+    background-color: ACCENT_HOVER;
+}
+QPushButton#PrimaryButton:disabled {
+    border-color: rgba(128, 128, 128, 0.25);
+}

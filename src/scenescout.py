@@ -23,14 +23,25 @@ if __name__ == '__main__':
     initial_theme = saved_config.get('theme', default_theme)
 
     def apply_initial_theme(theme_name):
+        is_dark = 'dark' in theme_name.lower()
+
         if theme_name.endswith('.xml'):
             apply_stylesheet(app, theme=theme_name, extra={'density_scale': '0'})
+            overlay_path = config.THEMES_DIR / 'qt_material_overlay.css'
+            if overlay_path.exists():
+                css = overlay_path.read_text(encoding='utf-8')
+                css = (css
+                    .replace('ACCENT_COLOR', '#FFCA28' if is_dark else '#FFA000')
+                    .replace('ACCENT_HOVER', 'rgba(255, 202, 40, 0.15)' if is_dark else 'rgba(255, 160, 0, 0.15)')
+                    .replace('BG_COLOR', 'rgba(255, 255, 255, 0.15)' if is_dark else 'rgba(0, 0, 0, 0.08)')
+                    .replace('BORDER_COLOR', 'rgba(255, 255, 255, 0.1)' if is_dark else 'rgba(0, 0, 0, 0.1)')
+                )
+                app.setStyleSheet(app.styleSheet() + css)
             return True
         elif theme_name.endswith('.qss'):
             theme_path = config.THEMES_DIR / theme_name
             if theme_path.exists():
-                with open(theme_path, "r", encoding="utf-8") as f:
-                    app.setStyleSheet(f.read())
+                app.setStyleSheet(theme_path.read_text(encoding='utf-8'))
                 return True
             else:
                 print(f"Warning: Custom theme file not found at {theme_path}")

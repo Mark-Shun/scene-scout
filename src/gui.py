@@ -2268,6 +2268,18 @@ class SceneScoutApp(QMainWindow):
     # Theme
     # ======================================================================
 
+    def _load_overlay(self, is_dark: bool) -> str:
+        overlay_path = config.THEMES_DIR / 'qt_material_overlay.css'
+        if not overlay_path.exists():
+            return ''
+        css = overlay_path.read_text(encoding='utf-8')
+        return (css
+            .replace('ACCENT_COLOR', '#FFCA28' if is_dark else '#FFA000')
+            .replace('ACCENT_HOVER', 'rgba(255, 202, 40, 0.15)' if is_dark else 'rgba(255, 160, 0, 0.15)')
+            .replace('BG_COLOR', 'rgba(255, 255, 255, 0.15)' if is_dark else 'rgba(0, 0, 0, 0.08)')
+            .replace('BORDER_COLOR', 'rgba(255, 255, 255, 0.1)' if is_dark else 'rgba(0, 0, 0, 0.1)')
+        )
+
     def apply_theme(self):
         selected = self._theme_combobox.currentData()
         if not selected:
@@ -2280,64 +2292,11 @@ class SceneScoutApp(QMainWindow):
             if selected.endswith('.xml'):
                 from qt_material import apply_stylesheet
                 apply_stylesheet(app, theme=selected, extra={'density_scale': '0'})
-
-                accent = "#FFCA28" if is_dark else "#FFA000"
-                bg = "rgba(255, 255, 255, 0.15)" if is_dark else "rgba(0, 0, 0, 0.08)"
-                border = "rgba(255, 255, 255, 0.1)" if is_dark else "rgba(0, 0, 0, 0.1)"
-
-                accent_hover = "rgba(255, 202, 40, 0.15)" if is_dark else "rgba(255, 160, 0, 0.15)"
-                custom_css = f"""
-                QStatusBar {{
-                    border-top: 1px solid {border};
-                    min-height: 32px;
-                }}
-                QLabel#MainStatusLabel {{
-                    color: {accent};
-                    font-family: "Consolas", "Courier New", monospace;
-                    font-weight: bold;
-                    font-size: 11pt;
-                    padding-left: 8px;
-                }}
-                QLabel#StatusBarDBLabel {{
-                    background-color: {bg};
-                    border-radius: 4px;
-                    padding: 3px 10px;
-                    margin: 4px 8px;
-                    font-weight: bold;
-                    font-size: 10pt;
-                }}
-                QLabel#StatusBarCountLabel {{
-                    padding: 0 8px;
-                    font-size: 10pt;
-                }}
-                QLineEdit#MainSearchInput {{
-                    border: 2px solid {bg};
-                    border-radius: 8px;
-                    padding: 8px 12px;
-                    min-height: 28px;
-                    font-size: 12pt;
-                }}
-                QLineEdit#MainSearchInput:focus {{
-                    border: 2px solid {bg};
-                }}
-                QPushButton#PrimaryButton {{
-                    border: 2px solid {accent};
-                    border-radius: 6px;
-                    padding: 6px 16px;
-                }}
-                QPushButton#PrimaryButton:hover {{
-                    background-color: {accent_hover};
-                }}
-                QPushButton#PrimaryButton:disabled {{
-                    border-color: rgba(128, 128, 128, 0.25);
-                }}
-                """
-                app.setStyleSheet(app.styleSheet() + custom_css)
+                app.setStyleSheet(app.styleSheet() + self._load_overlay(is_dark))
             elif selected.endswith('.qss'):
                 theme_path = config.THEMES_DIR / selected
                 if theme_path.exists():
-                    with open(theme_path, "r", encoding="utf-8") as f:
-                        app.setStyleSheet(f.read())
+                    app.setStyleSheet(theme_path.read_text(encoding='utf-8'))
                 else:
                     default_theme = config.DEFAULT_CONFIG.get('theme', 'dark_lightgreen.xml')
                     QMessageBox.warning(self, 'Theme Missing', f'Could not find {selected}. Falling back to {default_theme}.')
