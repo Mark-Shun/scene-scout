@@ -22,21 +22,29 @@ big_logo = ASSETS_DIR / "logo" / "scene-scout-logo.png"
 text_logo = ASSETS_DIR / "logo" / "scene-scout-text-logo.png"
 
 if sys.platform == 'darwin' and platform.machine() == 'x86_64':
-    DEFAULT_MODEL = 'google/siglip-so400m-patch14-384'
+    DEFAULT_MODEL = 'google/siglip-so400m-patch14-224'
 else:
     DEFAULT_MODEL = 'google/siglip2-so400m-patch16-naflex'
 
-# --- NEW: Global Attention Implementation ---
-# Force 'eager' for Intel Macs to bypass missing PyTorch 2.2.2 SDPA kernels.
-if sys.platform == 'darwin' and platform.machine() == 'x86_64':
-    ATTENTION_IMPL = 'eager'
-else:
-    # Safely default to SDPA for all modern environments, fallback to eager
+# --- Dynamic Attention Hardware Check ---
+def _determine_attention_impl() -> str:
     try:
-        import torch.nn.functional
-        ATTENTION_IMPL = 'sdpa' if hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'eager'
-    except ImportError:
-        ATTENTION_IMPL = 'eager'
+        import torch
+        import torch.nn.functional as F
+
+        if not hasattr(F, 'scaled_dot_product_attention'):
+            return 'eager'
+
+        q = torch.rand(1, 1, 8, 8, dtype=torch.float32)
+        k = torch.rand(1, 1, 8, 8, dtype=torch.float32)
+        v = torch.rand(1, 1, 8, 8, dtype=torch.float32)
+        _ = F.scaled_dot_product_attention(q, k, v)
+
+        return 'sdpa'
+    except Exception:
+        return 'eager'
+
+ATTENTION_IMPL = _determine_attention_impl()
 
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp')
 VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.ts', '.m2ts', '.mts', '.mpg', '.mpeg', '.vob', '.m4v', '.f4v', '.3gp', '.ogv', '.mxf')

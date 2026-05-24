@@ -4,6 +4,7 @@ import sys
 import gc
 import subprocess
 import webbrowser
+import platform
 from pathlib import Path
 from typing import Optional, List
 
@@ -533,7 +534,8 @@ class SceneScoutApp(QMainWindow):
         detect_layout.addWidget(self._accurate_radio)
         opts_layout.addWidget(detect_frame)
 
-        opts_layout.addWidget(QLabel('Max patches:'))
+        self._max_patches_label = QLabel('Max patches:')
+        opts_layout.addWidget(self._max_patches_label)
         self._max_patches_spin = QSpinBox()
         self._max_patches_spin.setRange(128, 1024)
         self._max_patches_spin.setSingleStep(128)
@@ -541,6 +543,9 @@ class SceneScoutApp(QMainWindow):
         self._max_patches_spin.valueChanged.connect(lambda v: self.save_config_key('max_patches', v))
         self._max_patches_spin.setToolTip('Number of patches to evaluate per scene; higher values may improve accuracy but increase runtime.')
         opts_layout.addWidget(self._max_patches_spin)
+        if sys.platform == 'darwin' and platform.machine() == 'x86_64':
+            self._max_patches_label.hide()
+            self._max_patches_spin.hide()
 
         opts_layout.addWidget(QLabel('Frames to pool per scene:'))
         self._frames_pool_spin = QSpinBox()
