@@ -78,6 +78,11 @@ def _run_batch_inference(batch_scene_data, model, processor, device, cursor, vid
         if pbar:
             pbar.update(len(batch_scene_data))
 
+        if device.type == 'cpu':
+            import gc
+            del features, pooled_features, normalized_features, embeddings
+            gc.collect()
+
     except Exception as e:
         if pbar is None or not getattr(pbar, 'disable', False):
             tqdm.write(f"Inference Error: {e}")
@@ -230,7 +235,10 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
 
     container = av.open(video_path)
     stream = container.streams.video[0]
-    stream.thread_type = "AUTO"
+    if device.type == 'cpu':
+        stream.thread_type = "NONE"
+    else:
+        stream.thread_type = "AUTO"
 
     batch_scene_data = []
     current_scene_frames = []

@@ -99,6 +99,27 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
         update(f"Downloading model weights...") 
 
 
+    if device_str == 'cpu':
+        try:
+            import psutil
+            physical_cores = psutil.cpu_count(logical=False)
+            if physical_cores is None:
+                physical_cores = os.cpu_count()
+            torch.set_num_threads(physical_cores)
+            update(f"Optimized CPU threads to {physical_cores} physical cores.")
+        except ImportError:
+            try:
+                if platform.machine().lower() in ['x86_64', 'amd64']:
+                    physical_cores = max(1, os.cpu_count() // 2)
+                else:
+                    physical_cores = os.cpu_count()
+                torch.set_num_threads(physical_cores)
+                update(f"Optimized CPU threads to {physical_cores} physical cores.")
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     model_kwargs = {
         "token": config.get_hf_token(),
         "attn_implementation": config.ATTENTION_IMPL
