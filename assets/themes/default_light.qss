@@ -140,3 +140,24 @@ QLabel#StatusBarCountLabel { padding: 0 8px; font-size: 10pt; color: #6C757D; }
 /* --- SEARCH INPUT STYLING --- */
 QLineEdit#MainSearchInput { border: 2px solid #D8DEE4; border-radius: 8px; padding: 8px 12px; background-color: #FFFFFF; font-size: 12pt; }
 QLineEdit#MainSearchInput:focus { border: 2px solid #D8DEE4; background-color: #FFFFFF; }
+
+/* --- PRIMARY ACTION BUTTONS --- */
+QPushButton#PrimaryButton {
+    background-color: #FFA000;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-weight: bold;
+}
+QPushButton#PrimaryButton:hover {
+    background-color: #FFB300;
+}
+QPushButton#PrimaryButton:pressed {
+    background-color: #FF8F00;
+}
+QPushButton#PrimaryButton:disabled {
+    background-color: #F8F9FA;
+    color: #ADB5BD;
+    border: 1px solid #DEE2E6;
+}

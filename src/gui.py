@@ -387,6 +387,7 @@ class SceneScoutApp(QMainWindow):
         db_layout.addWidget(self._db_search_label)
 
         manage_btn = QPushButton('Manage Databases...')
+        manage_btn.setObjectName("PrimaryButton")
         manage_btn.clicked.connect(self.open_db_manager)
         manage_btn.setToolTip('Open the database manager to view, add, remove, and configure databases.')
         db_layout.addWidget(manage_btn)
@@ -428,6 +429,7 @@ class SceneScoutApp(QMainWindow):
         query_layout.addWidget(self._query_text_edit)
 
         self._search_button = QPushButton('Search Scene')
+        self._search_button.setObjectName("PrimaryButton")
         self._search_button.clicked.connect(self.threaded_search)
         self._search_button.setToolTip('Run the search using the current text and/or image query.')
         self._search_button.setEnabled(False)
@@ -490,6 +492,7 @@ class SceneScoutApp(QMainWindow):
         processing_layout.addWidget(inspect_btn)
 
         self._index_button = QPushButton('Process Media')
+        self._index_button.setObjectName("PrimaryButton")
         self._index_button.clicked.connect(self.threaded_index)
         self._index_button.setToolTip('Process all files in the queue and update the scene database.')
         self._index_button.setEnabled(False)
@@ -2278,10 +2281,11 @@ class SceneScoutApp(QMainWindow):
                 from qt_material import apply_stylesheet
                 apply_stylesheet(app, theme=selected, extra={'density_scale': '0'})
 
-                accent = "#00E5FF" if is_dark else "#0055FF"
+                accent = "#FFCA28" if is_dark else "#FFA000"
                 bg = "rgba(255, 255, 255, 0.15)" if is_dark else "rgba(0, 0, 0, 0.08)"
                 border = "rgba(255, 255, 255, 0.1)" if is_dark else "rgba(0, 0, 0, 0.1)"
 
+                accent_hover = "rgba(255, 202, 40, 0.15)" if is_dark else "rgba(255, 160, 0, 0.15)"
                 custom_css = f"""
                 QStatusBar {{
                     border-top: 1px solid {border};
@@ -2315,6 +2319,17 @@ class SceneScoutApp(QMainWindow):
                 }}
                 QLineEdit#MainSearchInput:focus {{
                     border: 2px solid {bg};
+                }}
+                QPushButton#PrimaryButton {{
+                    border: 2px solid {accent};
+                    border-radius: 6px;
+                    padding: 6px 16px;
+                }}
+                QPushButton#PrimaryButton:hover {{
+                    background-color: {accent_hover};
+                }}
+                QPushButton#PrimaryButton:disabled {{
+                    border-color: rgba(128, 128, 128, 0.25);
                 }}
                 """
                 app.setStyleSheet(app.styleSheet() + custom_css)

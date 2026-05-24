@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.1] - 2026-05-24
+
+Hotfix update for a few problems
+
+### Fix
+- **Batch Dimension Fraction bug**: Due to recent changes it's possible that when trying to extract embedded data, the program could have added a fraction of a dimension at the end. Causing an invalid shape and a ValueError. If you run into a ValueError: shapes/ Search Error shapes: I'm sorry but you will have to fix your database by reprocessing (pick the force overwrite/reprocess indexed files option) and reprocess the specific files or reprocess the database as a whole.
+- **Heavy background task check**: If a user instantly spawns two background workers for the same task, one would overwrite the other resulting in a crash. Safety locks are now reset for the heavy tasks.
+- **Fast process bar**: The process bar for the fast detection mode was incorrectly recalculating the values, resulting in a broken appearance. This has now been fixed.
+- **Moved/removed database**: If a database that was previously loaded can no longer be loaded at start up, it now gracefully handles this situation.
+
+### Added
+- **Experimental old Mac**: For older Intel Macs specifically, the tool now utilizes Siglip 1 model to make it possible to use the program. (Caution: Siglip 2 databases can not be searched/used with Siglip 1 and vice versa). This is an experimental feature at the moment and may not persist/be supported int he future.
+
+### Changed
+- **Install scripts**: Install scripts are now more dynamic and automatically try to detect your GPU hardware
+- **Search field styling**: The search field now has distinct styling to make it more stand out
+- **Checks**: The search field can only be used if a database with scenes is loaded
+- **GUI options rearranged**: Different options have been placed in their own specific section, to make it more apparent to the user which process it affects.
+
+
 ## [1.3.0] - 2026-05-23
 
 What started out as fixing installation issues for Mac users turned into a big refactor to a different GUI library. With new features put on top of it while we're at it.
@@ -36,6 +56,7 @@ Besides the already mentioned points in main highlights.
 - **Install/launch scripts**: Launcher scripts read `.install_state` for custom environment path; install scripts write `ENV_PATH` before the EXTRA state to prevent file overwrite
 - **Windows installer path validation**: Strips accidental quotes from user input, validates parent directory existence, and re-prompts on bad paths instead of silently falling back
 - **Accurate scene detect speed boost**: Using AV and scene manager to slightly speed up the accurate scene detection method
+- **Export format checking**: Not all combinations of containers and encoders will work, so if the user changes the container the appropriate codec options are available in the export dialog window.
 
 ### Fixed
 - **Mac install fix**: Migration to Qt fixed the installation for Mac. Mac very specifically could not resolve Tkinterdnd2 due to a mismatch with Tcl 8 and 9
