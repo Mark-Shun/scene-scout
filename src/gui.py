@@ -1006,12 +1006,18 @@ class SceneScoutApp(QMainWindow):
         has_target = self.primary_db is not None
         model_loaded = self.model is not None
 
+        is_idle = not getattr(self, '_is_background_task_running', False)
+
         if hasattr(self, '_search_button') and self._search_button:
-            self._search_button.setEnabled(has_search_dbs and model_loaded)
+            self._search_button.setEnabled(has_search_dbs and model_loaded and is_idle)
         if hasattr(self, '_index_button') and self._index_button:
-            self._index_button.setEnabled(has_target)
+            from database import queue_count
+            q_count = queue_count(self.primary_db) if has_target else 0
+            self._index_button.setEnabled(has_target and q_count > 0 and is_idle)
         if hasattr(self, '_query_text_edit') and self._query_text_edit:
-            self._query_text_edit.setEnabled(has_search_dbs and model_loaded)
+            self._query_text_edit.setEnabled(has_search_dbs and model_loaded and is_idle)
+        if hasattr(self, '_load_model_button') and self._load_model_button:
+            self._load_model_button.setEnabled(is_idle)
 
     # ======================================================================
     # Model loading
@@ -1032,6 +1038,11 @@ class SceneScoutApp(QMainWindow):
         )
 
     def threaded_load_model(self):
+        if self._is_background_task_running:
+            return
+
+        self._is_background_task_running = True
+        self._update_button_states()
         self.update_status(f'Loading model: {config.DEFAULT_MODEL}...')
 
         bridge = self._active_bridge = SignalBridge()
@@ -1039,6 +1050,8 @@ class SceneScoutApp(QMainWindow):
             status=self.update_status,
             finished=lambda result: self._on_model_worker_done(result),
             error=lambda msg: (
+                setattr(self, '_is_background_task_running', False),
+                self._update_button_states(),
                 QMessageBox.critical(self, 'Model Error', msg),
                 self.update_status('Error loading model.'),
             ),
@@ -1068,6 +1081,9 @@ class SceneScoutApp(QMainWindow):
     # ======================================================================
 
     def threaded_index(self):
+        if self._is_background_task_running:
+            return
+
         if not self.primary_db:
             QMessageBox.critical(self, 'Error', 'Please select a target database first.')
             return
@@ -1076,6 +1092,7 @@ class SceneScoutApp(QMainWindow):
             QMessageBox.critical(self, 'Error', 'Please add files or folders to the queue before indexing.')
             return
         self._is_background_task_running = True
+        self._update_button_states()
         self.ensure_model_active()
         self._stop_video_loop()
 
@@ -1088,7 +1105,9 @@ class SceneScoutApp(QMainWindow):
             progress=self._update_index_progress,
             finished=lambda result: self._on_index_finished(result),
             error=lambda msg: (
-                self._index_dialog.close(),
+                setattr(self, '_is_background_task_running', False),
+                self._update_button_states(),
+                self._index_dialog.close() if self._index_dialog else None,
                 QMessageBox.critical(self, 'Indexing Error', msg),
                 print('Indexing Error', msg),
             ),
@@ -1131,6 +1150,7 @@ class SceneScoutApp(QMainWindow):
 
     def _on_index_finished(self, result: str = 'completed'):
         self._is_background_task_running = False
+        self._update_button_states()
         if hasattr(self, '_index_dialog') and self._index_dialog:
             self._index_dialog.close()
             self._index_dialog = None
@@ -1151,6 +1171,9 @@ class SceneScoutApp(QMainWindow):
     # ======================================================================
 
     def threaded_search(self):
+        if self._is_background_task_running:
+            return
+
         if not self.active_databases:
             QMessageBox.critical(self, 'Error', 'Please add at least one database to search.')
             return
@@ -1167,6 +1190,7 @@ class SceneScoutApp(QMainWindow):
             QMessageBox.warning(self, 'Warning', 'Please enter text or select an image to search.')
             return
         self._is_background_task_running = True
+        self._update_button_states()
         self.ensure_model_active()
         self._stop_video_loop()
         self.update_status('Searching...')
@@ -1175,6 +1199,8 @@ class SceneScoutApp(QMainWindow):
         bridge.set_callbacks(
             finished=lambda results: self._on_search_finished(results),
             error=lambda msg: (
+                setattr(self, '_is_background_task_running', False),
+                self._update_button_states(),
                 QMessageBox.critical(self, 'Search Error', msg),
                 print('Search Error', msg),
             ),
@@ -1189,6 +1215,7 @@ class SceneScoutApp(QMainWindow):
 
     def _on_search_finished(self, results):
         self._is_background_task_running = False
+        self._update_button_states()
         self.search_results = [
             (path, score, 'video', None, scene_idx, start_time, end_time, thumb_bytes, source_db)
             for path, scene_idx, start_time, end_time, thumb_bytes, score, source_db in results
