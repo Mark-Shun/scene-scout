@@ -48,7 +48,7 @@ def _run_batch_inference(batch_scene_data, model, processor, device, cursor, vid
 
         with torch.no_grad():
             output = model.get_image_features(**inputs)
-            features = output.pooler_output if hasattr(output, 'pooler_output') else output[0]
+            features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
 
             B = len(batch_scene_data)
             N = len(batch_scene_data[0][3])
@@ -413,7 +413,7 @@ def index_files(device: torch.device, processor, model, db_path: str, batch_size
                 inputs = processor(images=batch_images, return_tensors='pt', max_num_patches=max_num_patches).to(device)
                 with torch.no_grad():
                     output = model.get_image_features(**inputs)
-                    image_features = output.pooler_output if hasattr(output, 'pooler_output') else output[0]
+                    image_features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
                     image_features = normalize_embedding(image_features)
                 for idx, (path, mtime) in enumerate(zip(valid_paths, mtimes)):
                     embedding = image_features[idx].cpu().numpy().astype(np.float32).tobytes()
@@ -498,14 +498,14 @@ def get_query_embedding(query_text: str, query_image_path: Optional[str], device
         if query_text:
             inputs = processor(text=[query_text.lower()], return_tensors='pt', padding='max_length', max_length=64).to(device)
             text_output = model.get_text_features(**inputs)
-            text_features = text_output.pooler_output if hasattr(text_output, 'pooler_output') else text_output[0]
+            text_features = text_output if isinstance(text_output, torch.Tensor) else (text_output.pooler_output if hasattr(text_output, 'pooler_output') else text_output[0])
             text_embedding = normalize_embedding(text_features).cpu().numpy().astype(np.float32)
         if query_image_path:
             try:
                 image = Image.open(query_image_path).convert('RGB')
                 inputs = processor(images=image, return_tensors='pt', max_num_patches=max_num_patches).to(device)
                 output = model.get_image_features(**inputs)
-                image_features = output.pooler_output if hasattr(output, 'pooler_output') else output[0]
+                image_features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
                 image_embedding = normalize_embedding(image_features).cpu().numpy().astype(np.float32)
             except Exception as e:
                 print(f'Error processing query image: {e}')
