@@ -127,6 +127,7 @@ fi
 ARCH=$(uname -m)
 if [ "$ARCH" = "x86_64" ]; then
     echo "Intel Mac detected. Automatically selecting compatible CPU fallback..."
+    echo "[!] Warning: Intel Mac support is experimental and extremely slow. Expect low performance"
     EXTRA="mac-intel"
 else
     echo "Apple Silicon Mac detected. Automatically selecting native MPS support..."
