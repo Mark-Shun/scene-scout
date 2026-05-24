@@ -93,52 +93,55 @@ def db_is_empty(db_path: str) -> bool:
         return True
 
 def cleanup_orphaned_entries(db_path: str, progress_callback: Optional[Callable]=None) -> int:
-    """Remove database rows for files that no longer exist.
+    """Remove database rows for files that no longer exist."""
+    if not os.path.exists(db_path):
+        if progress_callback:
+            progress_callback(f'Skipped cleanup: Database file not found at {db_path}')
+        return 0
 
-    This handles both the image `embeddings` table and the
-    `processed_videos` table. Scene entries are removed via cascade
-    when the corresponding video record is deleted (foreign keys must
-    be enabled on the connection).
-    """
     total_removed = 0
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        # ensure cascade behaviour works
-        cursor.execute('PRAGMA foreign_keys = ON')
 
-        # clean embeddings (images)
-        cursor.execute('SELECT filepath FROM image_embeddings')
-        all_paths = cursor.fetchall()
-        if progress_callback:
-            progress_callback(f'Checking {len(all_paths)} image entries in the database...')
-        orphaned = [p for p, in all_paths if not os.path.exists(p)]
-        if orphaned:
-            if progress_callback:
-                progress_callback(f'Removing {len(orphaned)} orphaned image embeddings...')
-            cursor.executemany('DELETE FROM image_embeddings WHERE filepath=?', [(p,) for p in orphaned])
-            conn.commit()
-            total_removed += len(orphaned)
-            if progress_callback:
-                progress_callback(f'Cleanup complete: removed {len(orphaned)} orphaned image embeddings.')
-        elif progress_callback:
-            progress_callback('No orphaned image embeddings found.')
+    try:
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('PRAGMA foreign_keys = ON')
 
-        # clean processed_videos (videos)
-        cursor.execute('SELECT filepath FROM processed_videos')
-        video_paths = cursor.fetchall()
+            cursor.execute('SELECT filepath FROM image_embeddings')
+            all_paths = cursor.fetchall()
+            if progress_callback:
+                progress_callback(f'Checking {len(all_paths)} image entries in the database...')
+            orphaned = [p for p, in all_paths if not os.path.exists(p)]
+            if orphaned:
+                if progress_callback:
+                    progress_callback(f'Removing {len(orphaned)} orphaned image embeddings...')
+                cursor.executemany('DELETE FROM image_embeddings WHERE filepath=?', [(p,) for p in orphaned])
+                conn.commit()
+                total_removed += len(orphaned)
+                if progress_callback:
+                    progress_callback(f'Cleanup complete: removed {len(orphaned)} orphaned image embeddings.')
+            elif progress_callback:
+                progress_callback('No orphaned image embeddings found.')
+
+            cursor.execute('SELECT filepath FROM processed_videos')
+            video_paths = cursor.fetchall()
+            if progress_callback:
+                progress_callback(f'Checking {len(video_paths)} processed video entries in the database...')
+            orphaned_videos = [p for p, in video_paths if not os.path.exists(p)]
+            if orphaned_videos:
+                if progress_callback:
+                    progress_callback(f'Removing {len(orphaned_videos)} orphaned processed videos...')
+                cursor.executemany('DELETE FROM processed_videos WHERE filepath=?', [(p,) for p in orphaned_videos])
+                conn.commit()
+                total_removed += len(orphaned_videos)
+                if progress_callback:
+                    progress_callback(f'Cleanup complete: removed {len(orphaned_videos)} orphaned processed videos.')
+            elif progress_callback:
+                progress_callback('No orphaned processed videos found.')
+
+    except sqlite3.Error as e:
         if progress_callback:
-            progress_callback(f'Checking {len(video_paths)} processed video entries in the database...')
-        orphaned_videos = [p for p, in video_paths if not os.path.exists(p)]
-        if orphaned_videos:
-            if progress_callback:
-                progress_callback(f'Removing {len(orphaned_videos)} orphaned processed videos...')
-            cursor.executemany('DELETE FROM processed_videos WHERE filepath=?', [(p,) for p in orphaned_videos])
-            conn.commit()
-            total_removed += len(orphaned_videos)
-            if progress_callback:
-                progress_callback(f'Cleanup complete: removed {len(orphaned_videos)} orphaned processed videos.')
-        elif progress_callback:
-            progress_callback('No orphaned processed videos found.')
+            progress_callback(f'Database error during cleanup: {e}')
+        print(f"Database error accessing {db_path}: {e}")
 
     return total_removed
 

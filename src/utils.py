@@ -26,6 +26,8 @@ def setup_logging():
     logger = logging.getLogger()
     logger.setLevel(log_level)
 
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
     file_handler = RotatingFileHandler(
         config.LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding='utf-8'
     )
