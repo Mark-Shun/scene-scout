@@ -5,6 +5,7 @@ import transformers
 from transformers import AutoProcessor, AutoModel
 import config
 import os
+import logging
 
 # Hardware Backend Imports
 try:
@@ -41,9 +42,12 @@ def get_compute_device(device_choice=None):
     Determines the best available device and optimal precision.
     Returns (device_str, msg, torch_device, torch_dtype).
     """
+    logging.info(f"Hardware Detection - OS: {sys.platform} | Architecture: {platform.machine()}")
+
     # --- NEW: Architectural Circuit Breaker ---
     is_intel_mac = sys.platform == 'darwin' and platform.machine() == 'x86_64'
     if is_intel_mac:
+        logging.info("Circuit Breaker: Intel Mac detected. Forcing standard CPU fallback.")
         return 'cpu', 'Intel Mac detected. Forcing CPU (FP32) for compatibility.', torch.device('cpu'), torch.float32
 
     # 1. Handle forced devices
@@ -87,6 +91,11 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
 
     update(f"Hardware Status: {msg}")
 
+    logging.info(f"Target Device: {device_str.upper()} | Selected Precision: {dtype}")
+    logging.info(f"Target Model: {config.DEFAULT_MODEL}")
+    logging.info(f"Transformers Version: {transformers.__version__}")
+    logging.info(f"Attention Implementation: {config.ATTENTION_IMPL}")
+
     cached = _is_model_cached(config.DEFAULT_MODEL)
 
     update("Loading processor config...")
@@ -107,6 +116,7 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
                 physical_cores = os.cpu_count()
             torch.set_num_threads(physical_cores)
             update(f"Optimized CPU threads to {physical_cores} physical cores.")
+            logging.info(f"CPU Optimization: Restricted to {physical_cores} physical cores via psutil.")
         except ImportError:
             try:
                 if platform.machine().lower() in ['x86_64', 'amd64']:
@@ -115,10 +125,11 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
                     physical_cores = os.cpu_count()
                 torch.set_num_threads(physical_cores)
                 update(f"Optimized CPU threads to {physical_cores} physical cores.")
-            except Exception:
-                pass
-        except Exception:
-            pass
+                logging.info(f"CPU Optimization: Restricted to {physical_cores} physical cores via os limit.")
+            except Exception as e:
+                logging.warning(f"Failed to optimize CPU threads: {e}")
+        except Exception as e:
+            logging.warning(f"Failed to optimize CPU threads: {e}")
 
     model_kwargs = {
         "token": config.get_hf_token(),
