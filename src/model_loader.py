@@ -1,6 +1,7 @@
 import platform
 import sys
 import torch
+import transformers
 from transformers import AutoProcessor, AutoModel
 import config
 import os
@@ -97,12 +98,22 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
     else:
         update(f"Downloading model weights...") 
 
-    model = AutoModel.from_pretrained(
-            config.DEFAULT_MODEL, 
-            token=config.get_hf_token(), 
-            torch_dtype=dtype, 
-            attn_implementation=config.ATTENTION_IMPL
-        ).to(device)
+
+    model_kwargs = {
+        "token": config.get_hf_token(),
+        "attn_implementation": config.ATTENTION_IMPL
+    }
+
+    try:
+        trans_major, trans_minor = map(int, transformers.__version__.split('.')[:2])
+        if (trans_major, trans_minor) >= (4, 49):
+            model_kwargs["dtype"] = dtype
+        else:
+            model_kwargs["torch_dtype"] = dtype
+    except ValueError:
+        model_kwargs["torch_dtype"] = dtype
+
+    model = AutoModel.from_pretrained(config.DEFAULT_MODEL, **model_kwargs).to(device)
     update(f"Model loaded on {device_str}.")
 
     if use_trt and device_str == 'cuda' and TRT_AVAILABLE:
