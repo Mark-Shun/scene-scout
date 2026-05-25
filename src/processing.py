@@ -1,0 +1,481 @@
+# Scene Scout - Natural language video scene search
+# Copyright (C) 2026 Mark-Shun/Sonicfreak1111
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# This file contains modified code of original work by Gabriele Peris,
+# originally released under the MIT License. See LICENSE for details.
+import os
+import io
+import sqlite3
+from pathlib import Path
+from typing import Callable, Optional
+
+import av
+av.logging.set_level(av.logging.PANIC)
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+
+from PIL import Image
+from scenedetect.detectors import AdaptiveDetector
+from tqdm import tqdm
+
+import cv2
+
+import config
+from database import cleanup_orphaned_entries, get_fast_conn
+from utils import normalize_embedding
+
+
+def calculate_contrast(pil_image):
+    """Calculates image contrast using the standard deviation of the grayscale histogram."""
+    cv_image = np.array(pil_image.convert('L'))
+    return cv_image.std()
+
+
+def _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None):
+    """
+    Expects batch_scene_data as a list of tuples:
+    [(scene_idx, start_ms, end_ms, frame), ...]
+    """
+    if not batch_scene_data:
+        return
+
+    try:
+        # Extract the single best frame for each scene
+        frames = [data[3] for data in batch_scene_data]
+
+        inputs = processor(images=frames, return_tensors='pt').to(device)
+
+        with torch.no_grad():
+            output = model.get_image_features(**inputs)
+            features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
+
+            # Normalize directly since max pooling is removed
+            normalized_features = F.normalize(features, p=2, dim=1)
+            embeddings = normalized_features.cpu().numpy().astype(np.float32)
+
+        for idx, (scene_idx, start_ms, end_ms, frame) in enumerate(batch_scene_data):
+            emb_bytes = embeddings[idx].tobytes()
+            thumb_bytes = None
+
+            if generate_thumbnails:
+                thumb = frame.copy()
+                thumb.thumbnail((160, 90), Image.Resampling.BILINEAR)
+                buffer = io.BytesIO()
+                thumb.save(buffer, format="JPEG", quality=60, optimize=True)
+                thumb_bytes = buffer.getvalue()
+
+            cursor.execute('''
+                INSERT INTO scene_embeddings 
+                (video_id, scene_index, start_time_ms, end_time_ms, embedding, thumbnail) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (video_id, scene_idx, start_ms, end_ms, emb_bytes, thumb_bytes))
+
+        if pbar:
+            pbar.update(len(batch_scene_data))
+
+        if device.type == 'cpu':
+            import gc
+            del features, normalized_features, embeddings
+            gc.collect()
+
+    except Exception as e:
+        if pbar is None or not getattr(pbar, 'disable', False):
+            tqdm.write(f"Inference Error: {e}")
+
+def fast_process_and_embed(video_path, model, processor, device, cursor, video_id, generate_thumbnails, batch_size=16, cancel_check: Optional[Callable[[], bool]] = None, silent=False):
+    if not silent:
+        tqdm.write(f"Fast processing: {os.path.basename(video_path)}")
+    
+    try:
+        container = av.open(video_path, options={'err_detect': 'ignore_err'})
+        video_stream = container.streams.video[0]
+        video_stream.thread_type = "NONE"
+        video_stream.codec_context.skip_frame = 'NONKEY'
+        
+        total_duration_ms = int((container.duration / av.time_base) * 1000)
+        fps = float(video_stream.average_rate) if video_stream.average_rate and video_stream.average_rate > 0 else 30.0
+        safe_margin_ms = int((1000 / fps) * 2)
+
+        pbar = tqdm(total=100, position=1, desc='Progress scenes',
+                    bar_format='{desc}: {percentage:3.0f}%|{bar}| [{elapsed}<{remaining}]',
+                    disable=silent)
+        
+        batch_scene_data = []
+        pending_frame = None
+        pending_start_ms = None
+        scene_idx = 0
+
+        for frame in container.decode(video=0):
+            if cancel_check and cancel_check():
+                container.close()
+                pbar.close()
+                return False
+            
+            try:
+                if not frame.key_frame:
+                    continue
+
+                current_ms = int(frame.time * 1000)
+                
+                if pending_frame is not None:
+                    e_ms = max(pending_start_ms + 10, current_ms - safe_margin_ms)
+                    batch_scene_data.append((scene_idx, pending_start_ms, e_ms, pending_frame))
+                    scene_idx += 1
+                
+                pending_frame = Image.fromarray(frame.to_ndarray(format='rgb24'))
+                pending_start_ms = current_ms
+
+                if len(batch_scene_data) >= batch_size:
+                    _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None)
+                    current_pct = (batch_scene_data[-1][2] / total_duration_ms) * 100
+                    update_amount = current_pct - pbar.n
+                    if update_amount > 0:
+                        pbar.update(update_amount)
+                    batch_scene_data = []
+
+            except (av.AVError, ValueError) as e:
+                continue
+
+        if pending_frame is not None:
+            batch_scene_data.append((scene_idx, pending_start_ms, total_duration_ms, pending_frame))
+
+        if batch_scene_data:
+            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None)
+            update_amount = 100 - pbar.n
+            if update_amount > 0:
+                pbar.update(update_amount)
+
+        container.close()
+        pbar.close()
+        return True
+
+    except Exception as e:
+        if not silent:
+            tqdm.write(f"Fatal error: {e}")
+        return False
+
+def accurate_process_and_embed(video_path, model, processor, device, cursor, video_id, generate_thumbnails, batch_size=16, cancel_check=None, silent=False):
+    if not silent:
+        tqdm.write(f"Accurate processing: {os.path.basename(video_path)}")
+
+    from scenedetect import open_video, SceneManager, Interpolation
+
+    video = open_video(video_path, backend="pyav", threading_mode="AUTO")
+    scene_manager = SceneManager()
+    scene_manager.add_detector(AdaptiveDetector(adaptive_threshold=3.0))
+    scene_manager.interpolation = Interpolation.NEAREST
+    scene_manager.detect_scenes(video, show_progress=not silent)
+    scene_list = scene_manager.get_scene_list()
+
+    if not scene_list:
+        return False
+
+    target_start_times = []
+
+    # Extract 3 frames within the first 10% of the scene (Scene-start bias)
+    extraction_count = 3
+
+    for i, (start, end) in enumerate(scene_list):
+        s_ms = int(start.get_seconds() * 1000)
+        fps = float(end.framerate) if end.framerate and end.framerate > 0 else 30.0
+        safe_margin_ms = int((1000 / fps) * 2)
+        e_ms = max(s_ms + 10, int(end.get_seconds() * 1000) - safe_margin_ms)
+
+        duration = e_ms - s_ms
+        eval_duration = max(10, duration * 0.1) # First 10%
+        step = eval_duration / extraction_count
+
+        timestamps = [int(s_ms + step * j) for j in range(extraction_count)]
+
+        for t in timestamps:
+            target_start_times.append((t, i, s_ms, e_ms))
+
+    target_start_times.sort(key=lambda x: x[0])
+    pbar = tqdm(total=len(scene_list), position=1, desc=f'Scenes processed:', disable=silent)
+
+    container = av.open(video_path)
+    stream = container.streams.video[0]
+    stream.thread_type = "AUTO"
+
+    batch_scene_data = []
+    current_scene_frames = []
+    current_scene_idx = -1
+    current_scene_bounds = (0, 0)
+    target_idx = 0
+
+    try:
+        for frame in container.decode(stream):
+            if cancel_check and cancel_check():
+                container.close()
+                pbar.close()
+                return False
+
+            if target_idx >= len(target_start_times):
+                break
+
+            current_ms = int(frame.time * 1000)
+
+            while target_idx < len(target_start_times) and current_ms >= target_start_times[target_idx][0]:
+                t_ms, s_idx, s_ms, e_ms = target_start_times[target_idx]
+
+                if s_idx != current_scene_idx:
+                    if current_scene_frames:
+                        # Pick highest contrast frame
+                        best_frame = max(current_scene_frames, key=lambda x: calculate_contrast(x[1]))[1]
+                        batch_scene_data.append((current_scene_idx, current_scene_bounds[0], current_scene_bounds[1], best_frame))
+
+                        if len(batch_scene_data) >= batch_size:
+                            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
+                            batch_scene_data = []
+
+                    current_scene_idx = s_idx
+                    current_scene_bounds = (s_ms, e_ms)
+                    current_scene_frames = []
+
+                img = Image.fromarray(frame.to_ndarray(format='rgb24'))
+                current_scene_frames.append((t_ms, img))
+                target_idx += 1
+
+        if current_scene_frames:
+            best_frame = max(current_scene_frames, key=lambda x: calculate_contrast(x[1]))[1]
+            batch_scene_data.append((current_scene_idx, current_scene_bounds[0], current_scene_bounds[1], best_frame))
+
+        if batch_scene_data:
+            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
+
+    finally:
+        container.close()
+        pbar.close()
+
+    return True
+
+def _get_files_from_queue(db_path: str, image_exts: tuple, video_exts: tuple) -> list:
+    """Flatten index_queue into a 1D list of absolute file paths, respecting recursive flags.
+    Uses a set for deduplication. Returns list of path strings.
+    """
+    from database import get_queue
+    queue_items = get_queue(db_path)
+    all_files = set()
+    for item_id, path, is_directory, recursive in queue_items:
+        p = Path(path).resolve()
+        if not p.exists():
+            continue
+        if not is_directory and p.suffix.lower() in image_exts + video_exts:
+            all_files.add(p)
+        elif is_directory:
+            try:
+                for ext in image_exts + video_exts:
+                    if recursive:
+                        all_files.update(p.rglob(f'*{ext}'))
+                    else:
+                        all_files.update(f for f in p.iterdir()
+                                        if f.is_file() and f.suffix.lower() in (image_exts + video_exts))
+            except PermissionError:
+                continue
+    return [str(f) for f in all_files]
+
+def index_files(device: torch.device, processor, model, db_path: str, batch_size: int=16, generate_thumbnails: bool=True, progress_callback: Optional[Callable]=None, max_num_patches: int=256, video_frames: int=5, downscale_height: int=480, fast_scene_detect: bool=True, force_reprocess: bool=False, toggle_preview_callback: Optional[Callable]=None, cancel_check: Optional[Callable[[], bool]] = None, silent: bool=False) -> str:
+    """
+    Index files from the index_queue stored in db_path.
+    Returns 'completed', 'cancelled', or 'error'.
+    """
+    def is_cancelled():
+        return cancel_check is not None and cancel_check()
+    
+    if progress_callback:
+        progress_callback('Cleaning database of deleted files...')
+    cleanup_orphaned_entries(db_path, progress_callback)
+    conn = get_fast_conn(db_path)
+    cursor = conn.cursor()
+    
+    # Flatten the queue into a list of files to process
+    if progress_callback:
+        progress_callback('Reading queue...')
+    all_files = _get_files_from_queue(db_path, config.IMAGE_EXTENSIONS, config.VIDEO_EXTENSIONS)
+    
+    paths_to_process = []
+    if progress_callback:
+        progress_callback(f'Checking {len(all_files)} files...')
+    for path_obj in tqdm(all_files, desc='Checking file modification times', disable=silent):
+        if is_cancelled():
+            conn.close()
+            return 'cancelled'
+        path = str(path_obj)
+        try:
+            last_modified = os.path.getmtime(path)
+            if path.lower().endswith(config.IMAGE_EXTENSIONS):
+                cursor.execute('SELECT modified_at FROM image_embeddings WHERE filepath=?', (path,))
+            elif path.lower().endswith(config.VIDEO_EXTENSIONS):
+                # retrieve model_version for potential future checks
+                cursor.execute('SELECT modified_at, model_version FROM processed_videos WHERE filepath=?', (path,))
+            else:
+                # skip any other type
+                continue
+            result = cursor.fetchone()
+            if force_reprocess or not result or result[0] < last_modified:
+                paths_to_process.append(path)
+        except FileNotFoundError:
+            continue
+    if not paths_to_process:
+        if progress_callback:
+            progress_callback('Database is up to date.')
+        conn.close()
+        return 'completed'
+    images_to_process = [p for p in paths_to_process if p.lower().endswith(config.IMAGE_EXTENSIONS)]
+    videos_to_process = [p for p in paths_to_process if p.lower().endswith(config.VIDEO_EXTENSIONS)]
+
+    processed_count = 0
+    total_to_process = len(paths_to_process)
+    if progress_callback:
+        progress_callback({
+            "current": 0,
+            "total": total_to_process,
+            "file": "Starting..."
+        })
+    if(total_to_process > 0):
+        # Only enable scene playback in GUI mode (when progress_callback is provided)
+        if config.SCENE_PLAYBACK and progress_callback is not None and toggle_preview_callback is not None:
+            toggle_preview_callback()
+    if images_to_process:
+        for i in tqdm(range(0, len(images_to_process), batch_size), desc='Processing image batches', disable=silent):
+            batch_paths = images_to_process[i:i + batch_size]
+            batch_images, valid_paths, mtimes = ([], [], [])
+            for path in batch_paths:
+                if progress_callback:
+                    progress_callback({
+                        "current": processed_count,
+                        "total": total_to_process,
+                        "file": f"Batch of {len(valid_paths)} images",
+                        "type": "image"
+                    })
+
+                try:
+                    batch_images.append(Image.open(path).convert('RGB'))
+                    valid_paths.append(path)
+                    mtimes.append(os.path.getmtime(path))
+                except Exception as e:
+                    if not silent:
+                        print(f'Error loading image {path}: {e}')
+            if not batch_images:
+                continue
+            try:
+                inputs = processor(images=batch_images, return_tensors='pt', max_num_patches=max_num_patches).to(device)
+                with torch.no_grad():
+                    output = model.get_image_features(**inputs)
+                    image_features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
+                    image_features = normalize_embedding(image_features)
+                for idx, (path, mtime) in enumerate(zip(valid_paths, mtimes)):
+                    embedding = image_features[idx].cpu().numpy().astype(np.float32).tobytes()
+                    cursor.execute('REPLACE INTO image_embeddings (filepath, modified_at, embedding, file_type) VALUES (?, ?, ?, ?)', (path, mtime, embedding, 'image'))
+                processed_count += len(valid_paths)
+                if progress_callback:
+                    progress_callback(f'Indexing: {processed_count}/{total_to_process}')
+            except Exception as e:
+                if not silent:
+                    print(f'Error processing image batch: {e}')
+            conn.commit()
+            if is_cancelled():
+                conn.close()
+                return 'cancelled'
+    if videos_to_process:
+        if not silent:
+            print("Starting to index videos, this can take a little while...")
+        # outer progress bar for videos
+        for path in tqdm(videos_to_process, desc='Total videos', position=0, disable=silent):
+            if is_cancelled():
+                conn.close()
+                return 'cancelled'
+            if progress_callback:
+                progress_callback({
+                    "current": processed_count,
+                    "total": total_to_process,
+                    "file": os.path.basename(path)
+                })
+            try:
+                mtime = os.path.getmtime(path)
+
+                # 1. Insert or update the video record and set status to 'indexing'
+                cursor.execute('''
+                    INSERT INTO processed_videos (filepath, modified_at, model_version, status) 
+                    VALUES (?, ?, ?, 'indexing')
+                    ON CONFLICT(filepath) DO UPDATE SET 
+                        modified_at=excluded.modified_at,
+                        status='indexing'
+                ''', (path, mtime, config.DEFAULT_MODEL))
+
+                # 2. Retrieve the integer ID
+                cursor.execute('SELECT id FROM processed_videos WHERE filepath = ?', (path,))
+                video_id = cursor.fetchone()[0]
+
+                cursor.execute('DELETE FROM scene_embeddings WHERE video_id = ?', (video_id,))
+                video_processed = False
+                if fast_scene_detect:
+                    video_processed = fast_process_and_embed(path, model, processor, device, cursor, video_id, batch_size=batch_size, cancel_check=cancel_check, generate_thumbnails=generate_thumbnails, silent=silent)
+                else:
+                    video_processed = accurate_process_and_embed(path, model, processor, device, cursor, video_id, batch_size=batch_size, cancel_check=cancel_check, generate_thumbnails=generate_thumbnails, silent=silent)
+
+                if not video_processed:
+                    # Video processing was cancelled or failed
+                    if cancel_check and cancel_check():
+                        conn.rollback()
+                        conn.close()
+                        return 'cancelled'
+                    # Remove the incomplete entry
+                    cursor.execute('DELETE FROM processed_videos WHERE id = ?', (video_id,))
+                    continue
+
+                # 3. If successful, mark as completed
+                cursor.execute("UPDATE processed_videos SET status = 'completed' WHERE id = ?", (video_id,))
+                processed_count += 1
+            except Exception as e:
+                if not silent:
+                    print(f'Error processing video {path}: {e}')
+                # Remove the incomplete entry
+                try:
+                    cursor.execute('DELETE FROM processed_videos WHERE filepath = ?', (path,))
+                except Exception:
+                    pass
+            conn.commit()
+        conn.close()
+    if progress_callback:
+        progress_callback(f'Indexing complete. Processed {total_to_process} new/modified files.')
+    return 'completed'
+
+def get_query_embedding(query_text: str, query_image_path: Optional[str], device: torch.device, processor, model, max_num_patches: int=256) -> Optional[np.ndarray]:
+    text_embedding, image_embedding = (None, None)
+    with torch.no_grad():
+        if query_text:
+            inputs = processor(text=[query_text.lower()], return_tensors='pt', padding='max_length', max_length=64).to(device)
+            text_output = model.get_text_features(**inputs)
+            text_features = text_output if isinstance(text_output, torch.Tensor) else (text_output.pooler_output if hasattr(text_output, 'pooler_output') else text_output[0])
+            text_embedding = normalize_embedding(text_features).cpu().numpy().astype(np.float32)
+        if query_image_path:
+            try:
+                image = Image.open(query_image_path).convert('RGB')
+                inputs = processor(images=image, return_tensors='pt', max_num_patches=max_num_patches).to(device)
+                output = model.get_image_features(**inputs)
+                image_features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
+                image_embedding = normalize_embedding(image_features).cpu().numpy().astype(np.float32)
+            except Exception as e:
+                print(f'Error processing query image: {e}')
+                return None
+    if text_embedding is not None and image_embedding is not None:
+        return (text_embedding + image_embedding) / 2
+    return text_embedding if text_embedding is not None else image_embedding

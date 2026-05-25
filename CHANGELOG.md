@@ -1,0 +1,227 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [1.3.1] - 2026-05-24
+
+Hotfix update for a few problems
+
+### Fix
+- **Batch Dimension Fraction bug**: Due to recent changes it's possible that when trying to extract embedded data, the program could have added a fraction of a dimension at the end. Causing an invalid shape and a ValueError. If you run into a ValueError: shapes/ Search Error shapes: I'm sorry but you will have to fix your database by reprocessing (pick the force overwrite/reprocess indexed files option) and reprocess the specific files or reprocess the database as a whole.
+- **Heavy background task check**: If a user instantly spawns two background workers for the same task, one would overwrite the other resulting in a crash. Safety locks are now reset for the heavy tasks.
+- **Fast process bar**: The process bar for the fast detection mode was incorrectly recalculating the values, resulting in a broken appearance. This has now been fixed.
+- **Moved/removed database**: If a database that was previously loaded can no longer be loaded at start up, it now gracefully handles this situation.
+
+### Added
+- **Intel Mac modern libraries through conda**: For Intel Mac multiple workarounds were implemented to make it work with Scene Scout. However performance was severly penalized due to official support for Pytorch etc being dropped in 2019.... Now this specific hardware setup uses Conda instead of UV with community channels, providing modern packages and making it possible to use modern AI functionality.
+- **Package checker**: At the start of the program, check if the main critical packages are available, otherwise return the instruction to use the platform installer.
+
+### Changed
+- **Install scripts**: Install scripts are now more dynamic and automatically try to detect your GPU hardware
+- **Search field styling**: The search field now has distinct styling to make it more stand out
+- **Checks**: The search field can only be used if a database with scenes is loaded
+- **GUI options rearranged**: Different options have been placed in their own specific section, to make it more apparent to the user which process it affects.
+- **GUI highlight main buttons**: The three main buttons: database management, process media and search are now highlighted differently, making them stand out more.
+- **CPU optimization**: Various enhancements like cleaning up memory and optimizing CPU core usage to physical cores for CPU users.
+
+
+## [1.3.0] - 2026-05-23
+
+What started out as fixing installation issues for Mac users turned into a big refactor to a different GUI library. With new features put on top of it while we're at it.
+
+### Main highlights
+- **GUI migration to Qt**: The library used for the GUI has been changed from Tkinter to Qt (Pyside6)
+- **Sharpness frame check**: When selecting multiple frames, the processor now checks and picks frames that are considered sharp (with a minimum distance), preventing blurry frames being processed
+- **Pack/Unpack database archives (`.scdb`)**: Portable archive format for sharing databases between people and devices, available in both the GUI and CLI
+- **Automatic update**: Added the ability to automatically download and install an update
+- **Global logging system**: Global exception hooks for both main and background threads, and configurable log levels. Logs are saved to a file and can more easily be shared
+- **Seperate OS scripts**: The scripts have further been divided between platforms (Windows, Linux, Mac). This was to make it more clear for users which scripts to launch
+- **Mac Intel support**: Experimental support for older Mac models with intel architecture.
+
+### Added
+
+Besides the already mentioned points in main highlights.
+
+- **CLI Pack/Unpack `.scdb` archives**: `do_pack` and `do_unpack` methods in the interactive shell — packs active databases and their video files into a portable archive, with automatic path recalibration on unpack
+- **Headless utility commands**: `--pack`, `--unpack`, `--verify`, `--relink` arguments for scripted use without entering interactive mode
+- **Custom environment path**: Install scripts prompt for an alternative environment path. With this it is possible to install the environment files at a different place in your system
+- **Custom model path**: Install scripts prompt for an alternative path. With this it is possible to download and use the model files at a different place in your system
+- **Clean install option**: Users can wipe and recreate the virtual environment during installation to fix corrupted dependencies
+- **Reprocess files**: Added the option to reprocess files which were already in the database (for if you changed processing settings and want to pass this to an existing database)
+- **VLC force-reinstall (Mac)**: Opt-in option to force reinstall VLC for Apple Silicon compatibility
+- **ASCII logo**: Installer scripts display an ASCII art logo at startup
+- **Custom themes**: Support for user-provided theme files
+- **Show all missing updates**: When a new update is detected, show information about all the missing updates so far for the user, not just the latest version
+
+### Changed
+- **Model asynchronous background loading**: The model is now being loaded in a seperate thread, due to this the GUI can launch faster
+- **Install/launch scripts**: Launcher scripts read `.install_state` for custom environment path; install scripts write `ENV_PATH` before the EXTRA state to prevent file overwrite
+- **Windows installer path validation**: Strips accidental quotes from user input, validates parent directory existence, and re-prompts on bad paths instead of silently falling back
+- **Accurate scene detect speed boost**: Using AV and scene manager to slightly speed up the accurate scene detection method
+- **Export format checking**: Not all combinations of containers and encoders will work, so if the user changes the container the appropriate codec options are available in the export dialog window.
+
+### Fixed
+- **Mac install fix**: Migration to Qt fixed the installation for Mac. Mac very specifically could not resolve Tkinterdnd2 due to a mismatch with Tcl 8 and 9
+- **TensorRT crash**: `AttributeError: __wrapped__` from `torch.compile` no longer crashes the application  caught and falls back to standard CUDA with a log message
+- **Disabled close button**: Database Manager, Queue Manager, Missing Files, and About dialogs had a non-functional 'X' button due to a Windows quirk with `WindowContextHelpButtonHint`  added `WindowCloseButtonHint` to restore it
+
+## [1.2.0] - 2026-05-10
+
+### Added
+- **Bulk Scene Export**: Export multiple scenes at once via GUI (Bulk Export Dialog) and CLI interactive shell (`export <1,2,5-8> <output_folder>`) (Thanks @crptk)
+- **Export Naming Templates**: Customizable filename patterns with tags (`{source-name}`, `{scene-id}`, `{time-start}`, `{time-end}`, etc.)
+- **CLI Export Options**: New `--crf`, `--video-codec`, `--audio-mode`, `--audio-codec`, `--audio-bitrate`, `--resolution` flags for headless scene export
+
+### Changed
+- **Windows installer**: Create shortcuts and added the option to open scene scout right after installation.
+
+## [1.1.2] - 2026-05-07
+
+An important fix for GPU utilization and nice to have features
+
+### Added
+- **Database migration feedback**: When an older database is being migrated to a newer version schema, there is now a visual pop up when this happens.
+- **Database file/path check**: When a database gets imported, there is now an initial check to see if the videos are still accessible. If not the user is prompted to either provide a new path, remove the entry (with its scene embeddings) or ignore it.
+
+### Changed
+- **Float32 computation for older NVIDIA GPU**: All NVIDIA GPUs with CUDA automatically used FP16, however older GPUs (pre-RTX) lack this hardware support or perform poorly with it. So these use FP32 now.
+
+### Fixed
+- **GPU offloading during tasks**: Due to threading tasks, during processes that take a while (for example indexing files) the idle timer was not being reset. Due to this the GPU weights could get offloaded to CPU/RAM in the middle of the process. Now there is a blocking check flag to prevent this.
+- **uv not found**: When the bat scripts were opened from a folder outside the program folder, it could result in the wrong path being set to use for uv (and other files)
+
+## [1.1.1] - 2026-05-06
+
+A hotfix patch for the installation scripts
+
+### Added
+- **Install script update check**: Only the GUI had update notification capabilities. 
+
+### Fixed
+- **Python version ceiling**: uv was installing incompatible wheels for users who had a specific python version installed on their system. Introduced a Python ceiling version during install, Python 3.13 for now.
+
+## [1.1.0] - 2026-05-06
+
+A pretty big update, focused on bringing more functionality to the tool and enhancing existing features.
+
+### Main highlights
+- **File handling and queue system**: It is now possible to parse multiple files, folders and index them all at once. There is also a GUI list component in which details about these files can be found and options changed.
+- **Database manager system**: Through the database manager system, it is possible to import multiple database files and dynamically search through them. Besides that there is info shown about the database and it's possible to merge database files into a new file.
+- **Enhanced update checker**: More data is now being retrieved from Github when there is a new release. And the update details are now shown on the GUI.
+- **Scene Export**: Export specific video scenes with customizable FFmpeg settings. Supports Stream Copy (fast) and Re-encode (exact frame accuracy) modes with progress tracking.
+- **Enhanced update checker**: More data is now being retrieved from Github when there is a new release. And the update details are now shown on the GUI.
+
+### Added
+- **Scene Export**: Export video scenes with FFmpeg integration via a dedicated dialog
+- **Media Queue System**: Replace single-folder indexing with a queue-based system supporting multiple files and folders
+- **Queue Manager Popup**: Inspect, modify, and manage queued items with a Treeview list view
+- **Drag & Drop to Queue**: Drop files/folders directly onto the queue area in the GUI
+- **Per-folder Recursive Toggle**: Control whether each folder scans subdirectories independently (via Queue Manager)
+- **Missing Path Detection**: Queue Manager shows `[MISSING]` tags and a "Clean Missing" button for deleted paths
+- **CLI Multi-path Indexing**: `--index` now accepts multiple paths (e.g., `--index /path1 --index /path2`)
+- **REPL Multi-path Indexing**: Interactive shell `index` command now supports multiple space-separated paths
+- **Queue Persistence**: Index queue is stored per-database in SQLite and persists across sessions
+- **Automatic Migration**: Old `folder_path` config values are automatically migrated to the queue on first load
+- **Rich Update Notifications**: GUI now displays a formatted popup window with release notes when a new version is detected.
+- **Markdown Release Notes**: Integrated a custom parser to render GitHub release notes with headers, bold text, and bullet points.
+- **CLI Update Command**: Added a dedicated `update` (alias `u`) command to the interactive shell to view full patch notes on demand.
+- **Rich Update Notifications**: GUI now displays a formatted popup window with release notes when a new version is detected.
+- **Markdown Release Notes**: Integrated a custom parser to render GitHub release notes with headers, bold text, and bullet points.
+- **CLI Update Command**: Added a dedicated `update` (alias `u`) command to the interactive shell to view full patch notes on demand.
+- **Multi-Database Search**: Query multiple databases at once with results merged, sorted, and deduplicated by file path and scene index
+- **Database Manager Popup**: Full management interface showing database name, path, scene/video/image counts, and total stats
+- **Search Source Column**: Results list and CLI output now display which database each result originated from
+- **CLI Multi-Database Support**: `--db` flag now accepts multiple databases (`--db a.db --db b.db`), with new `--target-db` flag for indexing operations
+- **Interactive Shell `db` Commands**: `db ls`, `db add`, `db rm`, `db target`, `db clear` for managing databases in REPL mode
+- **Database Statistics**: `get_db_stats()` function returns scene count, video count, image count, and file size per database
+- **Search results sorting**: Simple in memory sorting of the search results from the database. Sorting them according to the available columns.
+- **Standalone Export Function**: `export_video_scene()` in exporter.py for headless FFmpeg-based scene extraction
+
+### Changed
+- **Database Schema v2**: Added `index_queue` table for tracking files/directories to process
+- **Processing Logic**: Refactored `index_files()` to use queue-based file flattening with deduplication
+- **GUI Layout**: Replaced "Folder to process" section with "Media Queue" section
+- **Config**: Removed `folder_path` from default configuration (queue is now stored in SQLite)
+- **Automatic Payload Cleaning**: Release notes are now pre-processed to strip raw HTML image tags and markdown graphics for a cleaner interface.
+- **Improved GUI Modality**: Isolated scrolling behavior so the main application background remains stationary while the update dialog is active.
+
+### Fixed
+- **Markdown Link Parsing**: URLs are now hidden in the GUI, displaying only the relevant text labels for better readability.
+- **Automatic Payload Cleaning**: Release notes are now pre-processed to strip raw HTML image tags and markdown graphics for a cleaner interface.
+- **Improved GUI Modality**: Isolated scrolling behavior so the main application background remains stationary while the update dialog is active.
+- **Config Structure**: Replaced `db_path` with `active_databases` (list) and `primary_database` (string) — old configs are automatically migrated
+- **Database Section UI**: Replaced listbox with compact target label, search count indicator, and prominent "Manage Databases..." button
+- **Search Function Signatures**: `search_scenes()` and `search_db()` now accept a list of database paths instead of a single path
+- **CLI Search Logic**: `run_search()` now queries all active databases and merges results
+- **Interactive Shell State Tracking**: Shell now maintains its own `active_databases` list and `target_db` pointer, independent of argparse defaults
+
+### Installation note
+Due to the usage of a new package (imageio-ffmpeg for ffmpeg functions), you might have to run the install script again.
+
+
+## [1.0.1] - 2026-5-04
+
+### Fixed
+- **CLI** - CLI mode was not using the new database format with newly added thumbnails
+
+### Added
+- **Silent Mode (`--silent`)**: Suppresses all non-essential output including progress bars, making CLI output clean for automation and scripting
+- **Byte64 thumbnail**: Added ability for to return thumbnail data in Byte64 format
+- **JSON File Output (`--output FILE`)**: Write JSON results directly to a file instead of stdout, preventing log/output mixing
+- **Stdin Piping**: Use `--search-text -` to pipe queries from stdin (e.g., `echo "query" | python scenescout.py --search-text - --json`)
+- **Interactive Shell Aliases**: Shortcut commands (`s` for search, `i` for index, `cl` for cleanup, `ls` for status, `h` for help, `q` for exit)
+- **Tab Completion**: Press Tab in interactive mode to autocomplete variable names when using `set`
+- **Command History**: Persistent Up Arrow command history across sessions (stored in `~/.scene_scout_history`)
+- **Variables Command (`vars`)**: Lists all editable interactive shell variables with their current values
+- **Standardized Exit Codes**: Return codes for pipeline integration (`0` success, `1` model error, `2` database error, `3` invalid input)
+- **Path Expansion**: Tilde (`~`) and home directory paths are automatically expanded in index and load_db commands
+- **Added tooltips**: Explenations for different buttons and fields in the GUI when hovering over them
+
+### Changed
+- **Silent Mode in Processing**: All tqdm progress bars and PySceneDetect output are now suppressible via `--silent` flag
+
+## Post-fork [1.0.0] - 2026-5-04
+
+### Added
+- **Wide GPU processing support**: Original project had limited support. Now at this moment: CPU, CUDA, TensorRT, DirectML, Intel XPU, AMD Rocm and Apple MPS
+- **Video playback**: Added support for video scene playback through VLC backend.
+- **Thumbnail**: Shows low quality small thumbnails of search results.
+- **Scene time extraction**: Added support to extract time data of scenes (scene change detect and extraction from metadata).
+- **Scene indexing**: Index and search for scenes inside the app.
+- **UV installation**: New installation method by using UV for new users.
+- **Themes**: GUI now supports different TTK themes
+- **Automated installation**: Various scripts to automate installation
+- **Interactive shell**: An interactive CLI to interact with scene scout in the terminal while keeping the weights loaded.
+- **Options**: Added various options which are saved in a config file
+- **Drag and drop**: Drag and drop database files and folders to automatically load into scene scout.
+- **Update checking**: Though not automatic added an update check with indication where to download it.
+
+### Changed
+- **Refactor file functions**: Refactored the code to seperate functionality into different files.
+- **Focus**: Original project was focused on finding files (pictures/videos as whole), this project focuses on finding scenes.
+- **Loading lock**: While loading or downloading the models, lock/hide the main GUI.
+
+## Pre-fork [2.0.0] - 2025-11-28
+
+### Added
+
+- **Configuration Persistence**: Settings (database path, folder path) are now saved to `siglip2_config.json` and persist between sessions.
+- **Image Preview Controls**: Added Pan (drag) and Zoom (mouse wheel) functionality to the image preview canvas.
+- **Rescoring**: New "Rescore" feature allows refining search results with a secondary text query.
+- **Batch Processing**: Image indexing is now batched (default size: 10) for improved performance.
+- **GUI Improvements**:
+  - Dedicated "Load Model" button.
+  - Clear separation between "Index" and "Search" workflows.
+  - Improved status feedback.
+- **Recursive Indexing**: Now uses `rglob` to find images and videos in all subdirectories.
+
+### Changed
+
+- **Script Name**: Renamed main script from `sigLIP2_en.py` to `S2N_Search.py`.
+- **Database Schema**: Updated schema for better compatibility.
+- **Video Indexing**: Simplified video frame extraction to 'uniform' method for consistency.
+
+### Removed
+
+- **Legacy Video Methods**: Removed 'start', 'mid', 'end' extraction methods in favor of 'uniform'.
+- **Threshold Slider**: Removed UI slider; thresholding is now handled internally or via code if needed.
