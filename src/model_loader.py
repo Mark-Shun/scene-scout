@@ -18,6 +18,7 @@
 #
 # This file contains modified code of original work by Gabriele Peris,
 # originally released under the MIT License. See LICENSE for details.
+import gc
 import platform
 import sys
 import torch
@@ -96,8 +97,37 @@ def get_compute_device(device_choice=None):
         
     return 'cpu', 'No compatible GPU found. Using CPU.', torch.device('cpu'), torch.float32
 
+def unload_model(model, processor=None, update_fn=None):
+    """
+    Safely destroys the model and forces the GPU to release the VRAM.
+    Can be used by the GUI for dynamic reloading or the CLI for batch cleanup.
+    """
+    import torch
+    import gc
+
+    if model is not None:
+        del model
+    if processor is not None:
+        del processor
+
+    if hasattr(torch, '_dynamo'):
+        torch._dynamo.reset()
+
+    gc.collect()
+    gc.collect()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        if hasattr(torch.cuda, 'ipc_collect'):
+            torch.cuda.ipc_collect()
+
+    if update_fn:
+        update_fn("Model and compiler caches unloaded from VRAM.")
+
+    return None, None
+
 def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
-    """Initializes the processor and model."""
+    """Initializes the processor and model with Zero-Copy VRAM loading."""
     device_str, msg, device, dtype = get_compute_device(device_choice)
 
     def update(text):
@@ -111,6 +141,8 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
     logging.info(f"Transformers Version: {transformers.__version__}")
     logging.info(f"Attention Implementation: {config.ATTENTION_IMPL}")
 
+    attn_impl = config.ATTENTION_IMPL
+
     cached = _is_model_cached(config.DEFAULT_MODEL)
 
     update("Loading processor config...")
@@ -118,10 +150,9 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
     update("Processor loaded.")
 
     if cached:
-        update(f"Loading model weights in {str(dtype).split('.')[-1]}...")
+        update(f"Loading weights directly to VRAM via accelerate...")
     else:
         update(f"Downloading model weights...") 
-
 
     if device_str == 'cpu':
         try:
@@ -146,13 +177,22 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
         except Exception as e:
             logging.warning(f"Failed to optimize CPU threads: {e}")
 
-    model = AutoModel.from_pretrained(
-        config.DEFAULT_MODEL,
-        token=config.get_hf_token(),
-        torch_dtype=dtype,
-        attn_implementation=config.ATTENTION_IMPL
-    ).to(device)
+    model_kwargs = {
+        "pretrained_model_name_or_path": config.DEFAULT_MODEL,
+        "token": config.get_hf_token(),
+        "dtype": dtype,
+        "attn_implementation": attn_impl,
+    }
+
+    if device_str == 'cuda':
+        model_kwargs["device_map"] = {"": torch.cuda.current_device()}
+    elif device_str in ['mps', 'cpu', 'xpu']:
+        model_kwargs["device_map"] = {"": device_str}
+
+    model = AutoModel.from_pretrained(**model_kwargs)
     update(f"Model loaded on {device_str}.")
+
+    model.requires_grad_(False)
 
     if use_trt and device_str == 'cuda' and TRT_AVAILABLE:
         update("Applying TorchDynamo TensorRT optimization...")
@@ -167,9 +207,23 @@ def load_siglip_model(device_choice=None, status_callback=None, use_trt=False):
                 backend="tensorrt",
                 dynamic=True
             )
-            update("TensorRT JIT Compiler Active! (Optimization runs on first search)")
+            update("Compiling TensorRT engine (this may take a minute)...")
+
+            from PIL import Image
+            dummy_image = Image.new('RGB', (224, 224), color='black')
+            current_config = config.load_config()
+            max_patches = current_config.get('max_patches', 256)
+
+            dummy_inputs = processor(images=dummy_image, return_tensors="pt", max_num_patches=max_patches).to(device)
+
+            with torch.no_grad():
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    model.get_image_features(**dummy_inputs)
+
+            update("TensorRT JIT Compiler Active and Warmed Up!")
         except (Exception, AttributeError) as e:
             update(f"TensorRT Compilation failed ({e}). Falling back to standard CUDA.")
-    
+
     model.eval()
     return model, processor, device, dtype, device_str

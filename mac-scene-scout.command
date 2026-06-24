@@ -2,11 +2,30 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
-# 1. Restore environment state paths
+# Check if installer has been run
+if [ ! -f "$SCRIPT_DIR/.install_state" ]; then
+    echo "[!] Installation state not found. The application may not be installed."
+    read -p "Would you like to run the installer now? [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        bash "$SCRIPT_DIR/mac-install.sh"
+        exit $?
+    else
+        exit 1
+    fi
+fi
+
+# 1. Restore environment state paths and extras
+INSTALL_EXTRA=""
 if [ -f "$SCRIPT_DIR/.install_state" ]; then
     CUSTOM_ENV_PATH=$(grep "^ENV_PATH=" "$SCRIPT_DIR/.install_state" | cut -d'=' -f2-)
     CUSTOM_HF_HOME=$(grep "^HF_HOME=" "$SCRIPT_DIR/.install_state" | cut -d'=' -f2-)
     [ -n "$CUSTOM_HF_HOME" ] && export HF_HOME="$CUSTOM_HF_HOME"
+
+    RAW_EXTRA=$(grep "^EXTRA=" "$SCRIPT_DIR/.install_state" | cut -d'=' -f2-)
+    if [ -n "$RAW_EXTRA" ]; then
+        INSTALL_EXTRA="--extra $RAW_EXTRA"
+    fi
 fi
 
 # 2. Execute via hardware-specific environment
@@ -28,5 +47,5 @@ else
     if [ -n "$CUSTOM_ENV_PATH" ]; then
         export UV_PROJECT_ENVIRONMENT="$CUSTOM_ENV_PATH/.venv"
     fi
-    "$SCRIPT_DIR/.uv/uv" run --no-sync src/scenescout.py
+    "$SCRIPT_DIR/.uv/uv" run $INSTALL_EXTRA src/scenescout.py
 fi

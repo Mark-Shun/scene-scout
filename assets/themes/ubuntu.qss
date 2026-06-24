@@ -58,6 +58,7 @@ QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
 
 QTableView, QListWidget {
     background-color: #FFFFFF;
+    alternate-background-color: #EDEDED;
     gridline-color: #EBEBEB;
     border: 1px solid #DCDCDC;
     selection-background-color: #E95420;

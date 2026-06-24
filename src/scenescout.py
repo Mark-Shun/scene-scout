@@ -17,7 +17,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 import sys
-from update_checker import check_for_update
 import multiprocessing
 
 from PySide6.QtGui import QPixmap, QPalette
@@ -77,7 +76,7 @@ if __name__ == '__main__':
         if initial_theme != default_theme:
             apply_stylesheet(app, theme=default_theme, extra={'density_scale': '0'})
 
-    update_info = check_for_update()
+    update_info = {"update_available": False}
 
     if len(sys.argv) > 1:
         from cli import cli_mode
@@ -154,9 +153,5 @@ if __name__ == '__main__':
         splash.deleteLater()
 
         QTimer.singleShot(100, main_window.threaded_load_model)
-
-        if update_info and update_info.get("update_available"):
-            from gui_utils import show_update_dialog
-            QTimer.singleShot(500, lambda: show_update_dialog(main_window, update_info))
 
         sys.exit(app.exec())

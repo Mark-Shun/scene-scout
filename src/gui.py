@@ -26,7 +26,7 @@ import platform
 from pathlib import Path
 from typing import Optional, List
 
-from PySide6.QtCore import Qt, QTimer, QEvent, Signal, Slot, QSize, QAbstractTableModel, QSortFilterProxyModel, QModelIndex, QItemSelectionModel
+from PySide6.QtCore import Qt, QTimer, QEvent, Signal, Slot, QSize, QThread, QAbstractTableModel, QSortFilterProxyModel, QModelIndex, QItemSelectionModel
 from PySide6.QtGui import QIcon, QPixmap, QAction, QClipboard
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -36,13 +36,15 @@ from PySide6.QtWidgets import (
     QCheckBox, QRadioButton, QButtonGroup, QLineEdit,
     QGroupBox, QTableView, QHeaderView, QStackedWidget,
     QMenu, QSizePolicy, QAbstractItemView,
-    QProgressDialog, QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem
+    QProgressDialog, QListView, QListWidget, QListWidgetItem, QTableWidget, QTableWidgetItem
 )
 import numpy as np
 import torch
 
 import config
 import gui_utils
+from update_checker import check_for_update
+from gui_utils import show_update_dialog
 from workers import (
     SignalBridge, ModelLoadWorker, IndexWorker, SearchWorker,
     RescoreWorker, CombineDBWorker, VerifyPathsWorker, CleanupWorker,
@@ -67,7 +69,7 @@ except Exception:
     sys.exit(1)
 
 from PIL import Image
-from model_loader import load_siglip_model, get_compute_device, TRT_AVAILABLE
+from model_loader import load_siglip_model, get_compute_device, unload_model, TRT_AVAILABLE
 from database import init_db, db_is_empty
 
 
@@ -220,8 +222,29 @@ class IndexProgressDialog(QDialog):
 # Main Application Window
 # ---------------------------------------------------------------------------
 
+class UpdateCheckWorker(QThread):
+    """Thread-safe worker for pinging the GitHub API."""
+    result = Signal(dict)
+
+    def __init__(self, silent=True):
+        super().__init__()
+        self.silent = silent
+
+    def run(self):
+        try:
+            from update_checker import check_for_update
+            update_info = check_for_update()
+            if isinstance(update_info, dict):
+                self.result.emit({"data": update_info, "silent": self.silent})
+            else:
+                self.result.emit({"data": {"update_available": False}, "silent": self.silent})
+        except Exception as e:
+            self.result.emit({"error": str(e), "silent": self.silent})
+
+
 class SceneScoutApp(QMainWindow):
     vlc_end_reached = Signal()
+    update_found = Signal(dict)
 
     def __init__(self):
         super().__init__()
@@ -315,6 +338,15 @@ class SceneScoutApp(QMainWindow):
         self._main_status_label.setObjectName("MainStatusLabel")
         self.statusBar().addWidget(self._main_status_label, 1)
 
+        self._statusbar_donate_btn = self._create_donate_button()
+        self._statusbar_donate_btn.setStyleSheet(
+            self._statusbar_donate_btn.styleSheet().replace(
+                "QPushButton {",
+                "QPushButton { margin: 2px 4px; "
+            )
+        )
+        self.statusBar().addPermanentWidget(self._statusbar_donate_btn)
+
         self._statusbar_db_label = QLabel('Target DB: none')
         self._statusbar_db_label.setObjectName("StatusBarDBLabel")
         self.statusBar().addPermanentWidget(self._statusbar_db_label)
@@ -328,6 +360,12 @@ class SceneScoutApp(QMainWindow):
 
         # GPU standby periodic check
         self.check_idle_and_state()
+
+        # Wire up and trigger background update check on startup
+        self.update_found.connect(self._process_update_result)
+        self.bg_update_worker = UpdateCheckWorker(silent=True)
+        self.bg_update_worker.result.connect(self._process_update_result)
+        self.bg_update_worker.start()
 
     # ======================================================================
     # Drag-and-Drop (global handler)
@@ -386,6 +424,28 @@ class SceneScoutApp(QMainWindow):
             self._current_worker.wait(2000)
         self._stop_video_loop()
         event.accept()
+
+    def _create_donate_button(self) -> QPushButton:
+        btn = QPushButton('Donate')
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FFD700;
+                color: #000000;
+                font-weight: bold;
+                border: 1px solid #B8860B;
+                border-radius: 4px;
+                padding: 4px 12px;
+            }
+            QPushButton:hover {
+                background-color: #FFC125;
+            }
+            QPushButton:pressed {
+                background-color: #DAA520;
+            }
+        """)
+        btn.clicked.connect(lambda: webbrowser.open_new("https://ko-fi.com/sonicfreak1111"))
+        return btn
 
     # ======================================================================
     # Left Panel Construction
@@ -549,7 +609,6 @@ class SceneScoutApp(QMainWindow):
         self._max_patches_spin.setToolTip('Number of patches to evaluate per scene; higher values may improve accuracy but increase runtime.')
         processing_layout.addWidget(self._max_patches_spin)
 
-
         processing_layout.addWidget(QLabel('Scene embed batch size:'))
         self._batch_size_spin = QSpinBox()
         self._batch_size_spin.setRange(8, 160)
@@ -593,6 +652,7 @@ class SceneScoutApp(QMainWindow):
         if idx >= 0:
             self._device_combobox.setCurrentIndex(idx)
         self._device_combobox.currentTextChanged.connect(self._on_device_changed)
+        self._device_combobox.currentTextChanged.connect(self._toggle_gpu_options_visibility)
         opts_layout.addWidget(self._device_combobox)
 
         device_msg_label = QLabel(f'Auto-detected: {self.device_msg}')
@@ -617,6 +677,7 @@ class SceneScoutApp(QMainWindow):
         self._standby_check.setToolTip('Offload model to CPU when minimized or idle to free VRAM.')
         opts_layout.addWidget(self._standby_check)
 
+
         if self.device_choice == 'cpu':
             self._standby_check.setEnabled(False)
 
@@ -624,7 +685,10 @@ class SceneScoutApp(QMainWindow):
         theme_layout = QHBoxLayout(theme_frame)
         theme_layout.setContentsMargins(0, 0, 0, 0)
         self._theme_combobox = QComboBox()
+        theme_view = QListView()
+        self._theme_combobox.setView(theme_view)
         self._theme_combobox.setMaxVisibleItems(10)
+        self._theme_combobox.setStyleSheet("QComboBox { combobox-popup: 0; }")
 
         default_theme = config.DEFAULT_CONFIG.get('theme', 'dark_lightgreen.xml')
         saved_theme = self.config.get('theme', default_theme)
@@ -648,6 +712,8 @@ class SceneScoutApp(QMainWindow):
         theme_layout.addWidget(apply_theme_btn)
         opts_layout.addWidget(theme_frame)
 
+        self._toggle_gpu_options_visibility()
+
         layout.addWidget(options_group)
 
         # ---- Additional Actions ----
@@ -667,8 +733,17 @@ class SceneScoutApp(QMainWindow):
         # ---- Info ----
         info_group = QGroupBox("Info")
         info_layout = QVBoxLayout(info_group)
+
+        info_btn_row_1 = QHBoxLayout()
+        self.update_check_btn = QPushButton('Check For Updates')
+        self.update_check_btn.setCursor(Qt.PointingHandCursor)
+        self.update_check_btn.clicked.connect(self.manual_check_for_update)
+        info_btn_row_1.addWidget(self.update_check_btn)
+
         about_btn = QPushButton('About')
         about_btn.clicked.connect(self.open_about_dialog)
+
+        info_layout.addLayout(info_btn_row_1)
         info_layout.addWidget(about_btn)
         layout.addWidget(info_group)
 
@@ -748,9 +823,13 @@ class SceneScoutApp(QMainWindow):
         self._results_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self._results_table.setSortingEnabled(True)
         self._results_table.setAlternatingRowColors(True)
+        self._results_table.setTextElideMode(Qt.ElideMiddle)
         self._results_table.verticalHeader().hide()
-        self._results_table.horizontalHeader().setStretchLastSection(True)
-        self._results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+
+        header = self._results_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
+        header.setMinimumSectionSize(50)
 
         self._results_table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self._results_table.doubleClicked.connect(self._on_result_double_click)
@@ -911,6 +990,11 @@ class SceneScoutApp(QMainWindow):
         self.config['active_databases'] = self.active_databases
         self.config['primary_database'] = self.primary_db if self.primary_db else ''
         config.save_config(self.config)
+
+    def _toggle_gpu_options_visibility(self):
+        is_cuda = (self._device_combobox.currentText() == 'cuda')
+        if hasattr(self, '_trt_check') and self._trt_check is not None:
+            self._trt_check.setVisible(is_cuda)
 
     def _on_device_changed(self, device: str):
         self.device_choice = device
@@ -1479,18 +1563,18 @@ class SceneScoutApp(QMainWindow):
 
             find_btn = QPushButton('Find...')
             find_btn.clicked.connect(
-                lambda checked, d=db_path, v=video_id, f=filepath: (
+                lambda checked, d=db_path, v=video_id, f=filepath, frm=frame: (
                     self._resolve_missing_find(dlg, d, v, f, filter_str,
-                                               lambda: remove_row(frame, d, v))
+                                            lambda: remove_row(frm, d, v))
                 )
             )
             row.addWidget(find_btn)
 
             remove_btn = QPushButton('Remove')
             remove_btn.clicked.connect(
-                lambda checked, d=db_path, v=video_id, f=filepath: (
+                lambda checked, d=db_path, v=video_id, f=filepath, frm=frame: (
                     self._resolve_missing_remove(dlg, d, v, f,
-                                                 lambda: remove_row(frame, d, v))
+                                                lambda: remove_row(frm, d, v))
                 )
             )
             row.addWidget(remove_btn)
@@ -1755,9 +1839,15 @@ class SceneScoutApp(QMainWindow):
         # Auto-sort by Score column descending
         self._results_table.sortByColumn(4, Qt.DescendingOrder)
 
-        # Widen Time column to fit timestamp ranges
         header = self._results_table.horizontalHeader()
+
+        # Widen Time column to fit timestamp ranges
         header.resizeSection(2, header.sectionSizeHint(2) * 2)
+
+        # Dynamically allocate ~45% of the table's total width to the Filename column
+        viewport_width = self._results_table.viewport().width()
+        if viewport_width > 0:
+            header.resizeSection(0, int(viewport_width * 0.45))
 
         # Stats
         scores = [
@@ -2109,26 +2199,28 @@ class SceneScoutApp(QMainWindow):
     # Frame extraction for non-playback preview
     # ======================================================================
 
-    def _extract_and_show_first_frame(self, path, start_ms):
-        container = None
+    def _extract_frame_at_ms(self, path: str, start_ms: int):
+        """Modular helper to extract a single frame at a specific millisecond."""
         try:
             import av
             av.logging.set_level(av.logging.PANIC)
-            container = av.open(path)
-            stream = container.streams.video[0]
-            target_pts = int((start_ms / 1000.0) / float(stream.time_base))
-            container.seek(target_pts, stream=stream, any_frame=False, backward=True)
-            for frame in container.decode(stream):
-                current_frame_ms = int(frame.time * 1000)
-                if current_frame_ms >= start_ms:
-                    img = frame.to_image()
-                    self._set_preview_pixmap(img)
-                    return
+            with av.open(path) as container:
+                stream = container.streams.video[0]
+                target_pts = int((start_ms / 1000.0) / float(stream.time_base))
+                container.seek(target_pts, stream=stream, any_frame=False, backward=True)
+                for frame in container.decode(stream):
+                    if int(frame.time * 1000) >= start_ms:
+                        return frame.to_image()
         except Exception as e:
-            self.update_status(f"Preview Error: {e}")
-        finally:
-            if container:
-                container.close()
+            self.update_status(f"Frame extraction error: {e}")
+        return None
+
+    def _extract_and_show_first_frame(self, path, start_ms):
+        img = self._extract_frame_at_ms(path, start_ms)
+        if img:
+            self._set_preview_pixmap(img)
+        else:
+            self.update_status("Failed to extract preview frame from video.")
 
     # ======================================================================
     # Export
@@ -2254,11 +2346,26 @@ class SceneScoutApp(QMainWindow):
     def search_for_similar_preview_frame(self):
         if not self.current_display_path:
             return
-        if self.original_image:
+
+        image_to_save = None
+
+        if self.current_display_path.lower().endswith(config.VIDEO_EXTENSIONS):
+            start_ms = 0
+            if self.last_selected_entry is not None and self.last_selected_entry < len(self.search_results):
+                start_ms = self.search_results[self.last_selected_entry][5] or 0
+
+            image_to_save = self._extract_frame_at_ms(self.current_display_path, start_ms)
+            if not image_to_save:
+                QMessageBox.critical(self, "Search Error", "Could not extract frame for search.")
+                return
+        else:
+            image_to_save = self.original_image
+
+        if image_to_save:
             os.makedirs(config.TEMP_FOLDER, exist_ok=True)
             temp_path = os.path.abspath(os.path.join(config.TEMP_FOLDER, "temp_search_query.jpg"))
             try:
-                self.original_image.save(temp_path, "JPEG", quality=95)
+                image_to_save.save(temp_path, "JPEG", quality=95)
                 self.query_image_path = temp_path
                 if hasattr(self, '_query_image_label') and self._query_image_label:
                     self._query_image_label.setText(f"Frame from {os.path.basename(self.current_display_path)}")
@@ -2266,15 +2373,7 @@ class SceneScoutApp(QMainWindow):
                     self._query_text_edit.clear()
                 self.threaded_search()
             except Exception as e:
-                QMessageBox.critical(self, "Search Error", f"Could not capture frame: {e}")
-        else:
-            if self.current_display_path.lower().endswith(config.IMAGE_EXTENSIONS):
-                self.query_image_path = self.current_display_path
-                if hasattr(self, '_query_image_label') and self._query_image_label:
-                    self._query_image_label.setText(os.path.basename(self.current_display_path))
-                if hasattr(self, '_query_text_edit') and self._query_text_edit:
-                    self._query_text_edit.clear()
-                self.threaded_search()
+                QMessageBox.critical(self, "Search Error", f"Could not save frame: {e}")
 
     # ======================================================================
     # Theme
@@ -2380,11 +2479,18 @@ class SceneScoutApp(QMainWindow):
         table = QTableWidget()
         table.setColumnCount(3)
         table.setHorizontalHeaderLabels(['Database', 'Videos', 'Scenes'])
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         table.verticalHeader().setVisible(False)
         table.setSelectionBehavior(QTableWidget.SelectRows)
+
+        table.setTextElideMode(Qt.ElideMiddle)
+
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
+        header.setMinimumSectionSize(50)
+
+        table.setColumnWidth(0, 500)
+
         layout.addWidget(table)
 
         def refresh():
@@ -2635,11 +2741,18 @@ class SceneScoutApp(QMainWindow):
         table = QTableWidget()
         table.setColumnCount(3)
         table.setHorizontalHeaderLabels(['File', 'Type', 'Recursive'])
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         table.verticalHeader().setVisible(False)
         table.setSelectionBehavior(QTableWidget.SelectRows)
+
+        table.setTextElideMode(Qt.ElideMiddle)
+
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setStretchLastSection(True)
+        header.setMinimumSectionSize(50)
+
+        table.setColumnWidth(0, 420)
+
         layout.addWidget(table)
 
         def refresh():
@@ -2711,6 +2824,40 @@ class SceneScoutApp(QMainWindow):
         self.queue_manager_dlg = dlg
         dlg.exec()
         self.queue_manager_dlg = None
+
+    def manual_check_for_update(self):
+        """Triggered by the user. Changes cursor, button state, and starts background QThread."""
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        if hasattr(self, 'update_check_btn'):
+            self.update_check_btn.setText("Checking...")
+            self.update_check_btn.setEnabled(False)
+        self.manual_update_worker = UpdateCheckWorker(silent=False)
+        self.manual_update_worker.result.connect(self._process_update_result)
+        self.manual_update_worker.start()
+
+    @Slot(dict)
+    def _process_update_result(self, payload: dict):
+        """Executes on the main thread to safely update the GUI."""
+        QApplication.restoreOverrideCursor()
+        if hasattr(self, 'update_check_btn'):
+            self.update_check_btn.setText("Check For Updates")
+            self.update_check_btn.setEnabled(True)
+
+        silent = payload.get("silent", True)
+
+        if "error" in payload:
+            if not silent:
+                QMessageBox.warning(self, "Update Check Failed", f"Could not reach update server:\n{payload['error']}")
+            return
+
+        update_info = payload.get("data", {})
+        if update_info and update_info.get("update_available"):
+            show_update_dialog(self, update_info)
+        elif not silent:
+            QMessageBox.information(
+                self, "No Updates Found",
+                f"You are up to date!\n\nCurrent Version: {update_info.get('current_version', 'Unknown')}"
+            )
 
     def open_about_dialog(self):
         from gui_utils import center_window

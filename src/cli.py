@@ -158,6 +158,79 @@ def run_search(text, image, device, proc, model, args):
             print("Error: Could not generate query embedding.")
 
 
+def run_cli_update(silent=False, auto_confirm=False):
+    """Check for updates, prompt user, and trigger the handoff script."""
+    from update_checker import check_for_update
+    from update_manager import trigger_update_handoff, verify_environment
+    import config
+
+    if not silent:
+        print("Checking for updates...")
+
+    update_info = check_for_update()
+
+    if not update_info or not update_info.get("update_available"):
+        if not silent:
+            print(f"You are up to date! (Current version: {update_info.get('current_version', 'Unknown')})")
+        return
+
+    print(f"\n[UPDATE AVAILABLE] Version {update_info['latest_version']} is available! (Current: {update_info.get('current_version', 'Unknown')})")
+
+    notes = update_info.get('notes', 'No notes provided.')
+    if len(notes) > 500:
+        print(f"Release Notes:\n{notes[:500]}...\n")
+    else:
+        print(f"Release Notes:\n{notes}\n")
+
+    if not auto_confirm:
+        choice = input("Do you want to download and install this update now? (y/n): ").strip().lower()
+        if choice != 'y':
+            print("Update cancelled.")
+            return
+
+    try:
+        target_dir = str(config.PROJECT_ROOT)
+        if not verify_environment(target_dir):
+            print("Error: Dependency pre-check failed. Network might be unstable.")
+            return
+
+        print("Downloading and preparing update...")
+
+        from tqdm import tqdm
+        pbar = tqdm(total=100, desc="Updating", unit="%")
+        last_val = [0]
+
+        def progress_callback(p):
+            inc = p - last_val[0]
+            if inc > 0:
+                pbar.update(inc)
+                last_val[0] = p
+
+        # Determine if we should relaunch the CLI or exit cleanly (headless mode)
+        target_mode = 'none' if silent else 'cli'
+
+        trigger_update_handoff(
+            download_url=update_info['download_url'],
+            is_source_zip=update_info.get('is_source_zip', True),
+            progress_callback=progress_callback,
+            app_mode=target_mode
+        )
+        pbar.n = 100
+        pbar.refresh()
+        pbar.close()
+
+        print("\n[SUCCESS] Update prepared successfully!")
+        if target_mode == 'cli':
+            print("The CLI will now restart to apply the files safely.")
+        else:
+            print("Update task complete. Exiting...")
+
+        sys.exit(0)
+
+    except Exception as e:
+        print(f"\n[ERROR] Failed to apply update: {e}")
+
+
 # --- Interactive Shell ---
 class SceneScoutShell(cmd.Cmd):
     intro = "\nInteractive Mode Active. Type 'help' to list commands. Type 'exit' to quit."
@@ -766,17 +839,9 @@ class SceneScoutShell(cmd.Cmd):
             print(f"Error: The path '{new_path}' is already indexed in this database. You must use 'cleanup' to remove the orphaned entry instead.")
     
     def do_update(self, arg):
-        """View details about the latest available software update."""
-        if not self.update_info or not self.update_info.get("update_available"):
-            print("No updates available. You are on the latest version.")
-            return
-        
-        print(f"\n--- Update Available: v{self.update_info['latest_version']} ---")
-        print(f"Current version: v{self.update_info['current_version']}")
-        print(f"Download link: {self.update_info['url']}\n")
-        print("Release Notes:")
-        print(self.update_info['notes'])
-        print("-----------------------------------\n")
+        """Check for and apply updates to Scene Scout.
+        Usage: update"""
+        run_cli_update(silent=False, auto_confirm=False)
 
     def do_pack(self, arg):
         """Pack active databases into a .scdb archive. Usage: pack <output_archive.scdb>"""
@@ -913,7 +978,13 @@ def cli_mode(update_info=None):
     parser.add_argument('--unpack', nargs=2, metavar=('ARCHIVE', 'DEST'), help='Unpack a .scdb archive to a destination folder')
     parser.add_argument('--verify', action='store_true', help='Verify all video paths in the target database')
     parser.add_argument('--relink', nargs=2, metavar=('ID', 'NEW_PATH'), help='Relink a broken video path in the database')
+    parser.add_argument('--update', action='store_true', help='Check for and apply updates')
+    parser.add_argument('--yes', action='store_true', help='Automatically confirm prompts (useful for unattended updates)')
     args = parser.parse_args()
+
+    if args.update:
+        run_cli_update(silent=args.silent, auto_confirm=args.yes)
+        sys.exit(0)
 
     def cli_migration_callback(msg):
         if not args.silent:

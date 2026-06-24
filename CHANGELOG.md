@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.3] - 2026-06-24
+
+### Enhancements
+- **Update checker in background**: Moved the update check logic to a background thread for specifically the GUI.
+
+### Fix
+- **Automatic updater**: Various adjustments have been made for the automatic updater, from logging the process in a seperate file to the way it extracts new code from the repository. This is mostly hidden background processes for the user, trying to make it seamless.
+
+## [1.3.2] - 2026-06-22
+
+### Enhancements
+- **Load model direct to VRAM**: Using the accelerate library, the program now loads the weights straight from the disk into the GPU.
+- **Update checker in background**: Moved the update check logic to a background thread for specifically the GUI.
+
+### Adjustment
+- **Check dependencies on launch**: Before the launch scripts did not perform dependencies checks through UV, only the installers had this ability. Now the launch scripts do check for dependency mismatch, automatically installing what is needed with the stored flags from the installer.
+
+### Fix
+- **Remove missing orphan database entry**: When removing a missing orphaned entry, the frame was not being parsed into the argument. Resulting in the wrong entry being removed, it staying in the overview list and when clicking on it again, it attempting to delete an object that no longer exists.
+- **Specify alternating coloring results list**: For the custom themes, the alternating background coloring for the results list view could fall back to the OS coloring. To prevent this, now an alternating color has been specified in the .qss files.
+- **Themes list scrollbar**: It was possible that the scrollbar for the theme selection list was not being shown. This has now been fixed.
+- **Column resizing**: Columns for the search results, database and queue manager windows wouldn't resize as expected when dragging the sides. This has been fixed.
+- **Search for similar**: Due to changes in the VLC playback backend in previous updates, the initial frame wasn't being extracted anymore when accessing a file. The functionality of "search for similar" (right clicking on a search result) has been adjusted/fixed so that it extracts the frame for search on demand.
+
 ## [1.3.1] - 2026-05-24
 
 Hotfix update for a few problems
@@ -31,6 +55,7 @@ What started out as fixing installation issues for Mac users turned into a big r
 
 ### Main highlights
 - **GUI migration to Qt**: The library used for the GUI has been changed from Tkinter to Qt (Pyside6)
+- **Pool embedding results**: Instead of embedding scene data for one frame, embed data over multiple frames and pool them together (potentially normalizing data throughout the whole scene instead of one spot)
 - **Sharpness frame check**: When selecting multiple frames, the processor now checks and picks frames that are considered sharp (with a minimum distance), preventing blurry frames being processed
 - **Pack/Unpack database archives (`.scdb`)**: Portable archive format for sharing databases between people and devices, available in both the GUI and CLI
 - **Automatic update**: Added the ability to automatically download and install an update

@@ -21,7 +21,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, Signal, Slot, QThread, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QHBoxLayout,
@@ -45,6 +45,42 @@ def center_window(window: QWidget) -> None:
     x = (screen.width() - size.width()) // 2
     y = (screen.height() - size.height()) // 2
     window.move(x, y)
+
+
+class UpdateWorker(QThread):
+    """Native Qt worker to handle network and extraction without crashing the GUI loop."""
+    progress = Signal(int)
+    finished_script = Signal(str)
+    error = Signal(str)
+
+    def __init__(self, download_url: str, is_source_zip: bool):
+        super().__init__()
+        self.download_url = download_url
+        self.is_source_zip = is_source_zip
+
+    def run(self):
+        import config
+        from update_manager import verify_environment, download_and_extract_update, generate_updater_script
+        try:
+            self.progress.emit(5)
+            target_dir = str(config.PROJECT_ROOT)
+
+            if not verify_environment(target_dir):
+                raise RuntimeError("Dependency pre-check failed. Network might be unstable.")
+
+            if self.is_source_zip:
+                extracted_folder = download_and_extract_update(
+                    self.download_url,
+                    progress_callback=lambda p: self.progress.emit(10 + int(p * 0.85))
+                )
+                self.progress.emit(95)
+                script_path = generate_updater_script(extracted_folder, target_dir, app_mode='gui')
+                self.progress.emit(100)
+                self.finished_script.emit(script_path)
+            else:
+                raise NotImplementedError("Binary update is not yet implemented.")
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class UpdateDialog(QDialog):
@@ -143,32 +179,38 @@ class UpdateDialog(QDialog):
 
         self.download_btn.setText("Downloading...")
 
-        import threading
-        import config
-        from update_manager import trigger_update_handoff, verify_environment
+        self.worker = UpdateWorker(download_url, is_source_zip)
+        self.worker.progress.connect(self.progress_bar.setValue)
+        self.worker.finished_script.connect(self._on_update_prepared)
+        self.worker.error.connect(self._update_failed)
+        self.worker.start()
 
-        def run_update():
-            try:
-                self.progress_updated.emit(5)
-                if not verify_environment(str(config.PROJECT_ROOT)):
-                    raise RuntimeError("Dependency pre-check failed. Network might be unstable.")
+    @Slot(str)
+    def _on_update_prepared(self, script_path: str):
+        self.worker.wait()
 
-                trigger_update_handoff(
-                    download_url=download_url,
-                    is_source_zip=is_source_zip,
-                    progress_callback=lambda p: self.progress_updated.emit(10 + int(p * 0.9)),
+        import subprocess, config
+        log_path = config.PROJECT_ROOT / "update_handoff.log"
+        if sys.platform == 'win32':
+            cmd_str = f'cmd.exe /c ""{script_path}" > "{log_path}" 2>&1"'
+            subprocess.Popen(cmd_str, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            with open(log_path, "w", encoding="utf-8") as log_file:
+                subprocess.Popen(
+                    [script_path],
+                    stdout=log_file,
+                    stderr=log_file,
+                    start_new_session=True,
                 )
-                self.progress_updated.emit(100)
-                self.update_ready.emit()
-            except Exception as e:
-                self._update_failed(str(e))
 
-        threading.Thread(target=run_update, daemon=True).start()
+        self.execute_shutdown()
 
     @Slot()
     def execute_shutdown(self):
+        """Allows Qt to cleanly unwind the signal stack before terminating."""
+        QApplication.closeAllWindows()
         QApplication.quit()
-        os._exit(0)
+        QTimer.singleShot(500, lambda: os._exit(0))
 
     def _update_failed(self, msg: str):
         self.progress_bar.hide()

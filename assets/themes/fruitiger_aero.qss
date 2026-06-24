@@ -112,6 +112,7 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 
 QTableView, QListWidget {
     background-color: rgba(255, 255, 255, 220);
+    alternate-background-color: rgba(225, 240, 250, 220);
     gridline-color: #D2E4F0;
     border: 1px solid #B4D1E6;
     selection-background-color: rgba(93, 160, 214, 180);

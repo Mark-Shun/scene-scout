@@ -35,17 +35,26 @@ from PIL import Image
 from scenedetect.detectors import AdaptiveDetector
 from tqdm import tqdm
 
-import cv2
-
 import config
 from database import cleanup_orphaned_entries, get_fast_conn
 from utils import normalize_embedding
 
 
-def calculate_contrast(pil_image):
-    """Calculates image contrast using the standard deviation of the grayscale histogram."""
-    cv_image = np.array(pil_image.convert('L'))
-    return cv_image.std()
+def _encode_images(images, model, processor, device, max_num_patches=None):
+    """Centralized inference engine. Handles preprocessing, dtype safety, and unified output."""
+    kwargs = {'images': images, 'return_tensors': 'pt'}
+    if max_num_patches is not None:
+        kwargs['max_num_patches'] = max_num_patches
+
+    inputs = processor(**kwargs).to(device)
+
+    if 'pixel_values' in inputs and inputs['pixel_values'].is_floating_point():
+        inputs['pixel_values'] = inputs['pixel_values'].to(model.dtype)
+
+    with torch.no_grad():
+        output = model.get_image_features(**inputs)
+        features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
+        return features
 
 
 def _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar=None):
@@ -57,20 +66,19 @@ def _run_batch_inference(batch_scene_data, model, processor, device, cursor, vid
         return
 
     try:
-        # Extract the single best frame for each scene
-        frames = [data[3] for data in batch_scene_data]
+        images = []
+        info = []
 
-        inputs = processor(images=frames, return_tensors='pt').to(device)
+        for scene_idx, s_ms, e_ms, frame in batch_scene_data:
+            images.append(frame)
+            info.append((scene_idx, s_ms, e_ms, frame))
 
-        with torch.no_grad():
-            output = model.get_image_features(**inputs)
-            features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
+        features = _encode_images(images, model, processor, device)
 
-            # Normalize directly since max pooling is removed
-            normalized_features = F.normalize(features, p=2, dim=1)
-            embeddings = normalized_features.cpu().numpy().astype(np.float32)
+        normalized_features = F.normalize(features, p=2, dim=1)
+        embeddings = normalized_features.cpu().numpy().astype(np.float32)
 
-        for idx, (scene_idx, start_ms, end_ms, frame) in enumerate(batch_scene_data):
+        for idx, (scene_idx, start_ms, end_ms, frame) in enumerate(info):
             emb_bytes = embeddings[idx].tobytes()
             thumb_bytes = None
 
@@ -113,7 +121,7 @@ def fast_process_and_embed(video_path, model, processor, device, cursor, video_i
         fps = float(video_stream.average_rate) if video_stream.average_rate and video_stream.average_rate > 0 else 30.0
         safe_margin_ms = int((1000 / fps) * 2)
 
-        pbar = tqdm(total=100, position=1, desc='Progress scenes',
+        pbar = tqdm(total=100, position=1, desc='Progress embed scenes',
                     bar_format='{desc}: {percentage:3.0f}%|{bar}| [{elapsed}<{remaining}]',
                     disable=silent)
         
@@ -189,23 +197,13 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
 
     target_start_times = []
 
-    # Extract 3 frames within the first 10% of the scene (Scene-start bias)
-    extraction_count = 3
-
     for i, (start, end) in enumerate(scene_list):
         s_ms = int(start.get_seconds() * 1000)
         fps = float(end.framerate) if end.framerate and end.framerate > 0 else 30.0
         safe_margin_ms = int((1000 / fps) * 2)
         e_ms = max(s_ms + 10, int(end.get_seconds() * 1000) - safe_margin_ms)
 
-        duration = e_ms - s_ms
-        eval_duration = max(10, duration * 0.1) # First 10%
-        step = eval_duration / extraction_count
-
-        timestamps = [int(s_ms + step * j) for j in range(extraction_count)]
-
-        for t in timestamps:
-            target_start_times.append((t, i, s_ms, e_ms))
+        target_start_times.append((s_ms, i, s_ms, e_ms))
 
     target_start_times.sort(key=lambda x: x[0])
     pbar = tqdm(total=len(scene_list), position=1, desc=f'Scenes processed:', disable=silent)
@@ -215,9 +213,7 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
     stream.thread_type = "AUTO"
 
     batch_scene_data = []
-    current_scene_frames = []
     current_scene_idx = -1
-    current_scene_bounds = (0, 0)
     target_idx = 0
 
     try:
@@ -235,27 +231,13 @@ def accurate_process_and_embed(video_path, model, processor, device, cursor, vid
             while target_idx < len(target_start_times) and current_ms >= target_start_times[target_idx][0]:
                 t_ms, s_idx, s_ms, e_ms = target_start_times[target_idx]
 
-                if s_idx != current_scene_idx:
-                    if current_scene_frames:
-                        # Pick highest contrast frame
-                        best_frame = max(current_scene_frames, key=lambda x: calculate_contrast(x[1]))[1]
-                        batch_scene_data.append((current_scene_idx, current_scene_bounds[0], current_scene_bounds[1], best_frame))
-
-                        if len(batch_scene_data) >= batch_size:
-                            _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
-                            batch_scene_data = []
-
-                    current_scene_idx = s_idx
-                    current_scene_bounds = (s_ms, e_ms)
-                    current_scene_frames = []
-
                 img = Image.fromarray(frame.to_ndarray(format='rgb24'))
-                current_scene_frames.append((t_ms, img))
+                batch_scene_data.append((s_idx, s_ms, e_ms, img))
                 target_idx += 1
 
-        if current_scene_frames:
-            best_frame = max(current_scene_frames, key=lambda x: calculate_contrast(x[1]))[1]
-            batch_scene_data.append((current_scene_idx, current_scene_bounds[0], current_scene_bounds[1], best_frame))
+                if len(batch_scene_data) >= batch_size:
+                    _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
+                    batch_scene_data = []
 
         if batch_scene_data:
             _run_batch_inference(batch_scene_data, model, processor, device, cursor, video_id, generate_thumbnails, pbar)
@@ -376,11 +358,8 @@ def index_files(device: torch.device, processor, model, db_path: str, batch_size
             if not batch_images:
                 continue
             try:
-                inputs = processor(images=batch_images, return_tensors='pt', max_num_patches=max_num_patches).to(device)
-                with torch.no_grad():
-                    output = model.get_image_features(**inputs)
-                    image_features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
-                    image_features = normalize_embedding(image_features)
+                image_features = _encode_images(batch_images, model, processor, device, max_num_patches)
+                image_features = normalize_embedding(image_features)
                 for idx, (path, mtime) in enumerate(zip(valid_paths, mtimes)):
                     embedding = image_features[idx].cpu().numpy().astype(np.float32).tobytes()
                     cursor.execute('REPLACE INTO image_embeddings (filepath, modified_at, embedding, file_type) VALUES (?, ?, ?, ?)', (path, mtime, embedding, 'image'))
@@ -469,9 +448,7 @@ def get_query_embedding(query_text: str, query_image_path: Optional[str], device
         if query_image_path:
             try:
                 image = Image.open(query_image_path).convert('RGB')
-                inputs = processor(images=image, return_tensors='pt', max_num_patches=max_num_patches).to(device)
-                output = model.get_image_features(**inputs)
-                image_features = output if isinstance(output, torch.Tensor) else (output.pooler_output if hasattr(output, 'pooler_output') else output[0])
+                image_features = _encode_images(image, model, processor, device, max_num_patches)
                 image_embedding = normalize_embedding(image_features).cpu().numpy().astype(np.float32)
             except Exception as e:
                 print(f'Error processing query image: {e}')

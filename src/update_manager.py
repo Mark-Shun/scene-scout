@@ -22,6 +22,7 @@ import zipfile
 import tempfile
 import requests
 import subprocess
+import shutil
 from pathlib import Path
 
 
@@ -30,34 +31,41 @@ def download_and_extract_update(zip_url: str, progress_callback=None) -> str:
     temp_dir = tempfile.mkdtemp(prefix="scenescout_update_")
     zip_path = os.path.join(temp_dir, "update.zip")
 
-    with requests.get(zip_url, stream=True, timeout=10) as r:
-        r.raise_for_status()
-        total_length = int(r.headers.get('content-length', 0))
-        downloaded = 0
-        with open(zip_path, 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-                downloaded += len(chunk)
-                if progress_callback and total_length > 0:
-                    progress_callback(int(100 * downloaded / total_length))
+    try:
+        with requests.get(zip_url, stream=True, timeout=10) as r:
+            r.raise_for_status()
+            total_length = int(r.headers.get('content-length', 0))
+            downloaded = 0
+            with open(zip_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback and total_length > 0:
+                        progress_callback(int(100 * downloaded / total_length))
 
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(temp_dir)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
 
-    os.remove(zip_path)
+        os.remove(zip_path)
 
-    extracted_items = os.listdir(temp_dir)
-    if len(extracted_items) == 1 and os.path.isdir(os.path.join(temp_dir, extracted_items[0])):
-        return os.path.join(temp_dir, extracted_items[0])
+        extracted_items = os.listdir(temp_dir)
+        if len(extracted_items) == 1 and os.path.isdir(os.path.join(temp_dir, extracted_items[0])):
+            return os.path.join(temp_dir, extracted_items[0])
 
-    return temp_dir
+        return temp_dir
+
+    except Exception as e:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise e
 
 
-def generate_updater_script(extracted_folder: str, target_dir: str) -> str:
-    """Generates the OS-specific update script and returns its path."""
-    script_path = os.path.join(extracted_folder, "apply_update")
+def generate_updater_script(extracted_folder: str, target_dir: str, app_mode: str = 'gui') -> str:
+    """Generates the OS-specific update script, dynamically targeting the correct environment launcher."""
 
-    # --- Fail-Safe 1 & 3: Read and Validate State ---
+    # Store the root temp directory so the script can completely wipe it
+    temp_root = os.path.dirname(extracted_folder)
+
+    # --- Fail-Safe: Read and Validate State ---
     state_file = os.path.join(target_dir, ".install_state")
     extra_arg, flags_arg, py_ver_arg = "", "", ""
     has_valid_state = False
@@ -79,32 +87,32 @@ def generate_updater_script(extracted_folder: str, target_dir: str) -> str:
             has_valid_state = True
 
     uv_cmd_args = f"{extra_arg} {flags_arg} {py_ver_arg}".strip()
-    # ------------------------------------------------
 
     if sys.platform == 'win32':
-        script_path += ".bat"
+        # Write to target_dir with a unique hidden name to prevent xcopy byte-offset corruption
+        script_path = os.path.join(target_dir, ".scout_updater.bat")
         uv_exe = os.path.join(target_dir, ".uv", "uv.exe")
+        uv_cmd = f'"{uv_exe}"' if os.path.exists(uv_exe) else "uv"
+
+        # Determine Windows Post-Launch Target
+        if app_mode == 'gui':
+            launch_cmd = f'start "" "{os.path.join(target_dir, "windows-scene-scout.bat")}"'
+        elif app_mode == 'cli':
+            launch_cmd = f'start "" "{os.path.join(target_dir, "windows-scene-scout-cli.bat")}"'
+        else:
+            launch_cmd = ":: Silent update complete. No relaunch requested."
 
         if has_valid_state:
             post_copy_action = f"""
 echo Synchronizing dependencies...
 cd /d "{target_dir}"
-"{uv_exe}" sync {uv_cmd_args}
+{uv_cmd} sync {uv_cmd_args}
 if errorlevel 1 goto ROLLBACK
 
 :: Success: Remove backup and launch
 if exist "{target_dir}\\src_backup" rmdir /S /Q "{target_dir}\\src_backup"
-start "" "{os.path.join(target_dir, 'windows-scene-scout.bat')}"
+{launch_cmd}
 goto END
-
-:ROLLBACK
-echo [ERROR] Update failed. Rolling back to previous version...
-if exist "{target_dir}\\src" rmdir /S /Q "{target_dir}\\src"
-if exist "{target_dir}\\src_backup" move "{target_dir}\\src_backup" "{target_dir}\\src"
-pause
-exit /b 1
-
-:END
 """
         else:
             post_copy_action = f"""
@@ -112,36 +120,49 @@ echo Original installation state not found.
 echo Launching manual installer to re-configure hardware...
 cd /d "{target_dir}"
 start "" "{os.path.join(target_dir, 'windows-install.bat')}"
+goto END
 """
 
         script_content = f"""@echo off
 echo Applying Scene Scout Update...
-timeout /t 3 /nobreak >nul
+ping 127.0.0.1 -n 4 > nul
 
 :: Backup current source
 if exist "{target_dir}\\src" move "{target_dir}\\src" "{target_dir}\\src_backup"
 
 :: Copy new files
-xcopy /Y /E /H /C /I "{extracted_folder}\\*" "{target_dir}\\"
+xcopy /Y /E /H /C /I "{extracted_folder}\\*" "{target_dir}"
 if errorlevel 1 goto ROLLBACK
 
 {post_copy_action}
-
-rmdir /S /Q "{os.path.dirname(extracted_folder)}"
-exit
 
 :ROLLBACK
 echo [ERROR] Update failed. Rolling back to previous version...
 if exist "{target_dir}\\src" rmdir /S /Q "{target_dir}\\src"
 if exist "{target_dir}\\src_backup" move "{target_dir}\\src_backup" "{target_dir}\\src"
-pause
+rmdir /S /Q "{temp_root}"
+del "%~f0"
 exit /b 1
+
+:END
+rmdir /S /Q "{temp_root}"
+del "%~f0"
+exit
 """
     else:
-        script_path += ".sh"
+        script_path = os.path.join(target_dir, ".scout_updater.sh")
         uv_exe = os.path.join(target_dir, ".uv", "uv")
         install_script = "mac-install.sh" if sys.platform == 'darwin' else "linux-install.sh"
-        launch_script = "mac-scene-scout.command" if sys.platform == 'darwin' else "linux-scene-scout.sh"
+
+        # Determine Unix Post-Launch Target
+        if app_mode == 'gui':
+            target_sh = "mac-scene-scout.command" if sys.platform == 'darwin' else "linux-scene-scout.sh"
+            launch_cmd = f'nohup "{os.path.join(target_dir, target_sh)}" > /dev/null 2>&1 &'
+        elif app_mode == 'cli':
+            target_sh = "mac-scene-scout-cli.command" if sys.platform == 'darwin' else "linux-scene-scout-cli.sh"
+            launch_cmd = f'gnome-terminal -- "{os.path.join(target_dir, target_sh)}" || xterm -e "{os.path.join(target_dir, target_sh)}" || bash "{os.path.join(target_dir, target_sh)}"'
+        else:
+            launch_cmd = "# Silent update complete."
 
         if has_valid_state:
             post_copy_action = f"""
@@ -154,14 +175,15 @@ if ! "{uv_exe}" sync {uv_cmd_args}; then
     echo "[ERROR] Dependency sync failed! Initiating rollback..."
     rm -rf "{target_dir}/src"
     [ -d "{target_dir}/src_backup" ] && mv "{target_dir}/src_backup" "{target_dir}/src"
-    read -p "Press any key to exit..." -n1 -s
+    rm -rf "{temp_root}"
+    rm -- "$0"
     exit 1
 fi
 
 # Success: Remove backup and launch
 rm -rf "{target_dir}/src_backup"
-chmod +x "{os.path.join(target_dir, launch_script)}"
-nohup "{os.path.join(target_dir, launch_script)}" > /dev/null 2>&1 &
+chmod +x "{os.path.join(target_dir, target_sh)}" 2>/dev/null
+{launch_cmd}
 """
         else:
             post_copy_action = f"""
@@ -183,13 +205,15 @@ if ! cp -a "{extracted_folder}/." "{target_dir}/"; then
     echo "[ERROR] File copy failed. Initiating rollback..."
     rm -rf "{target_dir}/src"
     [ -d "{target_dir}/src_backup" ] && mv "{target_dir}/src_backup" "{target_dir}/src"
-    read -p "Press any key to exit..." -n1 -s
+    rm -rf "{temp_root}"
+    rm -- "$0"
     exit 1
 fi
 
 {post_copy_action}
 
-rm -rf "{os.path.dirname(extracted_folder)}"
+rm -rf "{temp_root}"
+rm -- "$0"
 exit 0
 """
 
@@ -236,27 +260,27 @@ def verify_environment(target_dir: str) -> bool:
         return False
 
 
-def trigger_update_handoff(download_url: str, is_source_zip: bool = True, progress_callback=None):
-    """Executes the complete update handoff sequence."""
+def trigger_update_handoff(download_url: str, is_source_zip: bool = True, progress_callback=None, app_mode: str = 'gui'):
+    """Executes the complete update handoff sequence, passing the app_mode downstream."""
     import config
 
     target_dir = str(config.PROJECT_ROOT)
+    log_path = config.PROJECT_ROOT / "update_handoff.log"
 
     if is_source_zip:
         extracted_folder = download_and_extract_update(download_url, progress_callback)
-        script_path = generate_updater_script(extracted_folder, target_dir)
+        script_path = generate_updater_script(extracted_folder, target_dir, app_mode)
     else:
         raise NotImplementedError("Binary update path is not yet implemented.")
 
     if sys.platform == 'win32':
-        subprocess.Popen(
-            [script_path],
-            creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
+        cmd_str = f'cmd.exe /c ""{script_path}" > "{log_path}" 2>&1"'
+        subprocess.Popen(cmd_str, creationflags=subprocess.CREATE_NO_WINDOW)
     else:
-        subprocess.Popen(
-            [script_path],
-            start_new_session=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        with open(log_path, "w", encoding="utf-8") as log_file:
+            subprocess.Popen(
+                [script_path],
+                stdout=log_file,
+                stderr=log_file,
+                start_new_session=True,
+            )

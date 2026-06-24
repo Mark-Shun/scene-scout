@@ -19,10 +19,12 @@
 
 # Scene Scout - A scene search tool using keywords
 
-This is the public repository of the tool.
-
 A natural language scene search tool powered by [Google's SigLIP 2 model](https://huggingface.co/google/siglip2-so400m-patch16-naflex) with NaFlex architecture. Search through your local video collection using natural language queries or image similarity.
 ![alt text](assets/screenshots/big-buck-bunny-search.webp)
+
+## Acknowledgement
+This project has been forked from [Gabrjiele's open source SigLip 2 NaFlex project](https://github.com/Gabrjiele/siglip2-naflex-search)
+The focus on this fork has shifted from searching for videos/images in a user's collection to specifically searching for scenes through natural language queries. Further adjustments has been made both on the frontend and backend, due to this the two projects are no longer compatible.
 
 ## Features
 - **Multiplatform support**: Through the usage of seperate install scripts and UV, support for: Windows, Linux and Mac platforms.
@@ -353,19 +355,17 @@ Embeddings are stored in SQLite with automatic management:
 
 GPL v3 - See LICENSE file for details
 
-## Acknowledgement
-This project has been forked from [Gabrjiele's open source SigLip 2 NaFlex project](https://github.com/Gabrjiele/siglip2-naflex-search)
-The focus on this fork has shifted from searching for videos/images in a user's collection to specifically searching for scenes through natural language queries. Further adjustments has been made both on the frontend and backend, due to this the two projects are no longer compatible.
+## Acknowledgments
 
 - Google for the SigLIP 2 model
 - Icon/logo made by Miwo
 
 ## Contributing
 
-Check out [Contribution Guidelines](CONTRIBUTING.md)
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind are welcome!
 
 ## Author
 
-Developed by Mark-Shun/Sonicfreak1111
+Created by Mark-Shun/Sonicfreak1111
 
 Forked from project by Peris Gabriele

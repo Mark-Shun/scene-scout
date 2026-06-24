@@ -16,7 +16,6 @@
 #
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-import sys
 import logging
 import re
 from pathlib import Path
@@ -25,7 +24,7 @@ import requests
 import toml
 from packaging.version import InvalidVersion, parse
 
-from config import load_config
+from config import load_config, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +68,7 @@ def check_for_update():
         current_config = load_config()
         github_token = current_config.get("github_token", "")
 
-        config_path = Path("pyproject.toml")
+        config_path = PROJECT_ROOT / "pyproject.toml"
         if not config_path.exists():
             logger.error("pyproject.toml not found for update check.")
             return {"update_available": False}
@@ -93,22 +92,24 @@ def check_for_update():
 
         data = resp.json()
         if not data or not isinstance(data, list):
-            return {"update_available": False}
+            return {"update_available": False, "current_version": current_version}
 
         latest_release = data[0]
         latest_version = latest_release.get("tag_name", "")
         if not latest_version:
-            return {"update_available": False}
+            return {"update_available": False, "current_version": current_version}
 
         latest_version_clean = latest_version.lstrip("v")
         current_version_clean = str(current_version).lstrip("v")
+
+        logger.info("Comparing current '%s' with latest '%s'", current_version_clean, latest_version_clean)
 
         try:
             current_parsed = parse(current_version_clean)
             latest_parsed = parse(latest_version_clean)
         except InvalidVersion as exc:
             logger.error("Invalid version format during update check: %s", exc)
-            return {"update_available": False}
+            return {"update_available": False, "current_version": current_version}
 
         if latest_parsed > current_parsed:
             # Aggregate release notes for all versions newer than current
@@ -126,28 +127,26 @@ def check_for_update():
 
             final_notes = "\n\n---\n\n".join(aggregated_notes)
 
-            # Extract download links from the latest release only
-            is_compiled = getattr(sys, 'frozen', False)
+            assets = latest_release.get("assets", [])
             download_url = ""
-            is_source_zip = False
+            is_source_zip = True
 
-            if is_compiled:
-                assets = latest_release.get("assets", [])
-                for asset in assets:
-                    name = asset.get("name", "").lower()
-                    if sys.platform == 'win32' and name.endswith('.exe'):
-                        download_url = asset.get("browser_download_url")
-                        break
-                    elif sys.platform == 'darwin' and (name.endswith('.dmg') or name.endswith('.app.zip')):
-                        download_url = asset.get("browser_download_url")
-                        break
-                    elif sys.platform.startswith('linux') and name.endswith('.appimage'):
-                        download_url = asset.get("browser_download_url")
-                        break
+            # 1. Prioritize your manually uploaded asset (Fuzzy Match)
+            for asset in assets:
+                asset_name = asset.get("name", "").lower()
+                if asset_name.endswith(".zip"):
+                    download_url = asset.get("browser_download_url")
+                    logger.info(f"Update Path: Selected explicitly uploaded asset -> {download_url}")
+                    break
 
+            # 2. Fallback to GitHub's auto-generated source code zip (code on main)
             if not download_url:
                 download_url = latest_release.get("zipball_url", "")
-                is_source_zip = True
+                if download_url:
+                    logger.info(f"Update Path: Asset not found. Falling back to auto-generated source zipball -> {download_url}")
+                else:
+                    logger.error("Update Path: CRITICAL - No valid download URL found in release.")
+                    return {"update_available": False}
 
             # Extract image from the absolute latest release body
             latest_raw_body = latest_release.get("body", "")
@@ -172,7 +171,7 @@ def check_for_update():
                 "image_bytes": image_bytes,
             }
 
-        return {"update_available": False}
+        return {"update_available": False, "current_version": current_version}
 
     except requests.RequestException as exc:
         logger.error("Update check failed due to network or GitHub API error: %s", exc)

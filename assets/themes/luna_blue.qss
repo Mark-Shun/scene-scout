@@ -62,6 +62,7 @@ QLineEdit, QSpinBox, QComboBox {
 
 QTableView, QListWidget {
     background-color: #FFFFFF;
+    alternate-background-color: #F0EDE0;
     gridline-color: #D0D0BF;
     border: 1px solid #7F9DB9;
     selection-background-color: #316AC5;

@@ -63,6 +63,7 @@ DEFAULT_CONFIG = {
     "batch_size": 16,
     "fast_detect": True,
     "max_patches": 256,
+
     "active_databases": [],
     "primary_database": "",
     "github_token": "",
